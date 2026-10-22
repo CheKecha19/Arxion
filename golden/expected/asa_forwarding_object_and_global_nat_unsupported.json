@@ -1,0 +1,821 @@
+{
+  "context": {
+    "acls": [
+      {
+        "complete": false,
+        "configuration_id": "00000000-0000-4000-8000-000000000002",
+        "location": {
+          "location": {
+            "line_end": 25,
+            "line_start": 25,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "object_and_global_nat_unsupported.cfg"
+          },
+          "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+        },
+        "policy_id": "INSIDE_IN",
+        "reference": null,
+        "rules": [
+          {
+            "action": "allow",
+            "configuration_id": "00000000-0000-4000-8000-000000000002",
+            "description": null,
+            "description_status": "absent",
+            "destination_status": "known",
+            "destination_zone": null,
+            "destinations": [
+              {
+                "cidrs": [
+                  "198.51.100.20/32"
+                ],
+                "description": null,
+                "endpoint_id": "host:198.51.100.20",
+                "fqdn": null,
+                "ip_ranges": [],
+                "kind": "host",
+                "name": "198.51.100.20",
+                "resolution_status": "known",
+                "zone": null
+              }
+            ],
+            "enabled": true,
+            "logging_enabled": false,
+            "logging_status": "known",
+            "match_status": "known",
+            "name": "INSIDE_IN line 25",
+            "owner": null,
+            "policy_direction": null,
+            "policy_id": "INSIDE_IN",
+            "policy_semantics": "first_match",
+            "rule_id": "asa:bdf443d5b024:INSIDE_IN:25",
+            "sequence": 25,
+            "service_status": "known",
+            "services": [
+              {
+                "description": null,
+                "name": "tcp",
+                "port_ranges": [
+                  {
+                    "end": 443,
+                    "start": 443
+                  }
+                ],
+                "protocol": "tcp",
+                "resolution_status": "known",
+                "service_id": "protocol:tcp"
+              }
+            ],
+            "source_location": {
+              "line_end": null,
+              "line_start": 25,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "object_and_global_nat_unsupported.cfg"
+            },
+            "source_status": "known",
+            "source_zone": null,
+            "sources": [
+              {
+                "cidrs": [
+                  "10.77.0.10/32"
+                ],
+                "description": null,
+                "endpoint_id": "host:10.77.0.10",
+                "fqdn": null,
+                "ip_ranges": [],
+                "kind": "host",
+                "name": "10.77.0.10",
+                "resolution_status": "known",
+                "zone": null
+              }
+            ],
+            "zone_status": "unknown"
+          }
+        ],
+        "semantics": "first_match",
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "configuration_id": "00000000-0000-4000-8000-000000000002",
+        "location": {
+          "location": {
+            "line_end": 26,
+            "line_start": 26,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "object_and_global_nat_unsupported.cfg"
+          },
+          "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+        },
+        "policy_id": "GLOBAL_IN",
+        "reference": null,
+        "rules": [
+          {
+            "action": "allow",
+            "configuration_id": "00000000-0000-4000-8000-000000000002",
+            "description": null,
+            "description_status": "absent",
+            "destination_status": "known",
+            "destination_zone": null,
+            "destinations": [
+              {
+                "cidrs": [
+                  "198.51.100.20/32"
+                ],
+                "description": null,
+                "endpoint_id": "host:198.51.100.20",
+                "fqdn": null,
+                "ip_ranges": [],
+                "kind": "host",
+                "name": "198.51.100.20",
+                "resolution_status": "known",
+                "zone": null
+              }
+            ],
+            "enabled": true,
+            "logging_enabled": false,
+            "logging_status": "known",
+            "match_status": "known",
+            "name": "GLOBAL_IN line 26",
+            "owner": null,
+            "policy_direction": null,
+            "policy_id": "GLOBAL_IN",
+            "policy_semantics": "first_match",
+            "rule_id": "asa:bdf443d5b024:GLOBAL_IN:26",
+            "sequence": 26,
+            "service_status": "known",
+            "services": [
+              {
+                "description": null,
+                "name": "tcp",
+                "port_ranges": [
+                  {
+                    "end": 443,
+                    "start": 443
+                  }
+                ],
+                "protocol": "tcp",
+                "resolution_status": "known",
+                "service_id": "protocol:tcp"
+              }
+            ],
+            "source_location": {
+              "line_end": null,
+              "line_start": 26,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "object_and_global_nat_unsupported.cfg"
+            },
+            "source_status": "known",
+            "source_zone": null,
+            "sources": [
+              {
+                "cidrs": [
+                  "10.77.0.10/32"
+                ],
+                "description": null,
+                "endpoint_id": "host:10.77.0.10",
+                "fqdn": null,
+                "ip_ranges": [],
+                "kind": "host",
+                "name": "10.77.0.10",
+                "resolution_status": "known",
+                "zone": null
+              }
+            ],
+            "zone_status": "unknown"
+          }
+        ],
+        "semantics": "first_match",
+        "status": "unknown"
+      }
+    ],
+    "address_family": "ipv4",
+    "bindings": [
+      {
+        "direction": "in",
+        "interface_id": "GigabitEthernet0/0",
+        "location": {
+          "location": {
+            "line_end": 27,
+            "line_start": 27,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "object_and_global_nat_unsupported.cfg"
+          },
+          "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+        },
+        "policy_id": "INSIDE_IN"
+      },
+      {
+        "direction": "global",
+        "interface_id": null,
+        "location": {
+          "location": {
+            "line_end": 28,
+            "line_start": 28,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "object_and_global_nat_unsupported.cfg"
+          },
+          "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+        },
+        "policy_id": "GLOBAL_IN"
+      }
+    ],
+    "configuration_id": "00000000-0000-4000-8000-000000000002",
+    "context_mode": "single",
+    "device_context": null,
+    "device_id": "synthetic-object_and_global_nat_unsupported",
+    "firewall_mode": "routed",
+    "flow": null,
+    "imported_at": "2026-10-10T09:02:00Z",
+    "interfaces": [
+      {
+        "interface_id": "GigabitEthernet0/0",
+        "label": "inside",
+        "location": {
+          "location": {
+            "line_end": 8,
+            "line_start": 4,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "object_and_global_nat_unsupported.cfg"
+          },
+          "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+        },
+        "physical_l3": true,
+        "security_level": 100,
+        "security_status": "known"
+      },
+      {
+        "interface_id": "GigabitEthernet0/1",
+        "label": "outside",
+        "location": {
+          "location": {
+            "line_end": 14,
+            "line_start": 10,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "object_and_global_nat_unsupported.cfg"
+          },
+          "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+        },
+        "physical_l3": true,
+        "security_level": 0,
+        "security_status": "known"
+      }
+    ],
+    "inventories": [
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "interfaces",
+        "item_count": 2,
+        "locations": [
+          {
+            "location": {
+              "line_end": 8,
+              "line_start": 4,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "object_and_global_nat_unsupported.cfg"
+            },
+            "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+          },
+          {
+            "location": {
+              "line_end": 14,
+              "line_start": 10,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "object_and_global_nat_unsupported.cfg"
+            },
+            "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+          }
+        ],
+        "reference": null,
+        "source_document_ids": [
+          "359d85aa-066f-5b95-ae29-86396da2844b"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "acl_definitions",
+        "item_count": 2,
+        "locations": [
+          {
+            "location": {
+              "line_end": 25,
+              "line_start": 25,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "object_and_global_nat_unsupported.cfg"
+            },
+            "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+          },
+          {
+            "location": {
+              "line_end": 26,
+              "line_start": 26,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "object_and_global_nat_unsupported.cfg"
+            },
+            "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+          }
+        ],
+        "reference": null,
+        "source_document_ids": [
+          "359d85aa-066f-5b95-ae29-86396da2844b"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "acl_bindings",
+        "item_count": 2,
+        "locations": [
+          {
+            "location": {
+              "line_end": 27,
+              "line_start": 27,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "object_and_global_nat_unsupported.cfg"
+            },
+            "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+          },
+          {
+            "location": {
+              "line_end": 28,
+              "line_start": 28,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "object_and_global_nat_unsupported.cfg"
+            },
+            "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+          }
+        ],
+        "reference": null,
+        "source_document_ids": [
+          "359d85aa-066f-5b95-ae29-86396da2844b"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "same_security",
+        "item_count": 2,
+        "locations": [],
+        "reference": null,
+        "source_document_ids": [
+          "359d85aa-066f-5b95-ae29-86396da2844b"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "vpn_bypass",
+        "item_count": 1,
+        "locations": [],
+        "reference": null,
+        "source_document_ids": [
+          "359d85aa-066f-5b95-ae29-86396da2844b"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "configured_nat",
+        "item_count": 2,
+        "locations": [
+          {
+            "location": {
+              "line_end": 18,
+              "line_start": 18,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "object_and_global_nat_unsupported.cfg"
+            },
+            "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+          },
+          {
+            "location": {
+              "line_end": 23,
+              "line_start": 23,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "object_and_global_nat_unsupported.cfg"
+            },
+            "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b"
+          }
+        ],
+        "reference": null,
+        "source_document_ids": [
+          "359d85aa-066f-5b95-ae29-86396da2844b"
+        ],
+        "status": "unsupported"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "effective_nat",
+        "item_count": 0,
+        "locations": [],
+        "reference": null,
+        "source_document_ids": [
+          "359d85aa-066f-5b95-ae29-86396da2844b"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "pbr",
+        "item_count": 0,
+        "locations": [],
+        "reference": null,
+        "source_document_ids": [
+          "359d85aa-066f-5b95-ae29-86396da2844b"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "exceptions",
+        "item_count": 0,
+        "locations": [],
+        "reference": null,
+        "source_document_ids": [
+          "359d85aa-066f-5b95-ae29-86396da2844b"
+        ],
+        "status": "unknown"
+      }
+    ],
+    "observation_window": null,
+    "observed_at": null,
+    "profile_reference": "Условный профиль собственного сценария, не runtime evidence.",
+    "revision_id": "00000000-0000-4000-8000-000000000001",
+    "schema_version": "0.1.0",
+    "sources": [
+      {
+        "capture_success": true,
+        "captured_at": "2026-10-10T09:01:00Z",
+        "command": "show running-config",
+        "complete_scopes": [],
+        "completeness_reference": null,
+        "content_sha256": "bdf443d5b02454acb5b1b23d5b49ccecc897f9bd724cb85ff25817e1ed81e199",
+        "declared_version": "9.16",
+        "device_context": null,
+        "device_id": "synthetic-object_and_global_nat_unsupported",
+        "encoding": "ascii",
+        "extent": "excerpt",
+        "observation": null,
+        "origin": "synthetic",
+        "origin_reference": "Собственная выдержка без клиентских данных.",
+        "purpose": "configuration",
+        "selection": "authored_excerpt",
+        "source_document_id": "359d85aa-066f-5b95-ae29-86396da2844b",
+        "source_name": "object_and_global_nat_unsupported.cfg",
+        "version_provenance": "documentation",
+        "version_reference": "Синтетический manifest; аппаратная сборка не проверена."
+      }
+    ],
+    "table_id": "default",
+    "table_role": "data",
+    "toggles": [
+      {
+        "location": null,
+        "name": "inter_interface",
+        "status": "unknown",
+        "value": null
+      },
+      {
+        "location": null,
+        "name": "intra_interface",
+        "status": "unknown",
+        "value": null
+      },
+      {
+        "location": null,
+        "name": "permit_vpn",
+        "status": "unknown",
+        "value": null
+      }
+    ]
+  },
+  "coverage": {
+    "discovered_constructs": 22,
+    "recognized_constructs": 20,
+    "unsupported_constructs": 2
+  },
+  "errors": [],
+  "parser_id": "cisco-asa-forwarding-9.16",
+  "parser_version": "0.1.0",
+  "schema_version": "0.1.0",
+  "source_map": {
+    "acl-line:GLOBAL_IN:26": {
+      "line_end": 26,
+      "line_start": 26,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "acl-line:INSIDE_IN:25": {
+      "line_end": 25,
+      "line_start": 25,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "acl:GLOBAL_IN": {
+      "line_end": 26,
+      "line_start": 26,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "acl:INSIDE_IN": {
+      "line_end": 25,
+      "line_start": 25,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "asa:bdf443d5b024:GLOBAL_IN:26": {
+      "line_end": null,
+      "line_start": 26,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "asa:bdf443d5b024:INSIDE_IN:25": {
+      "line_end": null,
+      "line_start": 25,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "binding:global:None": {
+      "line_end": 28,
+      "line_start": 28,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "binding:in:inside": {
+      "line_end": 27,
+      "line_start": 27,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "diagnostic:ASA_FORWARDING_UNSUPPORTED:18": {
+      "line_end": 18,
+      "line_start": 18,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "diagnostic:ASA_FORWARDING_UNSUPPORTED:23": {
+      "line_end": 23,
+      "line_start": 23,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "interface-property:GigabitEthernet0/0:5": {
+      "line_end": 5,
+      "line_start": 5,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "interface-property:GigabitEthernet0/0:6": {
+      "line_end": 6,
+      "line_start": 6,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "interface-property:GigabitEthernet0/0:7": {
+      "line_end": 7,
+      "line_start": 7,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "interface-property:GigabitEthernet0/1:11": {
+      "line_end": 11,
+      "line_start": 11,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "interface-property:GigabitEthernet0/1:12": {
+      "line_end": 12,
+      "line_start": 12,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "interface-property:GigabitEthernet0/1:13": {
+      "line_end": 13,
+      "line_start": 13,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "interface:GigabitEthernet0/0": {
+      "line_end": 8,
+      "line_start": 4,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "interface:GigabitEthernet0/1": {
+      "line_end": 14,
+      "line_start": 10,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "inventory:acl_bindings:0": {
+      "line_end": 27,
+      "line_start": 27,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "inventory:acl_bindings:1": {
+      "line_end": 28,
+      "line_start": 28,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "inventory:acl_definitions:0": {
+      "line_end": 25,
+      "line_start": 25,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "inventory:acl_definitions:1": {
+      "line_end": 26,
+      "line_start": 26,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "inventory:configured_nat:0": {
+      "line_end": 18,
+      "line_start": 18,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "inventory:configured_nat:1": {
+      "line_end": 23,
+      "line_start": 23,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "inventory:interfaces:0": {
+      "line_end": 8,
+      "line_start": 4,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "inventory:interfaces:1": {
+      "line_end": 14,
+      "line_start": 10,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "object-child:17": {
+      "line_end": 17,
+      "line_start": 17,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "object-child:21": {
+      "line_end": 21,
+      "line_start": 21,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "unsupported:1": {
+      "line_end": 18,
+      "line_start": 18,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    },
+    "unsupported:2": {
+      "line_end": 23,
+      "line_start": 23,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "object_and_global_nat_unsupported.cfg"
+    }
+  },
+  "unsupported_constructs": [
+    {
+      "construct_type": "nat",
+      "message": "NAT не поддерживается.",
+      "source_location": {
+        "line_end": 18,
+        "line_start": 18,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "object_and_global_nat_unsupported.cfg"
+      }
+    },
+    {
+      "construct_type": "nat",
+      "message": "NAT не поддерживается.",
+      "source_location": {
+        "line_end": 23,
+        "line_start": 23,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "object_and_global_nat_unsupported.cfg"
+      }
+    }
+  ],
+  "warnings": [
+    {
+      "code": "ASA_FORWARDING_UNSUPPORTED",
+      "level": "warning",
+      "message": "NAT не поддерживается.",
+      "source_location": {
+        "line_end": 18,
+        "line_start": 18,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "object_and_global_nat_unsupported.cfg"
+      }
+    },
+    {
+      "code": "ASA_FORWARDING_UNSUPPORTED",
+      "level": "warning",
+      "message": "NAT не поддерживается.",
+      "source_location": {
+        "line_end": 23,
+        "line_start": 23,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "object_and_global_nat_unsupported.cfg"
+      }
+    },
+    {
+      "code": "ASA_FORWARDING_INCOMPLETE",
+      "level": "warning",
+      "message": "Неизвестные области сохранены; effective NAT конфигурацией не доказан.",
+      "source_location": null
+    }
+  ]
+}

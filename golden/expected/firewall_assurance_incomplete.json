@@ -1,0 +1,1420 @@
+{
+  "analyzed_at": "2026-10-09T12:01:00Z",
+  "application_version": "0.1.0a0",
+  "check_catalog_version": "1.0.0",
+  "checks": [
+    {
+      "check_id": "FW-ANY-ANY",
+      "check_version": "1.0.0",
+      "findings": [
+        {
+          "affected_rule_ids": [
+            "asa:a90e3fe7becc:AUDIT:10"
+          ],
+          "category": "policy",
+          "check_id": "FW-ANY-ANY",
+          "confidence": 1.0,
+          "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+          "description": "Разрешение между любыми адресами.",
+          "device_id": "cisco-asa:ASA-ASSURANCE",
+          "evidence": {
+            "facts": {
+              "check_version": "1.0.0",
+              "revision_id": "70000000-0000-0000-0000-000000000001",
+              "rules": [
+                {
+                  "action": "allow",
+                  "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+                  "description": null,
+                  "description_status": "absent",
+                  "destination_status": "known",
+                  "destination_zone": null,
+                  "destinations": [
+                    {
+                      "cidrs": [],
+                      "description": null,
+                      "endpoint_id": "any",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "any",
+                      "name": "any",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "enabled": true,
+                  "logging_enabled": false,
+                  "logging_status": "known",
+                  "match_status": "known",
+                  "name": "AUDIT line 10",
+                  "owner": null,
+                  "policy_direction": "in",
+                  "policy_id": "AUDIT",
+                  "policy_semantics": "first_match",
+                  "rule_id": "asa:a90e3fe7becc:AUDIT:10",
+                  "sequence": 10,
+                  "service_status": "known",
+                  "services": [
+                    {
+                      "description": null,
+                      "name": "udp",
+                      "port_ranges": [
+                        {
+                          "end": 53,
+                          "start": 53
+                        }
+                      ],
+                      "protocol": "udp",
+                      "resolution_status": "known",
+                      "service_id": "protocol:udp"
+                    }
+                  ],
+                  "source_location": {
+                    "line_end": null,
+                    "line_start": 10,
+                    "object_id": null,
+                    "object_path": null,
+                    "source_name": "policy_quality.cfg"
+                  },
+                  "source_status": "known",
+                  "source_zone": "outside",
+                  "sources": [
+                    {
+                      "cidrs": [],
+                      "description": null,
+                      "endpoint_id": "any",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "any",
+                      "name": "any",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "zone_status": "known"
+                }
+              ]
+            },
+            "limitations": [
+              "Вывод относится к нормализованным условиям политики; достижимость и влияние NAT не вычислялись."
+            ],
+            "related_rule_ids": [
+              "asa:a90e3fe7becc:AUDIT:10"
+            ],
+            "source_locations": [
+              {
+                "line_end": null,
+                "line_start": 10,
+                "object_id": null,
+                "object_path": null,
+                "source_name": "policy_quality.cfg"
+              }
+            ],
+            "summary": "Разрешение между любыми адресами."
+          },
+          "finding_id": "38c5f416-bc7f-59d4-afe8-b0ea7a63beca",
+          "first_seen": "2026-10-09T12:01:00Z",
+          "last_seen": "2026-10-09T12:01:00Z",
+          "recommendation": "Ограничить источники и назначения согласно назначению правила; проверить необходимость сервисов.",
+          "revision_id": "70000000-0000-0000-0000-000000000001",
+          "severity": "high",
+          "status": "new",
+          "title": "Разрешение между любыми адресами."
+        }
+      ],
+      "limitations": [
+        {
+          "code": "INCOMPLETE_PARSE",
+          "message": "Источник разобран с ограничениями; отсутствие findings не доказывает корректность всей политики.",
+          "rule_ids": []
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "check_id": "FW-DUPLICATE",
+      "check_version": "1.0.0",
+      "findings": [],
+      "limitations": [
+        {
+          "code": "INCOMPLETE_PARSE",
+          "message": "Источник разобран с ограничениями; отсутствие findings не доказывает корректность всей политики.",
+          "rule_ids": []
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "check_id": "FW-SHADOWED",
+      "check_version": "1.0.0",
+      "findings": [],
+      "limitations": [
+        {
+          "code": "INCOMPLETE_PARSE",
+          "message": "Источник разобран с ограничениями; отсутствие findings не доказывает корректность всей политики.",
+          "rule_ids": []
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "check_id": "FW-MERGE-CANDIDATE",
+      "check_version": "1.0.0",
+      "findings": [],
+      "limitations": [
+        {
+          "code": "INCOMPLETE_PARSE",
+          "message": "Источник разобран с ограничениями; отсутствие findings не доказывает корректность всей политики.",
+          "rule_ids": []
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "check_id": "FW-LOGGING",
+      "check_version": "1.0.0",
+      "findings": [
+        {
+          "affected_rule_ids": [
+            "asa:a90e3fe7becc:AUDIT:6"
+          ],
+          "category": "policy",
+          "check_id": "FW-LOGGING",
+          "confidence": 1.0,
+          "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+          "description": "Разрешающее правило не включает логирование.",
+          "device_id": "cisco-asa:ASA-ASSURANCE",
+          "evidence": {
+            "facts": {
+              "check_version": "1.0.0",
+              "revision_id": "70000000-0000-0000-0000-000000000001",
+              "rules": [
+                {
+                  "action": "allow",
+                  "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+                  "description": null,
+                  "description_status": "absent",
+                  "destination_status": "known",
+                  "destination_zone": null,
+                  "destinations": [
+                    {
+                      "cidrs": [
+                        "203.0.113.10/32"
+                      ],
+                      "description": null,
+                      "endpoint_id": "host:203.0.113.10",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "host",
+                      "name": "203.0.113.10",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "enabled": true,
+                  "logging_enabled": false,
+                  "logging_status": "known",
+                  "match_status": "known",
+                  "name": "AUDIT line 6",
+                  "owner": null,
+                  "policy_direction": "in",
+                  "policy_id": "AUDIT",
+                  "policy_semantics": "first_match",
+                  "rule_id": "asa:a90e3fe7becc:AUDIT:6",
+                  "sequence": 6,
+                  "service_status": "known",
+                  "services": [
+                    {
+                      "description": null,
+                      "name": "tcp",
+                      "port_ranges": [
+                        {
+                          "end": 443,
+                          "start": 443
+                        }
+                      ],
+                      "protocol": "tcp",
+                      "resolution_status": "known",
+                      "service_id": "protocol:tcp"
+                    }
+                  ],
+                  "source_location": {
+                    "line_end": null,
+                    "line_start": 6,
+                    "object_id": null,
+                    "object_path": null,
+                    "source_name": "policy_quality.cfg"
+                  },
+                  "source_status": "known",
+                  "source_zone": "outside",
+                  "sources": [
+                    {
+                      "cidrs": [
+                        "198.51.100.0/24"
+                      ],
+                      "description": null,
+                      "endpoint_id": "subnet:198.51.100.0/24",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "subnet",
+                      "name": "198.51.100.0/24",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "zone_status": "known"
+                }
+              ]
+            },
+            "limitations": [
+              "Вывод относится к нормализованным условиям политики; достижимость и влияние NAT не вычислялись."
+            ],
+            "related_rule_ids": [
+              "asa:a90e3fe7becc:AUDIT:6"
+            ],
+            "source_locations": [
+              {
+                "line_end": null,
+                "line_start": 6,
+                "object_id": null,
+                "object_path": null,
+                "source_name": "policy_quality.cfg"
+              }
+            ],
+            "summary": "Разрешающее правило не включает логирование."
+          },
+          "finding_id": "3d54d943-07f3-554b-9d35-b5845fdd0cd6",
+          "first_seen": "2026-10-09T12:01:00Z",
+          "last_seen": "2026-10-09T12:01:00Z",
+          "recommendation": "Включить логирование по принятой политике аудита, учитывая нагрузку и объём событий.",
+          "revision_id": "70000000-0000-0000-0000-000000000001",
+          "severity": "medium",
+          "status": "new",
+          "title": "Разрешающее правило не включает логирование."
+        },
+        {
+          "affected_rule_ids": [
+            "asa:a90e3fe7becc:AUDIT:7"
+          ],
+          "category": "policy",
+          "check_id": "FW-LOGGING",
+          "confidence": 1.0,
+          "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+          "description": "Разрешающее правило не включает логирование.",
+          "device_id": "cisco-asa:ASA-ASSURANCE",
+          "evidence": {
+            "facts": {
+              "check_version": "1.0.0",
+              "revision_id": "70000000-0000-0000-0000-000000000001",
+              "rules": [
+                {
+                  "action": "allow",
+                  "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+                  "description": null,
+                  "description_status": "absent",
+                  "destination_status": "known",
+                  "destination_zone": null,
+                  "destinations": [
+                    {
+                      "cidrs": [
+                        "203.0.113.10/32"
+                      ],
+                      "description": null,
+                      "endpoint_id": "host:203.0.113.10",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "host",
+                      "name": "203.0.113.10",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "enabled": true,
+                  "logging_enabled": false,
+                  "logging_status": "known",
+                  "match_status": "known",
+                  "name": "AUDIT line 7",
+                  "owner": null,
+                  "policy_direction": "in",
+                  "policy_id": "AUDIT",
+                  "policy_semantics": "first_match",
+                  "rule_id": "asa:a90e3fe7becc:AUDIT:7",
+                  "sequence": 7,
+                  "service_status": "known",
+                  "services": [
+                    {
+                      "description": null,
+                      "name": "tcp",
+                      "port_ranges": [
+                        {
+                          "end": 443,
+                          "start": 443
+                        }
+                      ],
+                      "protocol": "tcp",
+                      "resolution_status": "known",
+                      "service_id": "protocol:tcp"
+                    }
+                  ],
+                  "source_location": {
+                    "line_end": null,
+                    "line_start": 7,
+                    "object_id": null,
+                    "object_path": null,
+                    "source_name": "policy_quality.cfg"
+                  },
+                  "source_status": "known",
+                  "source_zone": "outside",
+                  "sources": [
+                    {
+                      "cidrs": [
+                        "198.51.100.0/24"
+                      ],
+                      "description": null,
+                      "endpoint_id": "subnet:198.51.100.0/24",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "subnet",
+                      "name": "198.51.100.0/24",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "zone_status": "known"
+                }
+              ]
+            },
+            "limitations": [
+              "Вывод относится к нормализованным условиям политики; достижимость и влияние NAT не вычислялись."
+            ],
+            "related_rule_ids": [
+              "asa:a90e3fe7becc:AUDIT:7"
+            ],
+            "source_locations": [
+              {
+                "line_end": null,
+                "line_start": 7,
+                "object_id": null,
+                "object_path": null,
+                "source_name": "policy_quality.cfg"
+              }
+            ],
+            "summary": "Разрешающее правило не включает логирование."
+          },
+          "finding_id": "ee7ea7b8-ca68-58de-ab2e-e88eaf3abb3d",
+          "first_seen": "2026-10-09T12:01:00Z",
+          "last_seen": "2026-10-09T12:01:00Z",
+          "recommendation": "Включить логирование по принятой политике аудита, учитывая нагрузку и объём событий.",
+          "revision_id": "70000000-0000-0000-0000-000000000001",
+          "severity": "medium",
+          "status": "new",
+          "title": "Разрешающее правило не включает логирование."
+        },
+        {
+          "affected_rule_ids": [
+            "asa:a90e3fe7becc:AUDIT:10"
+          ],
+          "category": "policy",
+          "check_id": "FW-LOGGING",
+          "confidence": 1.0,
+          "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+          "description": "Разрешающее правило не включает логирование.",
+          "device_id": "cisco-asa:ASA-ASSURANCE",
+          "evidence": {
+            "facts": {
+              "check_version": "1.0.0",
+              "revision_id": "70000000-0000-0000-0000-000000000001",
+              "rules": [
+                {
+                  "action": "allow",
+                  "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+                  "description": null,
+                  "description_status": "absent",
+                  "destination_status": "known",
+                  "destination_zone": null,
+                  "destinations": [
+                    {
+                      "cidrs": [],
+                      "description": null,
+                      "endpoint_id": "any",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "any",
+                      "name": "any",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "enabled": true,
+                  "logging_enabled": false,
+                  "logging_status": "known",
+                  "match_status": "known",
+                  "name": "AUDIT line 10",
+                  "owner": null,
+                  "policy_direction": "in",
+                  "policy_id": "AUDIT",
+                  "policy_semantics": "first_match",
+                  "rule_id": "asa:a90e3fe7becc:AUDIT:10",
+                  "sequence": 10,
+                  "service_status": "known",
+                  "services": [
+                    {
+                      "description": null,
+                      "name": "udp",
+                      "port_ranges": [
+                        {
+                          "end": 53,
+                          "start": 53
+                        }
+                      ],
+                      "protocol": "udp",
+                      "resolution_status": "known",
+                      "service_id": "protocol:udp"
+                    }
+                  ],
+                  "source_location": {
+                    "line_end": null,
+                    "line_start": 10,
+                    "object_id": null,
+                    "object_path": null,
+                    "source_name": "policy_quality.cfg"
+                  },
+                  "source_status": "known",
+                  "source_zone": "outside",
+                  "sources": [
+                    {
+                      "cidrs": [],
+                      "description": null,
+                      "endpoint_id": "any",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "any",
+                      "name": "any",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "zone_status": "known"
+                }
+              ]
+            },
+            "limitations": [
+              "Вывод относится к нормализованным условиям политики; достижимость и влияние NAT не вычислялись."
+            ],
+            "related_rule_ids": [
+              "asa:a90e3fe7becc:AUDIT:10"
+            ],
+            "source_locations": [
+              {
+                "line_end": null,
+                "line_start": 10,
+                "object_id": null,
+                "object_path": null,
+                "source_name": "policy_quality.cfg"
+              }
+            ],
+            "summary": "Разрешающее правило не включает логирование."
+          },
+          "finding_id": "4da3ccdb-707d-5bf5-8cc0-5eb8aefdb8b9",
+          "first_seen": "2026-10-09T12:01:00Z",
+          "last_seen": "2026-10-09T12:01:00Z",
+          "recommendation": "Включить логирование по принятой политике аудита, учитывая нагрузку и объём событий.",
+          "revision_id": "70000000-0000-0000-0000-000000000001",
+          "severity": "medium",
+          "status": "new",
+          "title": "Разрешающее правило не включает логирование."
+        }
+      ],
+      "limitations": [
+        {
+          "code": "INCOMPLETE_PARSE",
+          "message": "Источник разобран с ограничениями; отсутствие findings не доказывает корректность всей политики.",
+          "rule_ids": []
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "check_id": "FW-COMMENTS",
+      "check_version": "1.0.0",
+      "findings": [
+        {
+          "affected_rule_ids": [
+            "asa:a90e3fe7becc:AUDIT:5"
+          ],
+          "category": "policy",
+          "check_id": "FW-COMMENTS",
+          "confidence": 1.0,
+          "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+          "description": "Активное правило не содержит описания назначения.",
+          "device_id": "cisco-asa:ASA-ASSURANCE",
+          "evidence": {
+            "facts": {
+              "check_version": "1.0.0",
+              "revision_id": "70000000-0000-0000-0000-000000000001",
+              "rules": [
+                {
+                  "action": "allow",
+                  "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+                  "description": null,
+                  "description_status": "absent",
+                  "destination_status": "known",
+                  "destination_zone": null,
+                  "destinations": [
+                    {
+                      "cidrs": [
+                        "203.0.113.10/32"
+                      ],
+                      "description": null,
+                      "endpoint_id": "host:203.0.113.10",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "host",
+                      "name": "203.0.113.10",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "enabled": true,
+                  "logging_enabled": true,
+                  "logging_status": "known",
+                  "match_status": "known",
+                  "name": "AUDIT line 5",
+                  "owner": null,
+                  "policy_direction": "in",
+                  "policy_id": "AUDIT",
+                  "policy_semantics": "first_match",
+                  "rule_id": "asa:a90e3fe7becc:AUDIT:5",
+                  "sequence": 5,
+                  "service_status": "known",
+                  "services": [
+                    {
+                      "description": null,
+                      "name": "tcp",
+                      "port_ranges": [
+                        {
+                          "end": 443,
+                          "start": 443
+                        }
+                      ],
+                      "protocol": "tcp",
+                      "resolution_status": "known",
+                      "service_id": "protocol:tcp"
+                    }
+                  ],
+                  "source_location": {
+                    "line_end": null,
+                    "line_start": 5,
+                    "object_id": null,
+                    "object_path": null,
+                    "source_name": "policy_quality.cfg"
+                  },
+                  "source_status": "known",
+                  "source_zone": "outside",
+                  "sources": [
+                    {
+                      "cidrs": [
+                        "192.0.2.10/32"
+                      ],
+                      "description": null,
+                      "endpoint_id": "host:192.0.2.10",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "host",
+                      "name": "192.0.2.10",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "zone_status": "known"
+                }
+              ]
+            },
+            "limitations": [
+              "Вывод относится к нормализованным условиям политики; достижимость и влияние NAT не вычислялись."
+            ],
+            "related_rule_ids": [
+              "asa:a90e3fe7becc:AUDIT:5"
+            ],
+            "source_locations": [
+              {
+                "line_end": null,
+                "line_start": 5,
+                "object_id": null,
+                "object_path": null,
+                "source_name": "policy_quality.cfg"
+              }
+            ],
+            "summary": "Активное правило не содержит описания назначения."
+          },
+          "finding_id": "6682ce3a-e618-51be-9132-1e973a58141c",
+          "first_seen": "2026-10-09T12:01:00Z",
+          "last_seen": "2026-10-09T12:01:00Z",
+          "recommendation": "Указать назначение правила, владельца и основание доступа.",
+          "revision_id": "70000000-0000-0000-0000-000000000001",
+          "severity": "low",
+          "status": "new",
+          "title": "Активное правило не содержит описания назначения."
+        },
+        {
+          "affected_rule_ids": [
+            "asa:a90e3fe7becc:AUDIT:6"
+          ],
+          "category": "policy",
+          "check_id": "FW-COMMENTS",
+          "confidence": 1.0,
+          "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+          "description": "Активное правило не содержит описания назначения.",
+          "device_id": "cisco-asa:ASA-ASSURANCE",
+          "evidence": {
+            "facts": {
+              "check_version": "1.0.0",
+              "revision_id": "70000000-0000-0000-0000-000000000001",
+              "rules": [
+                {
+                  "action": "allow",
+                  "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+                  "description": null,
+                  "description_status": "absent",
+                  "destination_status": "known",
+                  "destination_zone": null,
+                  "destinations": [
+                    {
+                      "cidrs": [
+                        "203.0.113.10/32"
+                      ],
+                      "description": null,
+                      "endpoint_id": "host:203.0.113.10",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "host",
+                      "name": "203.0.113.10",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "enabled": true,
+                  "logging_enabled": false,
+                  "logging_status": "known",
+                  "match_status": "known",
+                  "name": "AUDIT line 6",
+                  "owner": null,
+                  "policy_direction": "in",
+                  "policy_id": "AUDIT",
+                  "policy_semantics": "first_match",
+                  "rule_id": "asa:a90e3fe7becc:AUDIT:6",
+                  "sequence": 6,
+                  "service_status": "known",
+                  "services": [
+                    {
+                      "description": null,
+                      "name": "tcp",
+                      "port_ranges": [
+                        {
+                          "end": 443,
+                          "start": 443
+                        }
+                      ],
+                      "protocol": "tcp",
+                      "resolution_status": "known",
+                      "service_id": "protocol:tcp"
+                    }
+                  ],
+                  "source_location": {
+                    "line_end": null,
+                    "line_start": 6,
+                    "object_id": null,
+                    "object_path": null,
+                    "source_name": "policy_quality.cfg"
+                  },
+                  "source_status": "known",
+                  "source_zone": "outside",
+                  "sources": [
+                    {
+                      "cidrs": [
+                        "198.51.100.0/24"
+                      ],
+                      "description": null,
+                      "endpoint_id": "subnet:198.51.100.0/24",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "subnet",
+                      "name": "198.51.100.0/24",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "zone_status": "known"
+                }
+              ]
+            },
+            "limitations": [
+              "Вывод относится к нормализованным условиям политики; достижимость и влияние NAT не вычислялись."
+            ],
+            "related_rule_ids": [
+              "asa:a90e3fe7becc:AUDIT:6"
+            ],
+            "source_locations": [
+              {
+                "line_end": null,
+                "line_start": 6,
+                "object_id": null,
+                "object_path": null,
+                "source_name": "policy_quality.cfg"
+              }
+            ],
+            "summary": "Активное правило не содержит описания назначения."
+          },
+          "finding_id": "7ff11404-a26c-5dec-9e80-f1440faa994c",
+          "first_seen": "2026-10-09T12:01:00Z",
+          "last_seen": "2026-10-09T12:01:00Z",
+          "recommendation": "Указать назначение правила, владельца и основание доступа.",
+          "revision_id": "70000000-0000-0000-0000-000000000001",
+          "severity": "low",
+          "status": "new",
+          "title": "Активное правило не содержит описания назначения."
+        },
+        {
+          "affected_rule_ids": [
+            "asa:a90e3fe7becc:AUDIT:7"
+          ],
+          "category": "policy",
+          "check_id": "FW-COMMENTS",
+          "confidence": 1.0,
+          "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+          "description": "Активное правило не содержит описания назначения.",
+          "device_id": "cisco-asa:ASA-ASSURANCE",
+          "evidence": {
+            "facts": {
+              "check_version": "1.0.0",
+              "revision_id": "70000000-0000-0000-0000-000000000001",
+              "rules": [
+                {
+                  "action": "allow",
+                  "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+                  "description": null,
+                  "description_status": "absent",
+                  "destination_status": "known",
+                  "destination_zone": null,
+                  "destinations": [
+                    {
+                      "cidrs": [
+                        "203.0.113.10/32"
+                      ],
+                      "description": null,
+                      "endpoint_id": "host:203.0.113.10",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "host",
+                      "name": "203.0.113.10",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "enabled": true,
+                  "logging_enabled": false,
+                  "logging_status": "known",
+                  "match_status": "known",
+                  "name": "AUDIT line 7",
+                  "owner": null,
+                  "policy_direction": "in",
+                  "policy_id": "AUDIT",
+                  "policy_semantics": "first_match",
+                  "rule_id": "asa:a90e3fe7becc:AUDIT:7",
+                  "sequence": 7,
+                  "service_status": "known",
+                  "services": [
+                    {
+                      "description": null,
+                      "name": "tcp",
+                      "port_ranges": [
+                        {
+                          "end": 443,
+                          "start": 443
+                        }
+                      ],
+                      "protocol": "tcp",
+                      "resolution_status": "known",
+                      "service_id": "protocol:tcp"
+                    }
+                  ],
+                  "source_location": {
+                    "line_end": null,
+                    "line_start": 7,
+                    "object_id": null,
+                    "object_path": null,
+                    "source_name": "policy_quality.cfg"
+                  },
+                  "source_status": "known",
+                  "source_zone": "outside",
+                  "sources": [
+                    {
+                      "cidrs": [
+                        "198.51.100.0/24"
+                      ],
+                      "description": null,
+                      "endpoint_id": "subnet:198.51.100.0/24",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "subnet",
+                      "name": "198.51.100.0/24",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "zone_status": "known"
+                }
+              ]
+            },
+            "limitations": [
+              "Вывод относится к нормализованным условиям политики; достижимость и влияние NAT не вычислялись."
+            ],
+            "related_rule_ids": [
+              "asa:a90e3fe7becc:AUDIT:7"
+            ],
+            "source_locations": [
+              {
+                "line_end": null,
+                "line_start": 7,
+                "object_id": null,
+                "object_path": null,
+                "source_name": "policy_quality.cfg"
+              }
+            ],
+            "summary": "Активное правило не содержит описания назначения."
+          },
+          "finding_id": "be58db8c-8cec-5ede-a10c-52c42ad9aafd",
+          "first_seen": "2026-10-09T12:01:00Z",
+          "last_seen": "2026-10-09T12:01:00Z",
+          "recommendation": "Указать назначение правила, владельца и основание доступа.",
+          "revision_id": "70000000-0000-0000-0000-000000000001",
+          "severity": "low",
+          "status": "new",
+          "title": "Активное правило не содержит описания назначения."
+        },
+        {
+          "affected_rule_ids": [
+            "asa:a90e3fe7becc:AUDIT:8"
+          ],
+          "category": "policy",
+          "check_id": "FW-COMMENTS",
+          "confidence": 1.0,
+          "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+          "description": "Активное правило не содержит описания назначения.",
+          "device_id": "cisco-asa:ASA-ASSURANCE",
+          "evidence": {
+            "facts": {
+              "check_version": "1.0.0",
+              "revision_id": "70000000-0000-0000-0000-000000000001",
+              "rules": [
+                {
+                  "action": "allow",
+                  "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+                  "description": null,
+                  "description_status": "absent",
+                  "destination_status": "known",
+                  "destination_zone": null,
+                  "destinations": [
+                    {
+                      "cidrs": [
+                        "203.0.113.20/32"
+                      ],
+                      "description": null,
+                      "endpoint_id": "host:203.0.113.20",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "host",
+                      "name": "203.0.113.20",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "enabled": true,
+                  "logging_enabled": true,
+                  "logging_status": "known",
+                  "match_status": "known",
+                  "name": "AUDIT line 8",
+                  "owner": null,
+                  "policy_direction": "in",
+                  "policy_id": "AUDIT",
+                  "policy_semantics": "first_match",
+                  "rule_id": "asa:a90e3fe7becc:AUDIT:8",
+                  "sequence": 8,
+                  "service_status": "known",
+                  "services": [
+                    {
+                      "description": null,
+                      "name": "tcp",
+                      "port_ranges": [
+                        {
+                          "end": 443,
+                          "start": 443
+                        }
+                      ],
+                      "protocol": "tcp",
+                      "resolution_status": "known",
+                      "service_id": "protocol:tcp"
+                    }
+                  ],
+                  "source_location": {
+                    "line_end": null,
+                    "line_start": 8,
+                    "object_id": null,
+                    "object_path": null,
+                    "source_name": "policy_quality.cfg"
+                  },
+                  "source_status": "known",
+                  "source_zone": "outside",
+                  "sources": [
+                    {
+                      "cidrs": [
+                        "192.0.2.20/32"
+                      ],
+                      "description": null,
+                      "endpoint_id": "host:192.0.2.20",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "host",
+                      "name": "192.0.2.20",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "zone_status": "known"
+                }
+              ]
+            },
+            "limitations": [
+              "Вывод относится к нормализованным условиям политики; достижимость и влияние NAT не вычислялись."
+            ],
+            "related_rule_ids": [
+              "asa:a90e3fe7becc:AUDIT:8"
+            ],
+            "source_locations": [
+              {
+                "line_end": null,
+                "line_start": 8,
+                "object_id": null,
+                "object_path": null,
+                "source_name": "policy_quality.cfg"
+              }
+            ],
+            "summary": "Активное правило не содержит описания назначения."
+          },
+          "finding_id": "316fe1cb-cf76-5bc9-9efa-456b2dd96342",
+          "first_seen": "2026-10-09T12:01:00Z",
+          "last_seen": "2026-10-09T12:01:00Z",
+          "recommendation": "Указать назначение правила, владельца и основание доступа.",
+          "revision_id": "70000000-0000-0000-0000-000000000001",
+          "severity": "low",
+          "status": "new",
+          "title": "Активное правило не содержит описания назначения."
+        },
+        {
+          "affected_rule_ids": [
+            "asa:a90e3fe7becc:AUDIT:9"
+          ],
+          "category": "policy",
+          "check_id": "FW-COMMENTS",
+          "confidence": 1.0,
+          "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+          "description": "Активное правило не содержит описания назначения.",
+          "device_id": "cisco-asa:ASA-ASSURANCE",
+          "evidence": {
+            "facts": {
+              "check_version": "1.0.0",
+              "revision_id": "70000000-0000-0000-0000-000000000001",
+              "rules": [
+                {
+                  "action": "allow",
+                  "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+                  "description": null,
+                  "description_status": "absent",
+                  "destination_status": "known",
+                  "destination_zone": null,
+                  "destinations": [
+                    {
+                      "cidrs": [
+                        "203.0.113.30/32"
+                      ],
+                      "description": null,
+                      "endpoint_id": "host:203.0.113.30",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "host",
+                      "name": "203.0.113.30",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "enabled": true,
+                  "logging_enabled": true,
+                  "logging_status": "known",
+                  "match_status": "known",
+                  "name": "AUDIT line 9",
+                  "owner": null,
+                  "policy_direction": "in",
+                  "policy_id": "AUDIT",
+                  "policy_semantics": "first_match",
+                  "rule_id": "asa:a90e3fe7becc:AUDIT:9",
+                  "sequence": 9,
+                  "service_status": "known",
+                  "services": [
+                    {
+                      "description": null,
+                      "name": "tcp",
+                      "port_ranges": [
+                        {
+                          "end": 443,
+                          "start": 443
+                        }
+                      ],
+                      "protocol": "tcp",
+                      "resolution_status": "known",
+                      "service_id": "protocol:tcp"
+                    }
+                  ],
+                  "source_location": {
+                    "line_end": null,
+                    "line_start": 9,
+                    "object_id": null,
+                    "object_path": null,
+                    "source_name": "policy_quality.cfg"
+                  },
+                  "source_status": "known",
+                  "source_zone": "outside",
+                  "sources": [
+                    {
+                      "cidrs": [
+                        "192.0.2.20/32"
+                      ],
+                      "description": null,
+                      "endpoint_id": "host:192.0.2.20",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "host",
+                      "name": "192.0.2.20",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "zone_status": "known"
+                }
+              ]
+            },
+            "limitations": [
+              "Вывод относится к нормализованным условиям политики; достижимость и влияние NAT не вычислялись."
+            ],
+            "related_rule_ids": [
+              "asa:a90e3fe7becc:AUDIT:9"
+            ],
+            "source_locations": [
+              {
+                "line_end": null,
+                "line_start": 9,
+                "object_id": null,
+                "object_path": null,
+                "source_name": "policy_quality.cfg"
+              }
+            ],
+            "summary": "Активное правило не содержит описания назначения."
+          },
+          "finding_id": "089dd061-c9ba-5cf3-bbb2-60ab748397f5",
+          "first_seen": "2026-10-09T12:01:00Z",
+          "last_seen": "2026-10-09T12:01:00Z",
+          "recommendation": "Указать назначение правила, владельца и основание доступа.",
+          "revision_id": "70000000-0000-0000-0000-000000000001",
+          "severity": "low",
+          "status": "new",
+          "title": "Активное правило не содержит описания назначения."
+        },
+        {
+          "affected_rule_ids": [
+            "asa:a90e3fe7becc:AUDIT:10"
+          ],
+          "category": "policy",
+          "check_id": "FW-COMMENTS",
+          "confidence": 1.0,
+          "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+          "description": "Активное правило не содержит описания назначения.",
+          "device_id": "cisco-asa:ASA-ASSURANCE",
+          "evidence": {
+            "facts": {
+              "check_version": "1.0.0",
+              "revision_id": "70000000-0000-0000-0000-000000000001",
+              "rules": [
+                {
+                  "action": "allow",
+                  "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+                  "description": null,
+                  "description_status": "absent",
+                  "destination_status": "known",
+                  "destination_zone": null,
+                  "destinations": [
+                    {
+                      "cidrs": [],
+                      "description": null,
+                      "endpoint_id": "any",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "any",
+                      "name": "any",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "enabled": true,
+                  "logging_enabled": false,
+                  "logging_status": "known",
+                  "match_status": "known",
+                  "name": "AUDIT line 10",
+                  "owner": null,
+                  "policy_direction": "in",
+                  "policy_id": "AUDIT",
+                  "policy_semantics": "first_match",
+                  "rule_id": "asa:a90e3fe7becc:AUDIT:10",
+                  "sequence": 10,
+                  "service_status": "known",
+                  "services": [
+                    {
+                      "description": null,
+                      "name": "udp",
+                      "port_ranges": [
+                        {
+                          "end": 53,
+                          "start": 53
+                        }
+                      ],
+                      "protocol": "udp",
+                      "resolution_status": "known",
+                      "service_id": "protocol:udp"
+                    }
+                  ],
+                  "source_location": {
+                    "line_end": null,
+                    "line_start": 10,
+                    "object_id": null,
+                    "object_path": null,
+                    "source_name": "policy_quality.cfg"
+                  },
+                  "source_status": "known",
+                  "source_zone": "outside",
+                  "sources": [
+                    {
+                      "cidrs": [],
+                      "description": null,
+                      "endpoint_id": "any",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "any",
+                      "name": "any",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "zone_status": "known"
+                }
+              ]
+            },
+            "limitations": [
+              "Вывод относится к нормализованным условиям политики; достижимость и влияние NAT не вычислялись."
+            ],
+            "related_rule_ids": [
+              "asa:a90e3fe7becc:AUDIT:10"
+            ],
+            "source_locations": [
+              {
+                "line_end": null,
+                "line_start": 10,
+                "object_id": null,
+                "object_path": null,
+                "source_name": "policy_quality.cfg"
+              }
+            ],
+            "summary": "Активное правило не содержит описания назначения."
+          },
+          "finding_id": "5b0ade7f-bdaf-544a-83ed-d8b9940eb8a1",
+          "first_seen": "2026-10-09T12:01:00Z",
+          "last_seen": "2026-10-09T12:01:00Z",
+          "recommendation": "Указать назначение правила, владельца и основание доступа.",
+          "revision_id": "70000000-0000-0000-0000-000000000001",
+          "severity": "low",
+          "status": "new",
+          "title": "Активное правило не содержит описания назначения."
+        }
+      ],
+      "limitations": [
+        {
+          "code": "INCOMPLETE_PARSE",
+          "message": "Источник разобран с ограничениями; отсутствие findings не доказывает корректность всей политики.",
+          "rule_ids": []
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "check_id": "FW-DISABLED",
+      "check_version": "1.0.0",
+      "findings": [
+        {
+          "affected_rule_ids": [
+            "asa:a90e3fe7becc:AUDIT:11"
+          ],
+          "category": "policy",
+          "check_id": "FW-DISABLED",
+          "confidence": 1.0,
+          "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+          "description": "Обнаружено отключённое правило.",
+          "device_id": "cisco-asa:ASA-ASSURANCE",
+          "evidence": {
+            "facts": {
+              "check_version": "1.0.0",
+              "revision_id": "70000000-0000-0000-0000-000000000001",
+              "rules": [
+                {
+                  "action": "allow",
+                  "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+                  "description": null,
+                  "description_status": "absent",
+                  "destination_status": "known",
+                  "destination_zone": null,
+                  "destinations": [
+                    {
+                      "cidrs": [],
+                      "description": null,
+                      "endpoint_id": "any",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "any",
+                      "name": "any",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "enabled": false,
+                  "logging_enabled": false,
+                  "logging_status": "known",
+                  "match_status": "known",
+                  "name": "AUDIT line 11",
+                  "owner": null,
+                  "policy_direction": "in",
+                  "policy_id": "AUDIT",
+                  "policy_semantics": "first_match",
+                  "rule_id": "asa:a90e3fe7becc:AUDIT:11",
+                  "sequence": 11,
+                  "service_status": "known",
+                  "services": [
+                    {
+                      "description": null,
+                      "name": "ip",
+                      "port_ranges": [],
+                      "protocol": "ip",
+                      "resolution_status": "known",
+                      "service_id": "protocol:ip"
+                    }
+                  ],
+                  "source_location": {
+                    "line_end": null,
+                    "line_start": 11,
+                    "object_id": null,
+                    "object_path": null,
+                    "source_name": "policy_quality.cfg"
+                  },
+                  "source_status": "known",
+                  "source_zone": "outside",
+                  "sources": [
+                    {
+                      "cidrs": [],
+                      "description": null,
+                      "endpoint_id": "any",
+                      "fqdn": null,
+                      "ip_ranges": [],
+                      "kind": "any",
+                      "name": "any",
+                      "resolution_status": "known",
+                      "zone": null
+                    }
+                  ],
+                  "zone_status": "known"
+                }
+              ]
+            },
+            "limitations": [
+              "Вывод относится к нормализованным условиям политики; достижимость и влияние NAT не вычислялись."
+            ],
+            "related_rule_ids": [
+              "asa:a90e3fe7becc:AUDIT:11"
+            ],
+            "source_locations": [
+              {
+                "line_end": null,
+                "line_start": 11,
+                "object_id": null,
+                "object_path": null,
+                "source_name": "policy_quality.cfg"
+              }
+            ],
+            "summary": "Обнаружено отключённое правило."
+          },
+          "finding_id": "442ef5b8-ba97-5865-a8dc-c4e4d187dc83",
+          "first_seen": "2026-10-09T12:01:00Z",
+          "last_seen": "2026-10-09T12:01:00Z",
+          "recommendation": "Проверить причину отключения и необходимость сохранения правила.",
+          "revision_id": "70000000-0000-0000-0000-000000000001",
+          "severity": "info",
+          "status": "new",
+          "title": "Обнаружено отключённое правило."
+        }
+      ],
+      "limitations": [
+        {
+          "code": "INCOMPLETE_PARSE",
+          "message": "Источник разобран с ограничениями; отсутствие findings не доказывает корректность всей политики.",
+          "rule_ids": []
+        }
+      ],
+      "status": "partial"
+    }
+  ],
+  "configuration_id": "c30c3cd8-2c58-527b-8913-e68ebc7620b1",
+  "device_id": "cisco-asa:ASA-ASSURANCE",
+  "max_pair_rules": 1000,
+  "parse_coverage": {
+    "discovered_constructs": 10,
+    "recognized_constructs": 9,
+    "unsupported_constructs": 1
+  },
+  "parse_errors": [],
+  "parse_warnings": [
+    {
+      "code": "UNSUPPORTED_ACCESS_LIST",
+      "level": "warning",
+      "message": "Конструкция неполна или не поддерживается; её семантика не расширяется.",
+      "source_location": {
+        "line_end": null,
+        "line_start": 13,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "policy_quality.cfg"
+      }
+    }
+  ],
+  "parser_version": "0.2.0",
+  "require_comments": true,
+  "require_logging": true,
+  "revision_id": "70000000-0000-0000-0000-000000000001",
+  "schema_version": "1.0.0",
+  "unsupported_constructs": [
+    {
+      "construct_type": "access-list",
+      "message": "Конструкция неполна или не поддерживается; её семантика не расширяется.",
+      "source_location": {
+        "line_end": null,
+        "line_start": 13,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "policy_quality.cfg"
+      }
+    }
+  ]
+}

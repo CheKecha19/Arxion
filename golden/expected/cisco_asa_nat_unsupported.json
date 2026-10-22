@@ -1,0 +1,252 @@
+{
+  "configuration": {
+    "captured_at": "2026-10-09T12:00:00Z",
+    "configuration_id": "3214d67e-ac9a-590e-8a84-169f919dadc1",
+    "content_sha256": "443ebfb43e1b90a123d437341ebe8422fb768f997c0c1bde0c903c23a4c937c9",
+    "device_id": "cisco-asa:ASA-NAT",
+    "imported_at": "2026-10-09T12:01:00Z",
+    "parser_version": "0.2.0",
+    "platform": "asa-9.16",
+    "source_name": "asa_nat_unsupported.cfg",
+    "vendor": "cisco"
+  },
+  "coverage": {
+    "discovered_constructs": 5,
+    "recognized_constructs": 4,
+    "unsupported_constructs": 1
+  },
+  "endpoints": [
+    {
+      "cidrs": [],
+      "description": null,
+      "endpoint_id": "any",
+      "fqdn": null,
+      "ip_ranges": [],
+      "kind": "any",
+      "name": "any",
+      "resolution_status": "known",
+      "zone": null
+    },
+    {
+      "cidrs": [
+        "192.0.2.30/32"
+      ],
+      "description": null,
+      "endpoint_id": "object:INTERNAL_WEB",
+      "fqdn": null,
+      "ip_ranges": [],
+      "kind": "object",
+      "name": "INTERNAL_WEB",
+      "resolution_status": "known",
+      "zone": null
+    }
+  ],
+  "errors": [],
+  "rules": [
+    {
+      "action": "allow",
+      "configuration_id": "3214d67e-ac9a-590e-8a84-169f919dadc1",
+      "description": null,
+      "description_status": "absent",
+      "destination_status": "known",
+      "destination_zone": null,
+      "destinations": [
+        {
+          "cidrs": [
+            "192.0.2.30/32"
+          ],
+          "description": null,
+          "endpoint_id": "object:INTERNAL_WEB",
+          "fqdn": null,
+          "ip_ranges": [],
+          "kind": "object",
+          "name": "INTERNAL_WEB",
+          "resolution_status": "known",
+          "zone": null
+        }
+      ],
+      "enabled": true,
+      "logging_enabled": true,
+      "logging_status": "known",
+      "match_status": "known",
+      "name": "OUTSIDE_IN line 8",
+      "owner": null,
+      "policy_direction": "in",
+      "policy_id": "OUTSIDE_IN",
+      "policy_semantics": "first_match",
+      "rule_id": "asa:443ebfb43e1b:OUTSIDE_IN:8",
+      "sequence": 8,
+      "service_status": "known",
+      "services": [
+        {
+          "description": null,
+          "name": "tcp",
+          "port_ranges": [
+            {
+              "end": 443,
+              "start": 443
+            }
+          ],
+          "protocol": "tcp",
+          "resolution_status": "known",
+          "service_id": "protocol:tcp"
+        }
+      ],
+      "source_location": {
+        "line_end": null,
+        "line_start": 8,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "asa_nat_unsupported.cfg"
+      },
+      "source_status": "known",
+      "source_zone": "outside",
+      "sources": [
+        {
+          "cidrs": [],
+          "description": null,
+          "endpoint_id": "any",
+          "fqdn": null,
+          "ip_ranges": [],
+          "kind": "any",
+          "name": "any",
+          "resolution_status": "known",
+          "zone": null
+        }
+      ],
+      "zone_status": "known"
+    },
+    {
+      "action": "deny",
+      "configuration_id": "3214d67e-ac9a-590e-8a84-169f919dadc1",
+      "description": null,
+      "description_status": "absent",
+      "destination_status": "known",
+      "destination_zone": null,
+      "destinations": [
+        {
+          "cidrs": [],
+          "description": null,
+          "endpoint_id": "any",
+          "fqdn": null,
+          "ip_ranges": [],
+          "kind": "any",
+          "name": "any",
+          "resolution_status": "known",
+          "zone": null
+        }
+      ],
+      "enabled": true,
+      "logging_enabled": true,
+      "logging_status": "known",
+      "match_status": "known",
+      "name": "OUTSIDE_IN line 9",
+      "owner": null,
+      "policy_direction": "in",
+      "policy_id": "OUTSIDE_IN",
+      "policy_semantics": "first_match",
+      "rule_id": "asa:443ebfb43e1b:OUTSIDE_IN:9",
+      "sequence": 9,
+      "service_status": "known",
+      "services": [
+        {
+          "description": null,
+          "name": "ip",
+          "port_ranges": [],
+          "protocol": "ip",
+          "resolution_status": "known",
+          "service_id": "protocol:ip"
+        }
+      ],
+      "source_location": {
+        "line_end": null,
+        "line_start": 9,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "asa_nat_unsupported.cfg"
+      },
+      "source_status": "known",
+      "source_zone": "outside",
+      "sources": [
+        {
+          "cidrs": [],
+          "description": null,
+          "endpoint_id": "any",
+          "fqdn": null,
+          "ip_ranges": [],
+          "kind": "any",
+          "name": "any",
+          "resolution_status": "known",
+          "zone": null
+        }
+      ],
+      "zone_status": "known"
+    }
+  ],
+  "services": [
+    {
+      "description": null,
+      "name": "tcp",
+      "port_ranges": [
+        {
+          "end": 443,
+          "start": 443
+        }
+      ],
+      "protocol": "tcp",
+      "resolution_status": "known",
+      "service_id": "protocol:tcp"
+    },
+    {
+      "description": null,
+      "name": "ip",
+      "port_ranges": [],
+      "protocol": "ip",
+      "resolution_status": "known",
+      "service_id": "protocol:ip"
+    }
+  ],
+  "source_map": {
+    "asa:443ebfb43e1b:OUTSIDE_IN:8": {
+      "line_end": null,
+      "line_start": 8,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "asa_nat_unsupported.cfg"
+    },
+    "asa:443ebfb43e1b:OUTSIDE_IN:9": {
+      "line_end": null,
+      "line_start": 9,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "asa_nat_unsupported.cfg"
+    }
+  },
+  "unsupported_constructs": [
+    {
+      "construct_type": "nat",
+      "message": "NAT не входит в первый срез Cisco ASA parser adapter.",
+      "source_location": {
+        "line_end": null,
+        "line_start": 11,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "asa_nat_unsupported.cfg"
+      }
+    }
+  ],
+  "warnings": [
+    {
+      "code": "UNSUPPORTED_NAT",
+      "level": "warning",
+      "message": "NAT сохранён как неподдержанная конструкция.",
+      "source_location": {
+        "line_end": null,
+        "line_start": 11,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "asa_nat_unsupported.cfg"
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+! Cisco ACL Test Configuration
+ip access-list extended WEB_ACCESS
+ permit tcp 192.168.1.0 0.0.0.255 any eq 80
+ permit tcp 192.168.1.0 0.0.0.255 any eq 443
+ permit tcp 10.0.0.0 0.0.0.255 any eq 22
+
+! Standard ACL
+access-list 10 permit 192.168.0.0 0.0.255.255
+
+! Another extended ACL
+ip access-list extended MAIL_ACCESS
+ permit tcp any any eq 25
+ permit tcp any any eq 110
+ permit tcp any any eq 143
+ permit tcp any any eq 587
