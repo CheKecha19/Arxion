@@ -1,0 +1,80 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "firewall-compliance"
+version = "0.1.0a0"
+description = "Локальная система анализа конфигураций сетевого оборудования"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [
+  { name = "Firewall Compliance Team" },
+]
+dependencies = [
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3",
+  "structlog>=24.4,<26",
+  "typer>=0.15,<1",
+  "PySide6>=6.8,<7",
+]
+
+[project.optional-dependencies]
+analysis = [
+  "networkx>=3.4,<4",
+]
+reports = [
+  "jinja2>=3.1,<4",
+]
+storage = [
+  "alembic>=1.14,<2",
+  "sqlalchemy>=2.0,<3",
+]
+
+[dependency-groups]
+dev = [
+  "hypothesis>=6.120,<7",
+  "mypy>=1.14,<2",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6.0,<7",
+  "ruff>=0.9,<1",
+  "pyinstaller>=6.11,<7",
+]
+
+[project.scripts]
+firewall-compliance = "firewall_compliance.interfaces.cli.main:main"
+firewall-compliance-desktop = "firewall_compliance.interfaces.desktop.qt_app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/firewall_compliance"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["-ra", "--strict-markers", "-p", "no:cacheprovider"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests", "scripts"]
+extend-exclude = [".uv-cache", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["firewall_compliance"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+strict = true
+warn_unreachable = true
+show_error_codes = true
+pretty = true
+
+[[tool.mypy.overrides]]
+module = ["networkx.*"]
+ignore_missing_imports = true

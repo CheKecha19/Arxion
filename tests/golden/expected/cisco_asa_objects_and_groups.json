@@ -1,0 +1,242 @@
+{
+  "configuration": {
+    "captured_at": "2026-10-09T12:00:00Z",
+    "configuration_id": "55474965-80ad-51a8-88b0-3427a7d3d488",
+    "content_sha256": "43d43050a5710cde16eed552c2305290515a29e74806a1a69c79db27f5ec37aa",
+    "device_id": "cisco-asa:ASA-OBJECTS",
+    "imported_at": "2026-10-09T12:01:00Z",
+    "parser_version": "0.2.0",
+    "platform": "asa-9.16",
+    "source_name": "asa_objects_and_groups.cfg",
+    "vendor": "cisco"
+  },
+  "coverage": {
+    "discovered_constructs": 7,
+    "recognized_constructs": 7,
+    "unsupported_constructs": 0
+  },
+  "endpoints": [
+    {
+      "cidrs": [
+        "198.51.100.0/24"
+      ],
+      "description": null,
+      "endpoint_id": "group:TRUSTED_SOURCES",
+      "fqdn": null,
+      "ip_ranges": [],
+      "kind": "group",
+      "name": "TRUSTED_SOURCES",
+      "resolution_status": "known",
+      "zone": null
+    },
+    {
+      "cidrs": [
+        "192.0.2.20/32"
+      ],
+      "description": null,
+      "endpoint_id": "object:WEB_SERVER",
+      "fqdn": null,
+      "ip_ranges": [],
+      "kind": "object",
+      "name": "WEB_SERVER",
+      "resolution_status": "known",
+      "zone": null
+    },
+    {
+      "cidrs": [],
+      "description": null,
+      "endpoint_id": "any",
+      "fqdn": null,
+      "ip_ranges": [],
+      "kind": "any",
+      "name": "any",
+      "resolution_status": "known",
+      "zone": null
+    }
+  ],
+  "errors": [],
+  "rules": [
+    {
+      "action": "allow",
+      "configuration_id": "55474965-80ad-51a8-88b0-3427a7d3d488",
+      "description": null,
+      "description_status": "absent",
+      "destination_status": "known",
+      "destination_zone": null,
+      "destinations": [
+        {
+          "cidrs": [
+            "192.0.2.20/32"
+          ],
+          "description": null,
+          "endpoint_id": "object:WEB_SERVER",
+          "fqdn": null,
+          "ip_ranges": [],
+          "kind": "object",
+          "name": "WEB_SERVER",
+          "resolution_status": "known",
+          "zone": null
+        }
+      ],
+      "enabled": true,
+      "logging_enabled": true,
+      "logging_status": "known",
+      "match_status": "known",
+      "name": "ADMIN_TO_WEB line 14",
+      "owner": null,
+      "policy_direction": "in",
+      "policy_id": "ADMIN_TO_WEB",
+      "policy_semantics": "first_match",
+      "rule_id": "asa:43d43050a571:ADMIN_TO_WEB:14",
+      "sequence": 14,
+      "service_status": "known",
+      "services": [
+        {
+          "description": null,
+          "name": "WEB_SERVICES",
+          "port_ranges": [
+            {
+              "end": 443,
+              "start": 443
+            }
+          ],
+          "protocol": "tcp",
+          "resolution_status": "known",
+          "service_id": "service-group:WEB_SERVICES"
+        }
+      ],
+      "source_location": {
+        "line_end": null,
+        "line_start": 14,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "asa_objects_and_groups.cfg"
+      },
+      "source_status": "known",
+      "source_zone": "inside",
+      "sources": [
+        {
+          "cidrs": [
+            "198.51.100.0/24"
+          ],
+          "description": null,
+          "endpoint_id": "group:TRUSTED_SOURCES",
+          "fqdn": null,
+          "ip_ranges": [],
+          "kind": "group",
+          "name": "TRUSTED_SOURCES",
+          "resolution_status": "known",
+          "zone": null
+        }
+      ],
+      "zone_status": "known"
+    },
+    {
+      "action": "deny",
+      "configuration_id": "55474965-80ad-51a8-88b0-3427a7d3d488",
+      "description": null,
+      "description_status": "absent",
+      "destination_status": "known",
+      "destination_zone": null,
+      "destinations": [
+        {
+          "cidrs": [],
+          "description": null,
+          "endpoint_id": "any",
+          "fqdn": null,
+          "ip_ranges": [],
+          "kind": "any",
+          "name": "any",
+          "resolution_status": "known",
+          "zone": null
+        }
+      ],
+      "enabled": true,
+      "logging_enabled": true,
+      "logging_status": "known",
+      "match_status": "known",
+      "name": "ADMIN_TO_WEB line 15",
+      "owner": null,
+      "policy_direction": "in",
+      "policy_id": "ADMIN_TO_WEB",
+      "policy_semantics": "first_match",
+      "rule_id": "asa:43d43050a571:ADMIN_TO_WEB:15",
+      "sequence": 15,
+      "service_status": "known",
+      "services": [
+        {
+          "description": null,
+          "name": "ip",
+          "port_ranges": [],
+          "protocol": "ip",
+          "resolution_status": "known",
+          "service_id": "protocol:ip"
+        }
+      ],
+      "source_location": {
+        "line_end": null,
+        "line_start": 15,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "asa_objects_and_groups.cfg"
+      },
+      "source_status": "known",
+      "source_zone": "inside",
+      "sources": [
+        {
+          "cidrs": [],
+          "description": null,
+          "endpoint_id": "any",
+          "fqdn": null,
+          "ip_ranges": [],
+          "kind": "any",
+          "name": "any",
+          "resolution_status": "known",
+          "zone": null
+        }
+      ],
+      "zone_status": "known"
+    }
+  ],
+  "services": [
+    {
+      "description": null,
+      "name": "WEB_SERVICES",
+      "port_ranges": [
+        {
+          "end": 443,
+          "start": 443
+        }
+      ],
+      "protocol": "tcp",
+      "resolution_status": "known",
+      "service_id": "service-group:WEB_SERVICES"
+    },
+    {
+      "description": null,
+      "name": "ip",
+      "port_ranges": [],
+      "protocol": "ip",
+      "resolution_status": "known",
+      "service_id": "protocol:ip"
+    }
+  ],
+  "source_map": {
+    "asa:43d43050a571:ADMIN_TO_WEB:14": {
+      "line_end": null,
+      "line_start": 14,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "asa_objects_and_groups.cfg"
+    },
+    "asa:43d43050a571:ADMIN_TO_WEB:15": {
+      "line_end": null,
+      "line_start": 15,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "asa_objects_and_groups.cfg"
+    }
+  },
+  "unsupported_constructs": [],
+  "warnings": []
+}

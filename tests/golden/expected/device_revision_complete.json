@@ -1,0 +1,284 @@
+{
+  "application_version": "0.1.0a0",
+  "device": {
+    "context": null,
+    "device_id": "fixture-device",
+    "hostname": "fixture-device",
+    "management_ip": null,
+    "platform": "fixture-platform",
+    "vendor": "test"
+  },
+  "imported_at": "2026-10-09T10:01:00Z",
+  "interfaces": [
+    {
+      "addresses": [
+        "10.0.0.1/24"
+      ],
+      "addresses_status": "known",
+      "data_status": "known",
+      "device_id": "fixture-device",
+      "enabled": true,
+      "interface_id": "interface:inside",
+      "manual_reason": null,
+      "name": "inside",
+      "observation": null,
+      "origin": "imported",
+      "recorded_at": null,
+      "source_document_id": "20000000-0000-0000-0000-000000000001",
+      "source_location": {
+        "line_end": null,
+        "line_start": null,
+        "object_id": null,
+        "object_path": "$.network",
+        "source_name": "fixture.config"
+      },
+      "zone": "inside"
+    }
+  ],
+  "interfaces_evidence": {
+    "complete": true,
+    "manual_reason": null,
+    "observation": null,
+    "recorded_at": null,
+    "scope": "interfaces",
+    "source_document_ids": [
+      "20000000-0000-0000-0000-000000000001"
+    ]
+  },
+  "interfaces_status": "known",
+  "legacy_observed_at": null,
+  "migration_limitations": [],
+  "network_segments": [
+    {
+      "cidrs": [
+        "10.0.0.0/24"
+      ],
+      "data_status": "known",
+      "device_id": "fixture-device",
+      "manual_reason": null,
+      "name": "inside-network",
+      "observation": null,
+      "origin": "imported",
+      "recorded_at": null,
+      "segment_id": "segment:inside",
+      "source_document_id": "20000000-0000-0000-0000-000000000001",
+      "source_location": {
+        "line_end": null,
+        "line_start": null,
+        "object_id": null,
+        "object_path": "$.network",
+        "source_name": "fixture.config"
+      },
+      "zone": "inside"
+    }
+  ],
+  "network_segments_evidence": {
+    "complete": true,
+    "manual_reason": null,
+    "observation": null,
+    "recorded_at": null,
+    "scope": "segments",
+    "source_document_ids": [
+      "20000000-0000-0000-0000-000000000001"
+    ]
+  },
+  "network_segments_status": "known",
+  "observation_window": null,
+  "observed_at": "2026-10-09T10:00:00Z",
+  "parse_result": {
+    "configuration": {
+      "captured_at": "2026-10-09T10:00:00Z",
+      "configuration_id": "00000000-0000-0000-0000-000000000001",
+      "content_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+      "device_id": "fixture-device",
+      "imported_at": "2026-10-09T10:01:00Z",
+      "parser_version": "1.0.0",
+      "platform": "fixture-platform",
+      "source_name": "fixture.config",
+      "vendor": "test"
+    },
+    "coverage": {
+      "discovered_constructs": 3,
+      "recognized_constructs": 2,
+      "unsupported_constructs": 1
+    },
+    "endpoints": [
+      {
+        "cidrs": [],
+        "description": null,
+        "endpoint_id": "any",
+        "fqdn": null,
+        "ip_ranges": [],
+        "kind": "any",
+        "name": "any",
+        "resolution_status": "known",
+        "zone": null
+      }
+    ],
+    "errors": [],
+    "rules": [
+      {
+        "action": "drop",
+        "configuration_id": "00000000-0000-0000-0000-000000000001",
+        "description": null,
+        "description_status": "unknown",
+        "destination_status": "known",
+        "destination_zone": null,
+        "destinations": [
+          {
+            "cidrs": [],
+            "description": null,
+            "endpoint_id": "any",
+            "fqdn": null,
+            "ip_ranges": [],
+            "kind": "any",
+            "name": "any",
+            "resolution_status": "known",
+            "zone": null
+          }
+        ],
+        "enabled": true,
+        "logging_enabled": null,
+        "logging_status": "unknown",
+        "match_status": "unknown",
+        "name": "Блокирующее тестовое правило",
+        "owner": null,
+        "policy_direction": null,
+        "policy_id": null,
+        "policy_semantics": null,
+        "rule_id": "fixture-rule-1",
+        "sequence": 1,
+        "service_status": "known",
+        "services": [
+          {
+            "description": null,
+            "name": "ip",
+            "port_ranges": [],
+            "protocol": "ip",
+            "resolution_status": "known",
+            "service_id": "ip"
+          }
+        ],
+        "source_location": {
+          "line_end": null,
+          "line_start": null,
+          "object_id": null,
+          "object_path": "$.rules[0]",
+          "source_name": "fixture.config"
+        },
+        "source_status": "unsupported",
+        "source_zone": null,
+        "sources": [],
+        "zone_status": "unknown"
+      }
+    ],
+    "services": [
+      {
+        "description": null,
+        "name": "ip",
+        "port_ranges": [],
+        "protocol": "ip",
+        "resolution_status": "known",
+        "service_id": "ip"
+      }
+    ],
+    "source_map": {
+      "fixture-rule-1": {
+        "line_end": null,
+        "line_start": null,
+        "object_id": null,
+        "object_path": "$.rules[0]",
+        "source_name": "fixture.config"
+      }
+    },
+    "unsupported_constructs": [],
+    "warnings": []
+  },
+  "revision_id": "10000000-0000-0000-0000-000000000001",
+  "routes": [
+    {
+      "administrative_distance": 1,
+      "data_status": "known",
+      "destination": "0.0.0.0/0",
+      "device_id": "fixture-device",
+      "is_blackhole": false,
+      "manual_reason": null,
+      "metric": 1,
+      "next_hop": null,
+      "observation": null,
+      "origin": "imported",
+      "outgoing_interface_id": "interface:inside",
+      "recorded_at": null,
+      "route_id": "route:default",
+      "route_kind": "static",
+      "source_document_id": "20000000-0000-0000-0000-000000000001",
+      "source_location": {
+        "line_end": null,
+        "line_start": null,
+        "object_id": null,
+        "object_path": "$.network",
+        "source_name": "fixture.config"
+      },
+      "table_id": "default"
+    }
+  ],
+  "routes_evidence": {
+    "complete": true,
+    "manual_reason": null,
+    "observation": null,
+    "recorded_at": null,
+    "scope": "configured_routes",
+    "source_document_ids": [
+      "20000000-0000-0000-0000-000000000001"
+    ]
+  },
+  "routes_status": "known",
+  "schema_version": "2.0.0",
+  "sources": [
+    {
+      "captured_at": "2026-10-09T10:00:00Z",
+      "content_sha256": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+      "file_modified_at": null,
+      "kind": "configuration",
+      "observation": {
+        "method": "synthetic",
+        "observed_at": "2026-10-09T10:00:00Z",
+        "reference": "Детерминированный тестовый снимок."
+      },
+      "source_document_id": "20000000-0000-0000-0000-000000000001",
+      "source_name": "fixture.config"
+    }
+  ],
+  "topology_evidence": {
+    "complete": true,
+    "manual_reason": null,
+    "observation": null,
+    "recorded_at": null,
+    "scope": "topology",
+    "source_document_ids": [
+      "20000000-0000-0000-0000-000000000001"
+    ]
+  },
+  "topology_links": [
+    {
+      "data_status": "known",
+      "device_id": "fixture-device",
+      "left_endpoint_id": "interface:inside",
+      "link_id": "link:inside-network",
+      "manual_reason": null,
+      "observation": null,
+      "origin": "imported",
+      "recorded_at": null,
+      "right_endpoint_id": "segment:inside",
+      "source_document_id": "20000000-0000-0000-0000-000000000001",
+      "source_location": {
+        "line_end": null,
+        "line_start": null,
+        "object_id": null,
+        "object_path": "$.network",
+        "source_name": "fixture.config"
+      }
+    }
+  ],
+  "topology_status": "known"
+}

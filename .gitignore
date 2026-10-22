@@ -1,0 +1,38 @@
+# Виртуальные окружения и Python-кэш
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Артефакты сборки и отчёты
+build/
+dist/
+*.egg-info/
+artifacts/
+reports/
+dev/.venv/
+dev/build/
+dev/tools/
+dev/mypy-cache/
+test/pytest-temp/
+test/pytest.xml
+test/packaged-smoke/
+prod/FirewallCompliance/
+prod/*.zip
+
+# Локальные данные и чувствительные конфигурации
+data/
+output/
+*.env
+.env
+*.cfg
+*.conf
+*.acl
+*.backup
+
+# Среда разработки
+.vscode/
+.idea/
