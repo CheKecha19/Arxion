@@ -1,0 +1,1107 @@
+# R2: небольшие шаги реализации
+
+[Вход и правила](../IMPLEMENTATION_STEPS.md) · [Матрица покрытия](COVERAGE.md)
+
+По указанию пользователя сначала выполняется реализация; проверки и независимые review отложены, acceptance не подразумевается. Implementation queue обходит только явно сохранённые deferred_verification_dependencies; функциональные зависимости обязательны. Private inactive helpers разрешены; опасная активация на пользовательской БД ожидает verification. Пути модулей относительно src/firewall_compliance/, кроме явных artifacts/specifications/tests/scripts; предлагаемые модули разрешаются JIT до GO. accepted_bounded_existing_evidence означает только historical synthetic U01–U06, не полную приёмку всех связанных UX требований.
+
+<a id="step-r2-001"></a>
+## STEP-R2-001 — Независимая приёмка frozen read-only facade
+
+Приняты только XS-R2-001-01: [static review одного branch](../../../artifacts/roadmap-r2/xs-r2-001-01-review.md) и XS-R2-001-02: [static review future-sibling branch](../../../artifacts/roadmap-r2/xs-r2-001-02-review.md) и XS-R2-001-03: [static review только rules](../../../artifacts/roadmap-r2/xs-r2-001-03-review.md). XS-R2-001-04: [static review только OTHER-DEVICE](../../../artifacts/roadmap-r2/xs-r2-001-04-review.md). Родительский пакет остаётся implemented_qa_pending. XS06–09 и aggregate XS05 — verification_deferred без acceptance. XS06 test edit завершён, независимый review отменён; historical focused 1 passed и Ruff/format exit 0 не заменяют приёмку. Единственный active source XS — XS-R7-032-02 (preparatory logical-link topology renderer); XS-R3-008-05 — implementation_done_unverified; policy-map canvas/wiring — implementation_done_unverified, UI не запускали. Приоритет R2 отложен, не отменён; цельные migration/restore API не завершены. XS-R2-012-02/03/05 — implementation_done_unverified: pure legacy21 DDL / exact guard verifier / trusted_schema predicate; guard wrapper не написан. XS-R2-003-01/02/03/04 и XS-R2-012-01 — implementation_done_unverified, callers не подключены, checks не запускались. XS-R2-008-07 — implementation_done_unverified (private raw _copy_forensic_file: bounded copy, exclusive xb, hash/flush/fsync, partial owned output retained on error); XS-R2-008-06 — implementation_done_unverified; full restore wiring/functional gates открыты; XS-R2-004-13 — implementation_done_unverified, broader backup feature открыт; XS-R2-004-01/05/06/07/08/09/10/11/12 — implementation_done_unverified, без acceptance. API uncalled/not UI-wired; caller lease/stable source identity required. Finalizer journal_mode=DELETE относится только к owned candidate. Helpers не запускались; candidate validation только supported v1 legacy, guarded v2 reader dispatch compatibility pending и требует будущей реализации, не финальное v1-only ограничение; broad candidate acceptance остаётся открытым. Функциональные gates broader wiring/activation сохранены.
+
+- Результат: Независимая приёмка frozen read-only facade.
+- Внутри: Независимая приёмка frozen read-only facade; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Включение v2/UI и новый runtime запуск.
+- Файлы/контракт: interfaces/desktop/organization_inspection.py;  interfaces/desktop/organization_models.py;  interfaces/desktop/organization_workspace.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/001; размер S.
+- Приёмка и проверки: Reviewer сверяет slice1-freeze-v2 и P2: null report не скрывает malformed known payload; сравниваются все общие факты/metadata; recorded 70passed не заменяет static recheck.
+- Статус: **implemented_qa_pending**. Доказательства: artifacts/roadmap-r2/slice1-evidence-v2.md, artifacts/roadmap-r2/slice1-freeze-v2.json.
+- Требования: storage:DATA-01, storage:DATA-02.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-001-01` | Проверить null-report known ParseResult branch | accepted — independent static one-case review |
+| `XS-R2-001-02` | Проверить future sibling и supported malformed child branch | accepted — independent static one-case review |
+| `XS-R2-001-03` | Проверить SAMEUUID mismatch одного parsed rule | accepted — independent static rules-only review |
+| `XS-R2-001-04` | Проверить SAMEUUID parse→revision device ID mismatch | accepted — independent static device_id=OTHER-DEVICE-only review |
+| `XS-R2-001-05` | Записать nonauthor closure frozen slice1-v2 | verification_deferred |
+| `XS-R2-001-06` | Проверить SAMEUUID altered source-map branch | verification_deferred |
+| `XS-R2-001-07` | Проверить SAMEUUID altered coverage branch | verification_deferred |
+| `XS-R2-001-08` | Проверить shared report parser-version mismatch branch | verification_deferred |
+| `XS-R2-001-09` | Проверить envelope hash mismatch branch | verification_deferred |
+
+<a id="step-r2-002"></a>
+## STEP-R2-002 — Независимая приёмка выбранного recovery протокола
+
+- Результат: Независимая приёмка выбранного recovery протокола.
+- Внутри: Независимая приёмка выбранного recovery протокола; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Объявление proposal реализованным.
+- Файлы/контракт: artifacts/roadmap-r2/slice2-protocol.md;  artifacts/roadmap-r2/recovery-state-coverage.md.
+- Зависимости: STEP-R2-001. Порядок: R2/002; размер S.
+- Приёмка и проверки: Невходящий в авторов reviewer проверяет stale-v1/UDF guard, BEGIN IMMEDIATE, second RO backup, rename/journal crash boundaries и recovery до code GO.
+- Статус: **protocol_review_pending**. Доказательства: artifacts/roadmap-r2/slice2-protocol.md, artifacts/roadmap-r2/recovery-state-coverage.md.
+- Требования: storage:DATA-04, storage:DATA-05, storage:DATA-12.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-002-01` | Проверить second-RO backup reservation invariant | verification_deferred |
+| `XS-R2-002-02` | Проверить connection-local stale-v1 writer guard | verification_deferred |
+| `XS-R2-002-03` | Проверить restore-swap journal crash branch | verification_deferred |
+| `XS-R2-002-04` | Проверить commit-lost retry invariant | verification_deferred |
+| `XS-R2-002-05` | Проверить restore postactivation validation-failure branch | verification_deferred |
+| `XS-R2-002-06` | Проверить source fingerprint mismatch до DDL | verification_deferred |
+| `XS-R2-002-07` | Проверить trusted_schema fail-closed branch | verification_deferred |
+| `XS-R2-002-08` | Проверить interrupted backup candidate never verified | verification_deferred |
+| `XS-R2-002-09` | Проверить corrupt-current forensic preservation invariant | verification_deferred |
+| `XS-R2-002-99` | Записать nonauthor protocol gate после всех invariant reviews | verification_deferred |
+
+<a id="step-r2-003"></a>
+## STEP-R2-003 — Межпроцессная lease по каноническому пути БД
+
+XS01–04 реализованы без проверки: canonical same-dir .org.lock с absent-DB/strict-parent/link guards; nonblocking OS msvcrt/fcntl WorkspaceLease; bounded safe LeaseOwner; workspace_lease с finally release. Callers не подключены, package не принят.
+
+- Результат: Межпроцессная lease по каноническому пути БД.
+- Внутри: Межпроцессная lease по каноническому пути БД; необходимые регрессии и независимая приёмка этого результата.
+- За границей: SQLite migration.
+- Файлы/контракт: предлагаемый organization_lock.py.
+- Зависимости: STEP-R2-002. Порядок: R2/003; размер S.
+- Приёмка и проверки: Два процесса: contention/release/crash и path aliases; PID-only lock не проходит.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-12.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-003-01` | Разрешить canonical lock key | implementation_done_unverified; verification deferred |
+| `XS-R2-003-02` | Получить OS byte lock с busy branch | implementation_done_unverified; callers not wired |
+| `XS-R2-003-03` | Сформатировать safe owner metadata | implementation_done_unverified; callers not wired |
+| `XS-R2-003-04` | Освободить lease в finally после exception | implementation_done_unverified; callers not wired |
+
+<a id="step-r2-004"></a>
+## STEP-R2-004 — Создание SQLite-aware backup candidate
+
+- Результат: Создание SQLite-aware backup candidate.
+- Внутри: Создание SQLite-aware backup candidate; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Публикация verified backup.
+- Файлы/контракт: предлагаемый organization_backup.py.
+- Зависимости: STEP-R2-003, STEP-R2-051, STEP-R2-052. Порядок: R2/004; размер S.
+- Приёмка и проверки: Committed snapshot под reservation; page/deadline/cancel; ошибка candidate оставляет источник побайтно прежним.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-04.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-004-05` | Private `_validate_backup_destination`, без I/O/DB/wiring | implementation_done_unverified |
+| `XS-R2-004-06` | Private `_open_backup_source`, URI mode=ro + query_only | implementation_done_unverified |
+| `XS-R2-004-07` | Private `_copy_backup_snapshot`, новый candidate + online backup, без вызова/wiring | implementation_done_unverified |
+| `XS-R2-004-01` | Private `_backup_candidate_path`: UUID hidden sibling, no file creation | implementation_done_unverified; broader functional gates preserved |
+| `XS-R2-004-08` | Private `_verify_sqlite_integrity`, exact ok, RO future PRAGMA | implementation_done_unverified; never executed |
+| `XS-R2-004-09` | Private `_backup_sha256`, bounded chunks for future provenance | implementation_done_unverified |
+| `XS-R2-004-10` | Private `_validate_backup_candidate`: physical + RO inspector, v1 legacy only | implementation_done_unverified; guarded v2 compatibility pending |
+| `XS-R2-004-11` | Public frozen/slots WorkspaceBackup(path, sha256, size_bytes) return contract | implementation_done_unverified |
+| `XS-R2-004-12` | Private `_finalize_backup_candidate`: owned candidate mode=rw, journal_mode=DELETE | implementation_done_unverified; never invoked |
+| `XS-R2-004-13` | Public `create_workspace_backup`: composition, fsync, same-dir replace | implementation_done_unverified; v2 compatibility required |
+| `XS-R2-004-02` | Снять snapshot через second-RO connection | planned |
+| `XS-R2-004-03` | Остановить backup по page/deadline | planned |
+| `XS-R2-004-04` | Обработать cancel до DDL без изменения source | planned |
+
+<a id="step-r2-005"></a>
+## STEP-R2-005 — Независимая проверка backup candidate
+
+- Результат: Независимая проверка backup candidate.
+- Внутри: Независимая проверка backup candidate; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Расшифровка секретов.
+- Файлы/контракт: interfaces/desktop/organization_inspection.py;  предлагаемый backup verifier.
+- Зависимости: STEP-R2-004. Порядок: R2/005; размер S.
+- Приёмка и проверки: Integrity/FK/typed multiset/payload dispatch; ciphertext byte parity; подмена при прежних counts отвергается.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-04.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-005-01` | Проверить integrity result | planned |
+| `XS-R2-005-02` | Проверить foreign-key relations | planned |
+| `XS-R2-005-03` | Сравнить typed-multiset digest | planned |
+| `XS-R2-005-04` | Сравнить supported payload dispatch | planned |
+| `XS-R2-005-05` | Сравнить protected TEXT byte parity | planned |
+
+<a id="step-r2-006"></a>
+## STEP-R2-006 — Публикация проверенной копии с manifest
+
+- Результат: Публикация проверенной копии с manifest.
+- Внутри: Публикация проверенной копии с manifest; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Restore activation.
+- Файлы/контракт: предлагаемый organization_backup.py:publish.
+- Зависимости: STEP-R2-005. Порядок: R2/006; размер S.
+- Приёмка и проверки: Атомарно публикуется manifest только после проверки DB; незавершённый candidate никогда не verified; orphan policy проверена.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-04.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-006-01` | Сериализовать safe manifest | planned |
+| `XS-R2-006-02` | Опубликовать verified manifest после DB candidate | planned |
+| `XS-R2-006-03` | Оставить failed/orphan candidate unverified | planned |
+
+<a id="step-r2-007"></a>
+## STEP-R2-007 — Подготовка отдельного restore staging
+
+- Результат: Подготовка отдельного restore staging.
+- Внутри: Подготовка отдельного restore staging; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Замена текущего файла.
+- Файлы/контракт: предлагаемый organization_restore.py:prepare.
+- Зависимости: STEP-R2-006. Порядок: R2/007; размер S.
+- Приёмка и проверки: Corrupt/newer candidate отвергнут; v1 original backup не меняется при подготовке staged derivative.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-04.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-007-01` | Проверить restore source version | planned |
+| `XS-R2-007-02` | Построить staged derivative path | planned |
+| `XS-R2-007-03` | Защитить original backup immutable invariant | planned |
+
+<a id="step-r2-008"></a>
+## STEP-R2-008 — Journaled restore swap и startup reconciliation
+
+- Результат: Journaled restore swap и startup reconciliation.
+- Внутри: Journaled restore swap и startup reconciliation; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Изменение реальной пользовательской БД при разработке.
+- Файлы/контракт: предлагаемый organization_restore.py:activate/reconcile.
+- Зависимости: STEP-R2-007, STEP-R2-002. Порядок: R2/008; размер S.
+- Приёмка и проверки: Crash на каждой journal/sidecar/main rename границе даёт valid old/new либо явную recoverable остановку; никакой silent empty DB; forensic bytes сохранены.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-04.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-008-06` | Pure `_database_file_family`: main/-wal/-shm/-journal, no I/O, forensic preparation | implementation_done_unverified |
+| `XS-R2-008-07` | Private `_copy_forensic_file`: bounded raw copy, exclusive xb, hash/flush/fsync, no SQL premise | implementation_done_unverified; uncalled; verification deferred |
+| `XS-R2-008-01` | Декодировать journal phase | planned |
+| `XS-R2-008-02` | Восстановить boundary после sidecar rename | planned |
+| `XS-R2-008-03` | Восстановить boundary после main replace | planned |
+| `XS-R2-008-04` | Сохранить v2+backup при postactivation failure | planned |
+| `XS-R2-008-05` | Подключить restore orchestration после invariant gates | planned |
+
+<a id="step-r2-009"></a>
+## STEP-R2-009 — Additive v2 schema и injective device namespaces
+
+XS00906–09 source_done_unverified / implementation_done_unverified; XS00901 full DDL только частичен: revisioncatalog/decisions/snapshots/onboarding/migration tables отсутствуют. Нет seed, SQL execution или wiring; package не принят.
+
+- Результат: Additive v2 schema и injective device namespaces.
+- Внутри: Additive v2 schema и injective device namespaces; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Переписывание JSON payload.
+- Файлы/контракт: предлагаемый organization_schema.py;  interfaces/desktop/project_store.py.
+- Зависимости: STEP-R2-002. Порядок: R2/009; размер S.
+- Приёмка и проверки: Duplicate legacy IDs не сливаются; все семь typed legacy multisets неизменны с явным исключением internal write row; FK и relations сверяет независимый oracle.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-03, storage:DATA-05.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-009-01` | Построить organization DDL | planned |
+| `XS-R2-009-02` | Проверить origin namespace uniqueness | planned |
+| `XS-R2-009-03` | Проверить device alias injectivity | planned |
+| `XS-R2-009-04` | Проверить разрешённую internal-row exception | planned |
+| `XS-R2-009-05` | Подключить schema transaction после helper gates | planned |
+| `XS-R2-009-06` | Context/origins DDL fragment | implementation_done_unverified |
+| `XS-R2-009-07` | Profiles/settings-sources/conflicts/selections DDL fragment | implementation_done_unverified |
+| `XS-R2-009-08` | Devices/aliases/bindings DDL fragment | implementation_done_unverified |
+| `XS-R2-009-09` | Connections/scan provenance/stableUUID binding DDL fragment | implementation_done_unverified |
+
+<a id="step-r2-010"></a>
+## STEP-R2-010 — Публичная identity нескольких connections
+
+- Результат: Публичная identity нескольких connections.
+- Внутри: Публичная identity нескольких connections; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Secret re-encryption.
+- Файлы/контракт: interfaces/desktop/organization_models.py;  предлагаемый organization_schema.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/010; размер S.
+- Приёмка и проверки: Same-provider connections различимы; ciphertext точен; недоказанное origin остаётся unresolved.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-03.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-010-01` | Построить public connection key | planned |
+| `XS-R2-010-02` | Спроецировать protected secret TEXT без изменения | planned |
+| `XS-R2-010-03` | Обработать ambiguous same-provider origin | planned |
+
+<a id="step-r2-011"></a>
+## STEP-R2-011 — Хранимое представление конфликтов настроек
+
+- Результат: Хранимое представление конфликтов настроек.
+- Внутри: Хранимое представление конфликтов настроек; необходимые регрессии и независимая приёмка этого результата.
+- За границей: UI выбора.
+- Файлы/контракт: interfaces/desktop/organization_models.py;  предлагаемый settings conflict contract.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/011; размер S.
+- Приёмка и проверки: Разные legacy settings сохраняются как конфликт; latest не выбирается произвольно; roundtrip сохраняет обе стороны.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-06.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-011-01` | Классифицировать settings difference | planned |
+| `XS-R2-011-02` | Построить conflict record | planned |
+| `XS-R2-011-03` | Сохранить historical settings values | planned |
+
+<a id="step-r2-012"></a>
+## STEP-R2-012 — Connection-scoped guarded transaction
+
+XS01 implementation_done_unverified: register_organization_write_guard/approved_scope/close; default-deny UDF, active transaction + same connection/thread, finally reset, nested/reregistration revoke. XS02/03/05 — implementation_done_unverified: pure legacy21 DDL, exact guard verifier и inactive trusted_schema predicate; guard wrapper не написан. Продолжение schema/migration отложено по приоритету network map и требует функциональных dependencies. XS-R2-003-04 остаётся functional dependency; XS-R2-051-04 actual bundled SQLite readback и protocol review XS-R2-002-99 явно deferred только для inactive helper preparation, обязательны перед activation. Checks не запускались; никакие gates не приняты.
+
+- Результат: Connection-scoped guarded transaction.
+- Внутри: Connection-scoped guarded transaction; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Защита от администратора меняющего schema.
+- Файлы/контракт: предлагаемый organization_transactions.py.
+- Зависимости: STEP-R2-003, STEP-R2-051. Порядок: R2/012; размер S.
+- Приёмка и проверки: UDF по умолчанию false и reset в finally; trigger bodies exact; каждый DML старого уже открытого ProjectStore отвергнут после migration; trusted_schema режим проверен.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-12.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-012-01` | Реализовать UDF approved-scope context | implementation_done_unverified; callers not wired |
+| `XS-R2-012-02` | Построить guard DDL из fixed allowlist | implementation_done_unverified |
+| `XS-R2-012-03` | Проверить exact guard definitions | implementation_done_unverified |
+| `XS-R2-012-04` | Отклонить stale retained v1 writer | planned |
+| `XS-R2-012-05` | Отклонить несовместимый trusted_schema | implementation_done_unverified |
+| `XS-R2-012-06` | Подключить authorized transaction wrapper после gates | planned |
+
+<a id="step-r2-013"></a>
+## STEP-R2-013 — Однокоммитный v1→v2 coordinator
+
+- Результат: Однокоммитный v1→v2 coordinator.
+- Внутри: Однокоммитный v1→v2 coordinator; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Автоактивация из Qt.
+- Файлы/контракт: предлагаемый organization_migration.py.
+- Зависимости: STEP-R2-006, STEP-R2-009, STEP-R2-012, STEP-R2-053. Порядок: R2/013; размер S.
+- Приёмка и проверки: Verified backup до DDL; user_version финальный; fault rollback не оставляет mixed schema; old multisets и new constraints независимы.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-05.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-013-01` | Проверить prepared-plan digest | planned |
+| `XS-R2-013-02` | Остановить precommit phase безопасно | planned |
+| `XS-R2-013-03` | Записать final record/user_version | planned |
+| `XS-R2-013-04` | Обработать commit acknowledgement | planned |
+| `XS-R2-013-05` | Подключить migration orchestration после backup/schema/guard gates | planned |
+
+<a id="step-r2-014"></a>
+## STEP-R2-014 — Restart/idempotency dispatch миграции
+
+- Результат: Restart/idempotency dispatch миграции.
+- Внутри: Restart/idempotency dispatch миграции; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Restore swap.
+- Файлы/контракт: предлагаемый organization_migration.py:resume.
+- Зависимости: STEP-R2-013. Порядок: R2/014; размер S.
+- Приёмка и проверки: 0/1/multi project, до/после commit; valid v2 проверяется, не мигрируется повторно; unknown version fail closed.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-05.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-014-01` | Выбрать startup version dispatch | planned |
+| `XS-R2-014-02` | Отклонить incomplete migration record | planned |
+| `XS-R2-014-03` | Обработать committed rerun idempotently | planned |
+| `XS-R2-014-04` | Создать действительно новую empty DB эксклюзивно | planned |
+
+<a id="step-r2-015"></a>
+## STEP-R2-015 — Обработка disk/commit/second-writer failures
+
+- Результат: Обработка disk/commit/second-writer failures.
+- Внутри: Обработка disk/commit/second-writer failures; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Happy-path counts как единственный gate.
+- Файлы/контракт: предлагаемый organization_migration.py:fault boundary.
+- Зависимости: STEP-R2-014. Порядок: R2/015; размер S.
+- Приёмка и проверки: Fault injection full disk/lost commit/second writer; idempotent retry различает уже committed operation ID и неприменённую запись; статус соответствует фактической DB.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-04, storage:DATA-05, storage:DATA-12.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-015-01` | Обработать full disk до DDL | planned |
+| `XS-R2-015-02` | Откатить full disk в transaction | planned |
+| `XS-R2-015-03` | Обработать COMMIT error с active transaction | planned |
+| `XS-R2-015-04` | Сохранить v2+backup при postcommit reader failure | planned |
+| `XS-R2-015-05` | Показать concurrent-writer busy | planned |
+
+<a id="step-r2-016"></a>
+## STEP-R2-016 — Интеграция run/item writers в guard
+
+- Результат: Интеграция run/item writers в guard.
+- Внутри: Интеграция run/item writers в guard; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Активация UI до остальных writers.
+- Файлы/контракт: interfaces/desktop/project_store.py;  interfaces/desktop/organization_workspace.py.
+- Зависимости: STEP-R2-012. Порядок: R2/016; размер S.
+- Приёмка и проверки: Item/result/catalog links commit вместе; cancellation только между committed items; legacy call paths перечислены.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-02, storage:DATA-12.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-016-01` | Связать run writer с catalog transaction | planned |
+| `XS-R2-016-02` | Записать item completion атомарно | planned |
+| `XS-R2-016-03` | Отменить queue между committed items | planned |
+
+<a id="step-r2-017"></a>
+## STEP-R2-017 — Интеграция connection/settings writers
+
+- Результат: Интеграция connection/settings writers.
+- Внутри: Интеграция connection/settings writers; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Сетевой сбор по умолчанию.
+- Файлы/контракт: interfaces/desktop/project_store.py;  interfaces/desktop/cloud_panel.py.
+- Зависимости: STEP-R2-012. Порядок: R2/017; размер S.
+- Приёмка и проверки: Create/update/delete соблюдают guard/origin; provider collisions не перезаписывают чужую connection; исключение сбрасывает permission.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-02, storage:DATA-06, storage:DATA-12.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-017-01` | Подключить guarded connection write | planned |
+| `XS-R2-017-02` | Подключить guarded settings write | planned |
+| `XS-R2-017-03` | Проверить deletion references | planned |
+
+<a id="step-r2-018"></a>
+## STEP-R2-018 — Append-only события решений
+
+- Результат: Append-only события решений.
+- Внутри: Append-only события решений; необходимые регрессии и независимая приёмка этого результата.
+- За границей: As-of UI.
+- Файлы/контракт: предлагаемый organization_decisions.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/018; размер S.
+- Приёмка и проверки: Изменение mark добавляет event, result неизменен; migration baseline не выдумывает утраченную историю; rollback атомарен.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-07.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-018-01` | Построить baseline legacy-mark event | planned |
+| `XS-R2-018-02` | Добавить decision event | planned |
+| `XS-R2-018-03` | Отклонить mutation immutable result | planned |
+
+<a id="step-r2-019"></a>
+## STEP-R2-019 — Чтение решений на as-of boundary
+
+- Результат: Чтение решений на as-of boundary.
+- Внутри: Чтение решений на as-of boundary; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Изменение immutable facts.
+- Файлы/контракт: предлагаемый organization_decisions.py;  interfaces/desktop/workspace_history.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/019; размер S.
+- Приёмка и проверки: Поздние marks и restart не меняют выбранный cutoff; time ties разрешает явная sequence; history не сортируется как доказанная chronology.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-07.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-019-01` | Отфильтровать events по as-of cutoff | planned |
+| `XS-R2-019-02` | Упорядочить ties по event sequence | planned |
+| `XS-R2-019-03` | Показать unavailable historical value | planned |
+
+<a id="step-r2-020"></a>
+## STEP-R2-020 — Четыре различных latest projections
+
+- Результат: Четыре различных latest projections.
+- Внутри: Четыре различных latest projections; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Общий misleading latest timestamp.
+- Файлы/контракт: interfaces/desktop/organization_workspace.py;  interfaces/desktop/workspace_models.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/020; размер S.
+- Приёмка и проверки: Attempt/success/observation/source revision различны; failed refresh сохраняет прежний источник; mixed dates явны.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-08, ux:UX02-B.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-020-01` | Выбрать latest attempt | planned |
+| `XS-R2-020-02` | Выбрать latest successful analysis | planned |
+| `XS-R2-020-03` | Выбрать latest observation | planned |
+| `XS-R2-020-04` | Выбрать latest source revision | planned |
+| `XS-R2-020-05` | Сохранить source при failed refresh | planned |
+
+<a id="step-r2-021"></a>
+## STEP-R2-021 — Immutable run replay metadata
+
+- Результат: Immutable run replay metadata.
+- Внутри: Immutable run replay metadata; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Текущие настройки как исторический контекст.
+- Файлы/контракт: domain/snapshot.py;  предлагаемый run_context contract.
+- Зависимости: STEP-R2-019. Порядок: R2/021; размер S.
+- Приёмка и проверки: Engine/parser/catalog/profile/input/time IDs сохранены; rename/settings/mark edits не переписывают исторический контекст; неизвестное прошлое не достраивается.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-09.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-021-01` | Захватить engine/parser/catalog versions | planned |
+| `XS-R2-021-02` | Захватить profile/settings references | planned |
+| `XS-R2-021-03` | Захватить decision cutoff | planned |
+| `XS-R2-021-04` | Проверить immutable run context | planned |
+
+<a id="step-r2-022"></a>
+## STEP-R2-022 — Manifest фиксированного organization snapshot
+
+- Результат: Manifest фиксированного organization snapshot.
+- Внутри: Manifest фиксированного organization snapshot; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Полный NET engine.
+- Файлы/контракт: domain/snapshot.py;  interfaces/desktop/organization_workspace.py.
+- Зависимости: STEP-R2-021. Порядок: R2/022; размер S.
+- Приёмка и проверки: Exact device/revision tuple и mode явны; mixed freshness/unknown сохраняются; async refresh не меняет выбранный manifest.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-09, ux:UX02-A.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-022-01` | Построить exact device/revision tuple | planned |
+| `XS-R2-022-02` | Проверить coherence/freshness | planned |
+| `XS-R2-022-03` | Вычислить canonical manifest hash | planned |
+
+<a id="step-r2-023"></a>
+## STEP-R2-023 — Namespaced search index contract
+
+- Результат: Namespaced search index contract.
+- Внутри: Namespaced search index contract; необходимые регрессии и независимая приёмка этого результата.
+- За границей: UI поиска.
+- Файлы/контракт: предлагаемый organization_search.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/023; размер S.
+- Приёмка и проверки: Stable resource keys и rebuild version; device/result collisions не пересекают namespaces; rebuild не меняет authoritative data.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-10, ux:UX03-C.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-023-01` | Построить scoped resource key | planned |
+| `XS-R2-023-02` | Выбрать index rebuild version | planned |
+| `XS-R2-023-03` | Отклонить duplicate identity | planned |
+
+<a id="step-r2-024"></a>
+## STEP-R2-024 — Text/semantic поиск с объяснением совпадения
+
+- Результат: Text/semantic поиск с объяснением совпадения.
+- Внутри: Text/semantic поиск с объяснением совпадения; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Approximate match как exact.
+- Файлы/контракт: предлагаемый organization_search.py;  domain/policy_matching.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/024; размер S.
+- Приёмка и проверки: IPv4/6 CIDR/port/object boundary cases; unknown expansion не становится zero matches; результат объясняет scope и why-match.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-10, ux:UX04-D.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-024-01` | Сопоставить точный CIDR query | planned |
+| `XS-R2-024-02` | Сопоставить protocol/port query | planned |
+| `XS-R2-024-03` | Обработать unknown object expansion | planned |
+| `XS-R2-024-04` | Сформатировать why-match | planned |
+
+<a id="step-r2-025"></a>
+## STEP-R2-025 — Version dispatch старых result/batch readers
+
+- Результат: Version dispatch старых result/batch readers.
+- Внутри: Version dispatch старых result/batch readers; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Выдуманные historical fields.
+- Файлы/контракт: interfaces/desktop/batch_reports.py;  предлагаемый report dispatch contract.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/025; размер S.
+- Приёмка и проверки: Old schemas читаются без rewrite; unsupported version явен; imported individual result сохраняет исходный JSON и certainty.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-11, ux:UX06-C.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-025-01` | Выбрать old-result version reader | planned |
+| `XS-R2-025-02` | Выбрать old-batch version reader | planned |
+| `XS-R2-025-03` | Показать unsupported-version reason | planned |
+
+<a id="step-r2-026"></a>
+## STEP-R2-026 — JSON export сохранённого run context
+
+- Результат: JSON export сохранённого run context.
+- Внутри: JSON export сохранённого run context; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Текущий проект как frozen replay.
+- Файлы/контракт: interfaces/desktop/batch_reports.py:export_batch_json.
+- Зависимости: STEP-R2-021, STEP-R2-025. Порядок: R2/026; размер S.
+- Приёмка и проверки: Org/settings/events-as-of выбранного run выдерживают edits/restart; raw и compact различены; canonical JSON independently checked.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-11, ux:UX06-D.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-026-01` | Спроецировать saved report context | planned |
+| `XS-R2-026-02` | Проверить independence от current rename | planned |
+| `XS-R2-026-03` | Спроецировать selected as-of decisions | planned |
+| `XS-R2-026-04` | Сериализовать historical manifest | planned |
+
+<a id="step-r2-027a"></a>
+## STEP-R2-027A — Атомарный автономный HTML export snapshot
+
+- Результат: Атомарный автономный HTML export snapshot.
+- Внутри: Атомарный автономный HTML export snapshot; необходимые регрессии и независимая приёмка этого результата.
+- За границей: CSV writer.
+- Файлы/контракт: interfaces/desktop/batch_reports.py:export_batch_html.
+- Зависимости: STEP-R2-026. Порядок: R2/027A; размер S.
+- Приёмка и проверки: Temp→replace; cancel/permission не success; offline/print anchors работают; orphan candidate не принимается как готовый.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-11, ux:UX06-B, ux:UX06-F.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-027A-01` | Сформатировать offline HTML anchor | planned |
+| `XS-R2-027A-02` | Записать HTML атомарно | planned |
+| `XS-R2-027A-03` | Проверить print layout одного отчёта | planned |
+
+<a id="step-r2-027b"></a>
+## STEP-R2-027B — Атомарный CSV export snapshot
+
+- Результат: Атомарный CSV export snapshot.
+- Внутри: Атомарный CSV export snapshot; необходимые регрессии и независимая приёмка этого результата.
+- За границей: HTML rendering.
+- Файлы/контракт: предлагаемый CSV writer contract.
+- Зависимости: STEP-R1-007, STEP-R2-026. Порядок: R2/027B; размер S.
+- Приёмка и проверки: Общая CSV проекция STEP-R1-007 получает saved context; Unicode/quoting и cancel/permission tested; rows/IDs exact.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-11, ux:UX06-E.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-027B-01` | Сформатировать typed CSV cell | planned |
+| `XS-R2-027B-02` | Записать CSV атомарно | planned |
+| `XS-R2-027B-03` | Показать invalid/unavailable CSV field | planned |
+
+<a id="step-r2-028"></a>
+## STEP-R2-028 — Версионированный certainty-aware diff backend
+
+- Результат: Версионированный certainty-aware diff backend.
+- Внутри: Версионированный certainty-aware diff backend; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Объявление UNKNOWN подтверждённым удалением.
+- Файлы/контракт: analysis/revision_diff.py;  domain/revision.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/028; размер S.
+- Приёмка и проверки: Known→UNKNOWN/partial есть неизвестное исчезновение; только complete compatible evidence доказывает removal; старый API structural semantics читается без тихой смены.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-11, journey-task:JRN-11.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-028-01` | Ввести certainty enum/version reader | planned |
+| `XS-R2-028-02` | Построить comparable fact key | planned |
+| `XS-R2-028-03` | Классифицировать known→UNKNOWN disappearance | planned |
+| `XS-R2-028-04` | Доказать complete→absent removal | planned |
+| `XS-R2-028-05` | Отделить normalization-only change | planned |
+| `XS-R2-028-06` | Сохранить legacy structural dispatch | planned |
+| `XS-R2-028-07` | Подключить public semantic diff после gates | planned |
+
+<a id="step-r2-029"></a>
+## STEP-R2-029 — Gate сопоставимости ревизий
+
+- Результат: Gate сопоставимости ревизий.
+- Внутри: Gate сопоставимости ревизий; необходимые регрессии и независимая приёмка этого результата.
+- За границей: UI comparison.
+- Файлы/контракт: analysis/revision_diff.py;  interfaces/desktop/workspace_history.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/029; размер S.
+- Приёмка и проверки: Parser/profile/source/capability mismatch показан; incomparable не remediation; provenance-only не сеть changed.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: ux:UX02-D, storage:DATA-11.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-029-01` | Проверить parser/profile comparability | planned |
+| `XS-R2-029-02` | Проверить source/revision comparability | planned |
+| `XS-R2-029-03` | Проверить capability/completeness comparability | planned |
+| `XS-R2-029-04` | Сформатировать incomparable diagnostic | planned |
+
+<a id="step-r2-030"></a>
+## STEP-R2-030 — Общая navigation state и измеренный LINK-CONTRAST
+
+- Результат: Общая navigation state и измеренный LINK-CONTRAST.
+- Внутри: Общая navigation state и измеренный LINK-CONTRAST; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Закрытие контраста одним наличием stylesheet.
+- Файлы/контракт: interfaces/desktop/workspace_navigation.py;  interfaces/desktop/qt_theme.py;  interfaces/desktop/resource_details.py.
+- Зависимости: STEP-R1-009. Порядок: R2/030; размер S.
+- Приёмка и проверки: Exact selected context/back; измерить actual normal/hover/keyboard-focus anchor FG/BG contrast before+after по W3C и screenshot fresh frozen100%; native100/150; сравнить R1 before для attribution.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: journey-task:JRN-01, ux:UX07-F, followup:R2UX:LINK-CONTRAST.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-030-01` | Построить navigation context key | planned |
+| `XS-R2-030-02` | Восстановить back selection | planned |
+| `XS-R2-030-03` | Измерить и исправить normal link contrast | planned |
+| `XS-R2-030-04` | Измерить и исправить hover link contrast | planned |
+| `XS-R2-030-05` | Измерить и исправить keyboard-focus link contrast | planned |
+
+<a id="step-r2-031"></a>
+## STEP-R2-031 — Активация organization startup после writers gate
+
+- Результат: Активация organization startup после writers gate.
+- Внутри: Активация organization startup после writers gate; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Активация на пользовательской БД до synthetic gate.
+- Файлы/контракт: interfaces/desktop/qt_app.py;  interfaces/desktop/organization_workspace.py.
+- Зависимости: STEP-R2-015, STEP-R2-016, STEP-R2-017, STEP-R2-054. Порядок: R2/031; размер S.
+- Приёмка и проверки: Все writers интегрированы и protocol принят; new DB default org; v1 проходит reviewed coordinator; обязательного project step нет.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: package:R2:O01, journey-screen:J01.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-031-01` | Активировать new-DB organization startup | planned |
+| `XS-R2-031-02` | Подключить legacy migration action | planned |
+| `XS-R2-031-03` | Возобновить current-v2 context | planned |
+| `XS-R2-031-04` | Показать corrupt-DB error без empty replacement | planned |
+
+<a id="step-r2-032"></a>
+## STEP-R2-032 — Однократный settings conflict dialog
+
+- Результат: Однократный settings conflict dialog.
+- Внутри: Однократный settings conflict dialog; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Автовыбор latest.
+- Файлы/контракт: interfaces/desktop/qt_app.py;  предлагаемый settings_conflict_view.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/032; размер S.
+- Приёмка и проверки: Explicit choice/cancel сохраняется после restart; обе истории остаются доступны; выбор не считается history rewrite.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-06.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-032-01` | Применить explicit settings choice | planned |
+| `XS-R2-032-02` | Сохранить conflict при cancel | planned |
+| `XS-R2-032-03` | Восстановить resolved choice после restart | planned |
+
+<a id="step-r2-033"></a>
+## STEP-R2-033 — Явный reversible alias/merge workflow
+
+- Результат: Явный reversible alias/merge workflow.
+- Внутри: Явный reversible alias/merge workflow; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Автоматическое объединение устройств.
+- Файлы/контракт: предлагаемый identity view;  interfaces/desktop/organization_workspace.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/033; размер S.
+- Приёмка и проверки: Same name/IP не auto-merge; explicit mapping сохраняет provenance и обратимость; collision counterexample проверен.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-06.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-033-01` | Выполнить explicit alias association | planned |
+| `XS-R2-033-02` | Запретить auto-merge same IP/name | planned |
+| `XS-R2-033-03` | Записать merge provenance | planned |
+| `XS-R2-033-04` | Выполнить undo identity mapping | planned |
+
+<a id="step-r2-034"></a>
+## STEP-R2-034 — Welcome и saved first-steps state
+
+- Результат: Welcome и saved first-steps state.
+- Внутри: Welcome и saved first-steps state; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Блокирование файлов без профиля.
+- Файлы/контракт: interfaces/desktop/qt_app.py;  interfaces/desktop/workspace_navigation.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/034; размер S.
+- Приёмка и проверки: Empty org quick start; optional name/helper; dismiss/reopen сохраняется после restart; длинная анкета не обязательна.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: journey-task:JRN-02, journey-task:JRN-03, journey-screen:J01.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-034-01` | Применить optional organization name | planned |
+| `XS-R2-034-02` | Закрыть first-run helper | planned |
+| `XS-R2-034-03` | Открыть first-steps повторно | planned |
+| `XS-R2-034-04` | Восстановить saved progress | planned |
+| `XS-R2-034-05` | Сохранить helper progress только по confirmed event | planned |
+| `XS-R2-034-06` | Не считать открытие finding доказанным пониманием | planned |
+| `XS-R2-034-07` | Не считать remediation checkbox доказательством исправления | planned |
+
+<a id="step-r2-035"></a>
+## STEP-R2-035 — Изолированный synthetic demo
+
+- Результат: Изолированный synthetic demo.
+- Внутри: Изолированный synthetic demo; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Реальная сеть как demo.
+- Файлы/контракт: предлагаемый desktop demo contract;  interfaces/desktop/qt_app.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/035; размер S.
+- Приёмка и проверки: Synthetic label всегда виден; demo не смешивается с собственной org/export; удалить demo можно без потери пользовательских данных.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: journey-task:JRN-04, journey-screen:J02.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-035-01` | Создать isolated demo context | planned |
+| `XS-R2-035-02` | Показать постоянный synthetic badge | planned |
+| `XS-R2-035-03` | Отклонить demo→real implicit mix | planned |
+
+<a id="step-r2-036"></a>
+## STEP-R2-036 — Overview freshness/quality/next-action projection
+
+- Результат: Overview freshness/quality/next-action projection.
+- Внутри: Overview freshness/quality/next-action projection; необходимые регрессии и независимая приёмка этого результата.
+- За границей: UI counters.
+- Файлы/контракт: предлагаемый organization_overview.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/036; размер S.
+- Приёмка и проверки: Empty/failed/partial/mixed состояния соответствуют immutable manifest; next action объясняет недостающие данные.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: package:R2:O03, ux:UX02-B, ux:UX02-E.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-036-01` | Спроецировать empty overview | planned |
+| `XS-R2-036-02` | Спроецировать failed overview | planned |
+| `XS-R2-036-03` | Спроецировать mixed freshness | planned |
+| `XS-R2-036-04` | Выбрать одну next-action priority rule | planned |
+
+<a id="step-r2-037"></a>
+## STEP-R2-037 — Overview counter deep links
+
+- Результат: Overview counter deep links.
+- Внутри: Overview counter deep links; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Агрегат без списка участников.
+- Файлы/контракт: interfaces/desktop/qt_app.py;  предлагаемый overview view.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/037; размер S.
+- Приёмка и проверки: Каждый count открывает exact fixed identities; async/filter не дают count drift; empty/error/mixed наборы проверены.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: ux:UX02-C, ux:UX02-F.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-037-01` | Рассчитать normal counter identity set | planned |
+| `XS-R2-037-02` | Рассчитать failed counter identity set | planned |
+| `XS-R2-037-03` | Рассчитать unknown counter identity set | planned |
+| `XS-R2-037-04` | Открыть counter target | planned |
+| `XS-R2-037-05` | Отклонить async snapshot mismatch | planned |
+
+<a id="step-r2-038"></a>
+## STEP-R2-038 — Qt resource/search view
+
+- Результат: Qt resource/search view.
+- Внутри: Qt resource/search view; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Новый search backend.
+- Файлы/контракт: interfaces/desktop/qt_models.py;  interfaces/desktop/resource_details.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/038; размер S.
+- Приёмка и проверки: Text/semantic matches показывают scope/explanation; keyboard/filter/selection сохраняются; paginated view не теряет rows.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: package:R2:O04, ux:UX03-C, ux:UX04-D, ux:UX03-E.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-038-01` | Отправить resource search query | planned |
+| `XS-R2-038-02` | Сформатировать text-result row | planned |
+| `XS-R2-038-03` | Показать semantic match reason | planned |
+| `XS-R2-038-04` | Восстановить filter selection keyboard state | planned |
+
+<a id="step-r2-039"></a>
+## STEP-R2-039 — Staging preview и явная device association
+
+- Результат: Staging preview и явная device association.
+- Внутри: Staging preview и явная device association; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Автосбор по сети.
+- Файлы/контракт: interfaces/desktop/qt_app.py;  interfaces/desktop/workspace_models.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/039; размер S.
+- Приёмка и проверки: File/folder unknown/conflict/cancel; explicit association вместо auto-merge; collect отдельное явное действие с provenance.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: journey-task:JRN-06, journey-screen:J05, journey-screen:J06.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-039-01` | Сформатировать file detection preview row | planned |
+| `XS-R2-039-02` | Показать folder staging error | planned |
+| `XS-R2-039-03` | Выполнить explicit device association | planned |
+| `XS-R2-039-04` | Обработать duplicate/conflicting source | planned |
+| `XS-R2-039-05` | Отменить staging source action | planned |
+
+<a id="step-r2-040"></a>
+## STEP-R2-040 — Честное завершение и отмена очереди
+
+- Результат: Честное завершение и отмена очереди.
+- Внутри: Честное завершение и отмена очереди; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Cancel как полный success.
+- Файлы/контракт: interfaces/desktop/jobs.py;  interfaces/desktop/qt_app.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/040; размер S.
+- Приёмка и проверки: Partial/canceled/failed totals равны committed items; success sources не удаляются при failed refresh; interrupted status после restart честен.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: journey-task:JRN-08, journey-screen:J08.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-040-01` | Свести queue item status | planned |
+| `XS-R2-040-02` | Обработать cancel button request | planned |
+| `XS-R2-040-03` | Сформатировать post-cancel summary | planned |
+| `XS-R2-040-04` | Сохранить committed success | planned |
+
+<a id="step-r2-041"></a>
+## STEP-R2-041 — Переходы первого результата
+
+- Результат: Переходы первого результата.
+- Внутри: Переходы первого результата; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Исправление конфигурации.
+- Файлы/контракт: interfaces/desktop/qt_app.py;  interfaces/desktop/resource_details.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/041; размер S.
+- Приёмка и проверки: Overview→finding→evidence→rule/object→back сохраняет exact run/resource/scope; unavailable source объяснён.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: journey-task:JRN-09, journey-screen:J09, journey-screen:J10, journey-screen:J11, ux:UX03-D.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-041-01` | Фокусировать first result | planned |
+| `XS-R2-041-02` | Открыть finding evidence | planned |
+| `XS-R2-041-03` | Открыть evidence rule | planned |
+| `XS-R2-041-04` | Открыть rule object | planned |
+| `XS-R2-041-05` | Вернуться к exact run | planned |
+
+<a id="step-r2-042"></a>
+## STEP-R2-042 — Journey решения и внешнего исправления
+
+- Результат: Journey решения и внешнего исправления.
+- Внутри: Journey решения и внешнего исправления; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Автоматическая настройка устройства.
+- Файлы/контракт: interfaces/desktop/workspace_history.py;  предлагаемый decision view.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/042; размер S.
+- Приёмка и проверки: Mark не remediation; инструкция внешнего изменения/новый экспорт явны; no auto-write device; решение не меняет finding facts.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: journey-task:JRN-10, journey-screen:J12, journey-screen:J13.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-042-01` | Записать mark decision action | planned |
+| `XS-R2-042-02` | Показать external-remediation instructions | planned |
+| `XS-R2-042-03` | Добавить new revision import action | planned |
+
+<a id="step-r2-043"></a>
+## STEP-R2-043 — New export→compare UI с certainty
+
+- Результат: New export→compare UI с certainty.
+- Внутри: New export→compare UI с certainty; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Подмена diff старого API.
+- Файлы/контракт: interfaces/desktop/workspace_history.py;  interfaces/desktop/qt_app.py.
+- Зависимости: STEP-R2-028, STEP-R2-029. Порядок: R2/043; размер S.
+- Приёмка и проверки: Scope comparison назван; unknown disappearance отличим от confirmed removal; individual revision JSON сохраняет compatibility.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: journey-task:JRN-11, journey-screen:J14.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-043-01` | Выбрать comparison baseline | planned |
+| `XS-R2-043-02` | Показать comparability warning | planned |
+| `XS-R2-043-03` | Различить unknown/removed row | planned |
+| `XS-R2-043-04` | Открыть comparison deep link | planned |
+
+<a id="step-r2-044"></a>
+## STEP-R2-044 — UX сохранения выбранного отчёта
+
+- Результат: UX сохранения выбранного отчёта.
+- Внутри: UX сохранения выбранного отчёта; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Путь файла как доказательство success.
+- Файлы/контракт: interfaces/desktop/qt_app.py;  interfaces/desktop/batch_reports.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/044; размер S.
+- Приёмка и проверки: Завершение только после atomic success; manifest выбранного snapshot; cancel/permission показывают следующее действие.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: journey-task:JRN-12, journey-screen:J15.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-044-01` | Запустить selected snapshot export | planned |
+| `XS-R2-044-02` | Показать write-pending UI | planned |
+| `XS-R2-044-03` | Показать final success/failure по actual writer result | planned |
+
+<a id="step-r2-045"></a>
+## STEP-R2-045 — Resume результата и source hash guard
+
+- Результат: Resume результата и source hash guard.
+- Внутри: Resume результата и source hash guard; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Поиск чужого файла по похожему имени.
+- Файлы/контракт: interfaces/desktop/workspace_history.py;  interfaces/desktop/qt_app.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/045; размер S.
+- Приёмка и проверки: Restart сохраняет result readable; moved source требует explicit rebind/hash; altered same path не открывается как evidence.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: journey-task:JRN-14, journey-screen:J19.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-045-01` | Восстановить result selection | planned |
+| `XS-R2-045-02` | Остановить missing source preview | planned |
+| `XS-R2-045-03` | Проверить explicit rebind hash | planned |
+| `XS-R2-045-04` | Восстановить moved source action | planned |
+
+<a id="step-r2-046"></a>
+## STEP-R2-046 — Migration walkthrough 0/1/multi projects
+
+- Результат: Migration walkthrough 0/1/multi projects.
+- Внутри: Migration walkthrough 0/1/multi projects; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Переименование истории для удобства.
+- Файлы/контракт: interfaces/desktop/qt_app.py;  предлагаемый migration view.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/046; размер S.
+- Приёмка и проверки: Progress/backup/recovery имеют реальные error actions; partial migration не success; namespaces доступны.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: journey-task:JRN-15, journey-screen:J20.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-046-01` | Показать new-install migration message | planned |
+| `XS-R2-046-02` | Показать one-project mapping preview | planned |
+| `XS-R2-046-03` | Показать multiproject mapping preview | planned |
+| `XS-R2-046-04` | Показать backup failure recovery action | planned |
+| `XS-R2-046-05` | Возобновить after-commit startup | planned |
+
+<a id="step-r2-047"></a>
+## STEP-R2-047 — Keyboard и error-state accessibility R2
+
+- Результат: Keyboard и error-state accessibility R2.
+- Внутри: Keyboard и error-state accessibility R2; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Formative study вместо функциональных проверок.
+- Файлы/контракт: R2 Qt views;  interfaces/desktop/workspace_navigation.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/047; размер S.
+- Приёмка и проверки: Tab/focus/labels/zoom/DPI и announced errors; нет modal trap; 100/150% native проверяет non-happy-path.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: journey-task:JRN-16, journey-screen:J18, ux:UX04-F.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-047-01` | Проверить tab order overview | planned |
+| `XS-R2-047-02` | Проверить focus ошибки staging | planned |
+| `XS-R2-047-03` | Проверить keyboard decision panel | planned |
+| `XS-R2-047-04` | Проверить DPI100/150 resource view | planned |
+
+<a id="step-r2-048"></a>
+## STEP-R2-048 — CLI parity организации/result import/export/diff
+
+- Результат: CLI parity организации/result import/export/diff.
+- Внутри: CLI parity организации/result import/export/diff; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Новые внешние API.
+- Файлы/контракт: interfaces/cli/main.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/048; размер S.
+- Приёмка и проверки: CLI сохраняет те же saved identities/certainty, meaningful exit errors; individual result/revision import parity checked.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: package:R2:O05.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-048-01` | Разобрать CLI organization selector | planned |
+| `XS-R2-048-02` | Подключить CLI result import | planned |
+| `XS-R2-048-03` | Подключить CLI comparison action | planned |
+| `XS-R2-048-04` | Подключить CLI export action | planned |
+| `XS-R2-048-05` | Преобразовать CLI error в exit code | planned |
+
+<a id="step-r2-049"></a>
+## STEP-R2-049 — Синхронизация guide/help/schema R2
+
+- Результат: Синхронизация guide/help/schema R2.
+- Внутри: Синхронизация guide/help/schema R2; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Будущие функции как готовые.
+- Файлы/контракт: specifications/USER_GUIDE.md;  specifications/SCHEMA_MIGRATIONS.md;  specifications/CURRENT_STATE.md.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/049; размер S.
+- Приёмка и проверки: Описаны только actual workflow; backup/recovery/missing-source help соответствует коду; README/ADR crosslinks проверены.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: package:R2:O05, journey-task:JRN-18.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-049-01` | Обновить migration guide workflow | planned |
+| `XS-R2-049-02` | Обновить recovery guide workflow | planned |
+| `XS-R2-049-03` | Обновить schema migration notes | planned |
+| `XS-R2-049-04` | Обновить ADR context | planned |
+| `XS-R2-049-05` | Проверить help links | planned |
+
+<a id="step-r2-050"></a>
+## STEP-R2-050 — Независимый R2 release checkpoint
+
+- Результат: Независимый R2 release checkpoint.
+- Внутри: Независимый R2 release checkpoint; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Закрытие R2 по slice1 70tests.
+- Файлы/контракт: scripts packaged smoke contract;  artifacts/roadmap-r2.
+- Зависимости: STEP-R2-001, STEP-R2-002, STEP-R2-003, STEP-R2-004, STEP-R2-005, STEP-R2-006, STEP-R2-007, STEP-R2-008, STEP-R2-009, STEP-R2-010, STEP-R2-011, STEP-R2-012, STEP-R2-013, STEP-R2-014, STEP-R2-015, STEP-R2-016, STEP-R2-017, STEP-R2-018, STEP-R2-019, STEP-R2-020, STEP-R2-021, STEP-R2-022, STEP-R2-023, STEP-R2-024, STEP-R2-025, STEP-R2-026, STEP-R2-027A, STEP-R2-027B, STEP-R2-028, STEP-R2-029, STEP-R2-030, STEP-R2-031, STEP-R2-032, STEP-R2-033, STEP-R2-034, STEP-R2-035, STEP-R2-036, STEP-R2-037, STEP-R2-038, STEP-R2-039, STEP-R2-040, STEP-R2-041, STEP-R2-042, STEP-R2-043, STEP-R2-044, STEP-R2-045, STEP-R2-046, STEP-R2-047, STEP-R2-048, STEP-R2-049, STEP-R2-051, STEP-R2-052, STEP-R2-053, STEP-R2-054, STEP-R2-055. Порядок: R2/050; размер S.
+- Приёмка и проверки: Synthetic полный цикл+fault suite+fresh frozen100/150+independent review с actual hash; DPAPI/clean OS ограничения открыты R8.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: stage:R2, package:R2:O05.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-050-01` | Принять migration fault matrix checkpoint | planned |
+| `XS-R2-050-02` | Принять selected user-cycle checkpoint | planned |
+| `XS-R2-050-03` | Принять native100/150 checkpoint | planned |
+| `XS-R2-050-04` | Принять frozen100/150 checkpoint | planned |
+| `XS-R2-050-05` | Записать source-hash/review closure | planned |
+
+<a id="step-r2-051"></a>
+## STEP-R2-051 — Проверенный SQLite journal/synchronous runtime policy
+
+- Результат: Проверенный SQLite journal/synchronous runtime policy.
+- Внутри: Проверенный SQLite journal/synchronous runtime policy; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Смена WAL ради названия.
+- Файлы/контракт: interfaces/desktop/project_store.py;  предлагаемый connection policy contract.
+- Зависимости: STEP-R2-002. Порядок: R2/051; размер S.
+- Приёмка и проверки: Фактический bundled SQLite version/journal/synchronous измерен; WAL выбирается только после crash/backup comparison, documented durability; owned connections закрываются предсказуемо.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-12.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-051-01` | Выбрать journal mode policy | planned |
+| `XS-R2-051-02` | Проверить synchronous/FK PRAGMA | planned |
+| `XS-R2-051-03` | Настроить bounded busy timeout | planned |
+| `XS-R2-051-04` | Проверить actual bundled SQLite readback | planned |
+
+<a id="step-r2-052"></a>
+## STEP-R2-052 — Retention/reference graph и size-budget policy
+
+- Результат: Retention/reference graph и size-budget policy.
+- Внутри: Retention/reference graph и size-budget policy; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Автоудаление пользовательских данных.
+- Файлы/контракт: предлагаемый retention contract;  interfaces/desktop/project_store.py.
+- Зависимости: STEP-R2-002. Порядок: R2/052; размер S.
+- Приёмка и проверки: Explicit opt-in retention проверяет references map/report/history; referenced source не удаляется; size budget учитывает WAL/backups и большой history; отмена безопасна.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-12.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-052-01` | Построить retained-reference graph | planned |
+| `XS-R2-052-02` | Проверить eligible retention candidate | planned |
+| `XS-R2-052-03` | Оценить capacity budget | planned |
+| `XS-R2-052-04` | Сформатировать dry-run retention report | planned |
+
+<a id="step-r2-053"></a>
+## STEP-R2-053 — Durable operation identity и commit-lost retry
+
+- Результат: Durable operation identity и commit-lost retry.
+- Внутри: Durable operation identity и commit-lost retry; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Безусловный retry мутаций.
+- Файлы/контракт: предлагаемый organization transaction API.
+- Зависимости: STEP-R2-002. Порядок: R2/053; размер S.
+- Приёмка и проверки: Повтор того же operation ID не дублирует run/item/event; uncertain commit разрешает durable record.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-12, storage:DATA-08.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-053-01` | Построить durable operation ID | planned |
+| `XS-R2-053-02` | Найти already-committed operation | planned |
+| `XS-R2-053-03` | Разрешить uncertain commit по durable record | planned |
+| `XS-R2-053-04` | Предотвратить duplicate retry operation | planned |
+
+<a id="step-r2-054"></a>
+## STEP-R2-054 — Writer connection lifecycle/checkpoint/shutdown
+
+- Результат: Writer connection lifecycle/checkpoint/shutdown.
+- Внутри: Writer connection lifecycle/checkpoint/shutdown; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Принудительно закрывать чужие процессы.
+- Файлы/контракт: interfaces/desktop/jobs.py;  предлагаемый organization transactions.
+- Зависимости: STEP-R2-002. Порядок: R2/054; размер S.
+- Приёмка и проверки: Bounded busy/backoff/cancel; no cross-thread connection; checkpoint reader contention явен; handle закрыт.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-12.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-054-01` | Владеть одним connection lifecycle context | planned |
+| `XS-R2-054-02` | Остановить busy backoff по cancel | planned |
+| `XS-R2-054-03` | Обработать checkpoint busy reader | planned |
+| `XS-R2-054-04` | Закрыть worker-owned connection при shutdown | planned |
+
+<a id="step-r2-055"></a>
+## STEP-R2-055 — Protected-settings portability UI
+
+- Результат: Protected-settings portability UI.
+- Внутри: Protected-settings portability UI; необходимые регрессии и независимая приёмка этого результата.
+- За границей: Молчаливая пустая connection.
+- Файлы/контракт: infrastructure/windows_secrets.py;  interfaces/desktop/cloud_panel.py.
+- Зависимости: нет; доступный подготовительный срез. Порядок: R2/055; размер S.
+- Приёмка и проверки: Same-user/foreign-user decrypt failure различны; explicit reauth сохраняет ciphertext/identity.
+- Статус: **planned**. Доказательства: нет; результат и проверки предстоят.
+- Требования: storage:DATA-03, journey-screen:J04, journey-screen:J20.
+
+| Исполняемый XS | Один результат + focused проверка в его границе | Статус |
+|---|---|---|
+| `XS-R2-055-01` | Показать decrypt-available status | planned |
+| `XS-R2-055-02` | Показать foreign-user decrypt failure | planned |
+| `XS-R2-055-03` | Запустить explicit reauth сохранив connection identity | planned |

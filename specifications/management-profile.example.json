@@ -1,0 +1,13 @@
+{
+  "profile_id": "example-organization",
+  "version": "1",
+  "approved_admin_networks": ["192.0.2.0/24"],
+  "approved_snmp_networks": ["192.0.2.10/32"],
+  "approved_syslog_servers": ["192.0.2.20"],
+  "approved_ntp_servers": ["192.0.2.30", "ntp.example.org"],
+  "allow_snmp_write": false,
+  "require_syslog": true,
+  "require_ntp": true,
+  "require_banner": true,
+  "max_idle_seconds": 900
+}
