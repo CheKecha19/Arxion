@@ -1,12 +1,11 @@
 ﻿param(
     [switch]$Console,
-    [switch]$Production,
     [switch]$ArubaUpdate,
     [ValidatePattern('^[A-Za-z][A-Za-z0-9-]{0,40}$')][string]$Variant
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$distDirectory = if ($Production) { 'prod' } elseif ($Variant) { "dist/$Variant" } elseif ($ArubaUpdate) {
+$distDirectory = if ($Variant) { "dist/$Variant" } elseif ($ArubaUpdate) {
     'dist/ArubaUpdate'
 } else { 'dist' }
 $buildOutput = [IO.Path]::GetFullPath((Join-Path $projectRoot $distDirectory))
@@ -17,7 +16,7 @@ if (-not $ArubaUpdate -and -not $Variant -and
     (Get-Process FirewallCompliance -ErrorAction SilentlyContinue)) {
     throw 'Приложение запущено. Закройте его или используйте -ArubaUpdate для отдельной сборки.'
 }
-$pythonPath = Join-Path $projectRoot 'dev\.venv\Scripts\python.exe'
+$pythonPath = Join-Path $projectRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $pythonPath)) {
     throw 'Сначала выполните uv sync --all-groups.'
 }
@@ -28,7 +27,7 @@ try {
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$projectRoot\.venv\Scripts"
     $windowMode = if ($Console) { '--console' } else { '--windowed' }
     & $pythonPath -m PyInstaller --noconfirm --onedir $windowMode `
-        --distpath $buildOutput --workpath (Join-Path $projectRoot 'dev/build') `
+        --distpath $buildOutput `
         --name FirewallCompliance --paths src `
         --collect-data firewall_compliance `
         --exclude-module hypothesis --exclude-module mypy --exclude-module pytest `
@@ -45,7 +44,7 @@ try {
     } else {
         'FirewallCompliance-windows-x64.zip'
     }
-    $archivePath = Join-Path $buildOutput $archiveName
+    $archivePath = Join-Path $projectRoot "dist/$archiveName"
     for ($archiveAttempt = 0; ; $archiveAttempt++) {
         try {
             Compress-Archive -LiteralPath (Join-Path $buildOutput 'FirewallCompliance') `

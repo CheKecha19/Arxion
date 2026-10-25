@@ -1,6 +1,0 @@
-Gateway of last resort is 192.0.2.1 to network 0.0.0.0
-
-C    192.0.2.0 255.255.255.0 is directly connected, outside
-C    10.20.0.0 255.255.255.0 is directly connected, inside
-S    198.51.100.0 255.255.255.0 [1/0] via 192.0.2.1, outside
-S*   0.0.0.0 0.0.0.0 [1/0] via 192.0.2.1, outside

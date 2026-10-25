@@ -6,13 +6,13 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-if not exist "dev\.venv\Scripts\python.exe" (
-    echo Project Python environment was not found: dev\.venv\Scripts\python.exe
+if not exist ".venv\Scripts\python.exe" (
+    echo Project Python environment was not found: .venv\Scripts\python.exe
     echo Create the environment and install the project in editable mode first.
     pause
     exit /b 1
 )
-"dev\.venv\Scripts\python.exe" -m firewall_compliance.interfaces.desktop
+".venv\Scripts\python.exe" -m firewall_compliance.interfaces.desktop
 set "desktop_exit_code=%errorlevel%"
 if not "%desktop_exit_code%"=="0" pause
 exit /b %desktop_exit_code%
