@@ -84,6 +84,11 @@ from firewall_compliance.interfaces.desktop.cloud_panel import (
     SCAN_STATES,
     CloudPanel,
 )
+from firewall_compliance.interfaces.desktop.cloud_rule_presentation import (
+    cloud_rule_columns,
+    cloud_rule_details,
+    cloud_rule_values,
+)
 from firewall_compliance.interfaces.desktop.jobs import JobError, JobRunner, JobStatus
 from firewall_compliance.interfaces.desktop.management_settings import ManagementSettings
 from firewall_compliance.interfaces.desktop.map_network_facts import (
@@ -688,13 +693,16 @@ class MainWindow(QMainWindow):
                     revisions[str(item["id"])] = network.revision
         project_id = self.project_id or ""
         graph = build_project_map(
-            project_id, devices, cloud_resources(self._cloud_scans()),
+            project_id,
+            devices,
+            cloud_resources(self._cloud_scans()),
             self.store.list_map_integrations(project_id) if project_id else (),
             revisions=revisions,
         )
         labels = (
             self.store.get_project(project_id)["settings"].get("map_zone_labels", {})
-            if project_id else {}
+            if project_id
+            else {}
         )
         self.project_map_widget.set_graph(graph, labels)
 
@@ -1537,14 +1545,16 @@ class MainWindow(QMainWindow):
     def _build_rules(self) -> None:
         _, layout = self._page(
             "Правила и объекты",
-            "Нормализованные правила и объекты проекта или выбранного запуска. "
-            "Неизвестные значения сохраняют свой статус.",
+            "Правила и объекты файлов, а также правила, полученные из облачных API. "
+            "Облачный сбор не запускает проверки правил.",
         )
         self.rule_scope = QComboBox()
-        self.rule_scope.addItem("Все устройства проекта · последние снимки", "project")
+        self.rule_scope.addItem("Все ресурсы проекта · последние снимки", "project")
         self.rule_scope.addItem("Выбранный запуск", "run")
         self.rule_scope.currentIndexChanged.connect(self._refresh_rules)
         layout.addWidget(self.rule_scope)
+        self.rule_inventory_status = _label("")
+        layout.addWidget(self.rule_inventory_status)
         search = self.rule_search = QLineEdit()
         search.setPlaceholderText("Поиск по устройству, правилу, адресу или сервису")
         layout.addWidget(search)
@@ -2440,6 +2450,7 @@ class MainWindow(QMainWindow):
     def _cloud_history_changed(self) -> None:
         if not self._loading_settings:
             self._refresh_devices()
+            self._refresh_rules()
             self._refresh_history()
             self._refresh_summary()
             self._refresh_project_map()
@@ -2687,21 +2698,16 @@ class MainWindow(QMainWindow):
         self.device_rules_model.replace([], [])
         self.device_objects_model.replace([], [])
         data = record.get("data", {})
-        rules = [
+        rules = cloud_rule_values(record)
+        self.device_rules_model.replace(
+            [cloud_rule_columns(value) for value in rules],
+            rules,
+        )
+        other = [
             (key, value)
             for key, value in data.items()
-            if key
-            in (
-                "firewall",
-                "security_rules",
-                "nat",
-            )
+            if key not in {"firewall", "security_rules", "nat"}
         ]
-        self.device_rules_model.replace(
-            [("—", key, "Данные API", "—", "—", _json(value)) for key, value in rules],
-            [value for _, value in rules],
-        )
-        other = [(key, value) for key, value in data.items() if key not in dict(rules)]
         self.device_objects_model.replace(
             [(key, "Данные API", _json(value)) for key, value in other],
             [value for _, value in other],
@@ -2712,6 +2718,7 @@ class MainWindow(QMainWindow):
             f"{html.escape(ALL_RESOURCES.get(record['type'], record['type']))}</p>"
             f"<p>Получено: {html.escape(scan['created_at'])}</p>"
             f"<p>Сбор: {html.escape(SCAN_STATES.get(scan['state'], scan['state']))}</p>"
+            f"<p>Получено правил: {len(rules)}. Каждое правило доступно на вкладке «Правила».</p>"
             "<p>Проверки недоступны. Сбор данных не подтверждает безопасность или достижимость.</p>"
             "<h3>Параметры ресурса</h3>"
             f"<pre>{html.escape(_json(record.get('inventory', {})))}</pre>"
@@ -2767,6 +2774,31 @@ class MainWindow(QMainWindow):
                             "search_text": "\n".join(text for _, text in object_details(value)),
                         }
                     )
+        cloud_count = 0
+        if self.rule_scope.currentData() == "project":
+            for item in cloud_resources(self._cloud_scans()):
+                device = item["record"].get("name") or item["record"].get("id", "Cloud.ru")
+                for value in cloud_rule_values(item["record"]):
+                    rows.append((device, *cloud_rule_columns(value)))
+                    payloads.append(
+                        {
+                            "item": item,
+                            "value": value,
+                            "search_text": "\n".join(
+                                text for _, text in cloud_rule_details(item, value)
+                            ),
+                        }
+                    )
+                    cloud_count += 1
+        self.rule_inventory_status.setText(
+            f"Правил и объектов в таблице: {len(rows)} · облачных правил: {cloud_count}. "
+            + (
+                "Облачные правила получены через API; проверки для них не выполнялись."
+                if self.rule_scope.currentData() == "project"
+                else "Выбран файловый запуск; облачные сборы доступны "
+                "в области «Все ресурсы проекта»."
+            )
+        )
         self.rules_model.replace(rows, payloads)
 
     def _rule_selected(self, *_: Any) -> None:
@@ -2781,8 +2813,15 @@ class MainWindow(QMainWindow):
             return
         if selected:
             value = selected[0]["value"]
-            fields = rule_details(value) if "rule_id" in value else object_details(value)
             item = selected[0]["item"]
+            if value.get("cloud_rule"):
+                self._clear_map_selection()
+                self.rule_detail.setHtml(
+                    f"<h3>{html.escape(value['name'])}</h3>"
+                    + _fields_html(cloud_rule_details(item, value))
+                )
+                return
+            fields = rule_details(value) if "rule_id" in value else object_details(value)
             self._refresh_map_items(item)
             self.rule_detail.setHtml(
                 f"<h3>{html.escape(value.get('name', 'Правило / объект'))}</h3>"

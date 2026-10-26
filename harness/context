@@ -10,8 +10,10 @@ parsers: limited ASA, HP/Aruba and Comware adapters with explicit completeness.
 analysis/application: checks, evidence and orchestration.
 infrastructure: source reading, cloud connectors and Windows secret handling.
 interfaces: CLI and desktop, persistence, reports and maps.
-tests: unit, contract, integration, golden, synthetic fixtures; 83 test modules
-at the baseline. Test cases/counts are determined by the actual runner.
+Historical c97c8a0 baseline: 83 unit/contract/integration/golden test modules.
+Merged main 2924860 removes tests/fixtures and some smoke scripts; full harness
+currently reports missing inputs and fails. Historical passing counts do not
+validate this new tree. Test restoration/adaptation is outstanding.
 scripts: Qt smoke, legacy Tk smoke and Windows packaging.
 
 Authoritative context: specifications/ARCHITECTURE.md, CURRENT_STATE.md,

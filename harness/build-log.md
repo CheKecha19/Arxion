@@ -132,3 +132,28 @@ Validation:
   results. They were not treated as passing or remediated during this UI change.
 
 No native Windows EXE was built or run. No database migration or deletion.
+
+## v0.3 preparation and current-main integration
+
+Version updated to 0.3.0 in pyproject, package and the root lock entry. Dependency
+versions unchanged; locked setup passes. Pre-merge run:
+artifacts/harness/20261026T131806Z-1b5c3fa6/results.json. 1804 passed, 16 failed,
+1 skipped, exit 139; nine additional golden mismatches were verified recursively
+to contain only the intentional application_version change. No goldens refreshed.
+
+Initial Git auth failures were followed by a successful push to release/v0.3.
+Current main 2924860 was fetched and merged. Its existing deletion of tests,
+fixtures and smoke scripts is preserved; those files remain recoverable from
+the old commits. No unrelated test restoration or behavior changes were made.
+
+Post-merge run: artifacts/harness/20261026T132600Z-16f61bb0/results.json.
+Locked setup, architecture, 2 harness tests and package build passed. Main pytest
+exit 4 (tests absent); fixture-based CLI and Qt smoke commands cannot run because
+their inputs/scripts were removed in main. Ruff/mypy and security gates also fail.
+These outcomes are not represented as successful application validation.
+
+A separate self-contained synthetic offscreen check passed on the merged source:
+runtime/CLI version 0.3.0, CLI findings JSON, saved analysis/device selection,
+one full-width infrastructure table and six retained hidden tabs; findings
+inspector on its own page remains visible. No live Cloud.ru requests were made.
+No native Windows binary built. GitHub Releases API returns Forbidden.

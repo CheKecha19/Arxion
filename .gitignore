@@ -6,6 +6,12 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.uv-cache-*/
+.pytest-tmp-*/
+.hypothesis/
+
+# Тесты не публикуются в репозитории
+/tests/
 
 # Артефакты сборки и отчёты
 build/
@@ -14,21 +20,13 @@ dist/
 *.egg-info/
 artifacts/
 reports/
-dev/.venv/
-dev/build/
-dev/tools/
-dev/mypy-cache/
-test/pytest-temp/
-test/pytest.xml
-test/packaged-smoke/
-prod/FirewallCompliance/
-prod/*.zip
 
 # Локальные данные и чувствительные конфигурации
 data/
 output/
 *.env
 .env
+.env.*
 *.cfg
 *.conf
 *.acl

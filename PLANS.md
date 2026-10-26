@@ -72,7 +72,13 @@ requires checking both credentials and network configuration, not bypassing prox
 Prepare a local release branch/commit, but do not tag or publish the stale source
 base. Once access is restored, fetch the current main, integrate these changes,
 resolve final validation and build native Windows assets before a Windows release.
-No force push, remote changes, release or tag have occurred.
+Initial access errors were followed by a successful real push of release/v0.3.
+Fresh main 2924860 was fetched and merged without conflicts; the UI change is
+retained. That main removes tests/fixtures and some smoke scripts (recoverable
+from history). Post-merge full harness reports missing inputs, not a passing suite:
+artifacts/harness/20261026T132600Z-16f61bb0/results.json. A separate self-contained
+offscreen synthetic check passed for version, CLI, stored analysis and inspector.
+Direct GitHub Releases REST access remains Forbidden. No force push was used.
 
 ## Template for the next substantial task
 
