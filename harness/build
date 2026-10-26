@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""Non-mutating quality gates; run with Python 3.12+ and uv on PATH."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "gate",
+        choices=(
+            "setup",
+            "context",
+            "impact",
+            "architecture",
+            "quality",
+            "test",
+            "smoke",
+            "package",
+            "security",
+            "all",
+        ),
+    )
+    parser.add_argument("paths", nargs="*", help="Prospective files for impact analysis")
+    parser.add_argument("--base", default="HEAD", help="Git baseline for impact analysis")
+    args = parser.parse_args()
+    run = (
+        ROOT
+        / "artifacts"
+        / "harness"
+        / (datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8])
+    )
+    run.mkdir(parents=True)
+    env = os.environ.copy()
+    env.setdefault("UV_CACHE_DIR", str(ROOT.parent / ".cache" / "arxion-uv"))
+    env.setdefault("XDG_CACHE_HOME", str(ROOT.parent / ".cache" / "arxion-harness"))
+    env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    env["PYTHONHASHSEED"] = "0"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    records = []
+
+    def execute(name: str, command: list[str], stdout: Path | None = None) -> int:
+        print(f"{name}: {' '.join(command)}", flush=True)
+        with (run / f"{name}.log").open("w", encoding="utf-8") as log:
+            try:
+                if stdout is None:
+                    result = subprocess.run(
+                        command,
+                        cwd=ROOT,
+                        env=env,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        timeout=1200,
+                    )
+                else:
+                    with stdout.open("w", encoding="utf-8") as output:
+                        result = subprocess.run(
+                            command, cwd=ROOT, env=env, stdout=output, stderr=log, timeout=1200
+                        )
+                code = result.returncode
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                log.write(str(exc))
+                code = 124 if isinstance(exc, subprocess.TimeoutExpired) else 127
+        records.append({"name": name, "command": command, "exit_code": code})
+        print(f"  exit={code}; log={run / (name + '.log')}", flush=True)
+        return code
+
+    uv = ["uv", "run", "--locked", "--no-sync"]
+    tools = ["uv", "run", "--locked", "--no-sync", "--project", str(ROOT / "harness/tools")]
+    gates = (
+        ("architecture", "quality", "test", "smoke", "package", "security")
+        if args.gate == "all"
+        else (args.gate,)
+    )
+    for gate in gates:
+        if gate == "setup":
+            execute("sync", ["uv", "sync", "--locked", "--all-groups", "--all-extras"])
+            execute(
+                "sync-security",
+                ["uv", "sync", "--locked", "--project", str(ROOT / "harness/tools")],
+            )
+        elif gate in {"context", "impact", "architecture"}:
+            execute(
+                gate,
+                [
+                    sys.executable,
+                    str(ROOT / "harness/project_graph.py"),
+                    gate,
+                    "--output",
+                    str(run / f"{gate}.json"),
+                    "--base",
+                    args.base,
+                    *args.paths,
+                ],
+            )
+        elif gate == "quality":
+            execute("diff-check", ["git", "diff", "--check"])
+            execute(
+                "format",
+                uv
+                + [
+                    "ruff",
+                    "format",
+                    "--check",
+                    "src",
+                    "tests",
+                    "scripts",
+                    "harness",
+                    "harness/build",
+                ],
+            )
+            execute(
+                "lint",
+                uv + ["ruff", "check", "src", "tests", "scripts", "harness", "harness/build"],
+            )
+            execute("types", uv + ["mypy", "src"])
+        elif gate == "test":
+            execute("harness-tests", uv + ["pytest", "harness/tests", "--hypothesis-seed=0"])
+            execute(
+                "pytest",
+                uv + ["pytest", "tests", "--hypothesis-seed=0", f"--junitxml={run / 'pytest.xml'}"],
+            )
+        elif gate == "smoke":
+            output = run / "cli.json"
+            if (
+                execute(
+                    "cli",
+                    uv
+                    + [
+                        "firewall-compliance",
+                        "analyze",
+                        "tests/fixtures/assurance/policy_quality.cfg",
+                    ],
+                    output,
+                )
+                == 0
+            ):
+                execute(
+                    "cli-contract",
+                    uv
+                    + [
+                        "python",
+                        "-c",
+                        "import json,sys; "
+                        "d=json.load(open(sys.argv[1], encoding='utf-8')); "
+                        "assert len(d['checks']) == 7; "
+                        "assert sum(len(c['findings']) for c in d['checks']) == 14; "
+                        "assert not d['parse_errors']",
+                        str(output),
+                    ],
+                )
+            execute("qt-smoke", uv + ["python", "scripts/qt_desktop_smoke.py"])
+        elif gate == "package":
+            execute(
+                "package",
+                tools
+                + ["python", "-m", "build", "--no-isolation", "--outdir", str(run / "packages")],
+            )
+        elif gate == "security":
+            targets = sorted(
+                str(p.relative_to(ROOT))
+                for p in (ROOT / "src/firewall_compliance").rglob("*.py")
+                if "__pycache__" not in p.parts
+            )
+            # SECURITY.md: application sources and the Python launcher; no tests/caches.
+            execute(
+                "bandit",
+                tools
+                + [
+                    "bandit",
+                    "-f",
+                    "json",
+                    "-o",
+                    str(run / "bandit.json"),
+                    *targets,
+                    "scripts/qt_launcher.py",
+                ],
+            )
+            requirements = run / "requirements.txt"
+            if (
+                execute(
+                    "export",
+                    [
+                        "uv",
+                        "export",
+                        "--locked",
+                        "--all-groups",
+                        "--all-extras",
+                        "--no-emit-project",
+                        "--format",
+                        "requirements-txt",
+                        "--output-file",
+                        str(requirements),
+                    ],
+                )
+                == 0
+            ):
+                execute(
+                    "dependency-audit",
+                    tools
+                    + [
+                        "pip-audit",
+                        "--disable-pip",
+                        "--no-deps",
+                        "-r",
+                        str(requirements),
+                        "--format",
+                        "json",
+                        "--output",
+                        str(run / "audit.json"),
+                    ],
+                )
+    manifest = {
+        "gate": args.gate,
+        "python": sys.version,
+        "platform": sys.platform,
+        "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+        "commands": records,
+    }
+    (run / "results.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    print(f"Report: {run / 'results.json'}")
+    return int(any(item["exit_code"] != 0 for item in records))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -9,6 +9,7 @@ __pycache__/
 
 # Артефакты сборки и отчёты
 build/
+!harness/build
 dist/
 *.egg-info/
 artifacts/

@@ -1,3 +1,31 @@
+# Engineering Harness
+
+Start with `GOALS.md`, `PLANS.md`, `harness/context` and `harness/project-map.md`.
+Work in the existing checkout; cloud tasks are already isolated.
+Do not create worktrees unless asked.
+Use `.agents/skills/` for task-specific procedures. Preserve the specialist
+instructions below.
+
+Before editing, inspect Git status and relevant contracts. For substantial work,
+record a scoped plan in PLANS.md and update it with evidence as work proceeds.
+Run `python harness/build impact <prospective-paths>` before substantial edits;
+review downstream callers, JSON/schema and SQLite compatibility, Qt wiring and
+candidate tests. Use `python harness/build context` for the current import map.
+Static impact is incomplete; inspect runtime consumers and run the full gate.
+Keep application behavior, fixtures and golden outputs unchanged in harness-only
+tasks. Never refresh goldens merely to make a test pass. Use synthetic data only.
+Do not commit, push, delete files, publish, or access live cloud accounts unless
+the user authorizes that action. Never log credentials or customer configurations.
+
+Install: `python harness/build setup`. Required checks: `python harness/build all`.
+Separate commands: `architecture`, `quality`, `test`, `smoke`, `package`, `security`.
+Each invocation writes a unique report under ignored `artifacts/harness/` and
+returns nonzero if any required command fails. Inspect the report and actual test
+counts; an unrun, skipped or zero-test suite is not a passing validation.
+Record baseline failures without fixing application code outside the task scope.
+Linux offscreen results do not validate a native Windows release.
+Update `harness/build-log.md` with the baseline SHA, commands, results and limits.
+
 # Codex Agents Library
 
 The project uses the 36 specialist definitions in `.codex/agents/*.toml` from
