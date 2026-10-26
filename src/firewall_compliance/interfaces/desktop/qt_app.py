@@ -1417,7 +1417,9 @@ class MainWindow(QMainWindow):
         self.finding_table.selectionModel().selectionChanged.connect(self._finding_selected)
 
     def _build_devices(self) -> None:
-        _, layout = self._page("Инфраструктура", "Ресурсы проекта и доступные снимки конфигураций.")
+        page, layout = self._page(
+            "Инфраструктура", "Ресурсы проекта и доступные снимки конфигураций."
+        )
         self.device_scope = QComboBox()
         self.device_scope.addItem("Импорты выбранного запуска", "run")
         self.device_scope.addItem("Все ресурсы проекта · последние снимки", "project")
@@ -1458,7 +1460,7 @@ class MainWindow(QMainWindow):
         self.device_detail = QTextBrowser()
         self.device_detail.setOpenLinks(False)
         self.device_detail.anchorClicked.connect(self.resource_details.open_device_link)
-        self.device_tabs = QTabWidget()
+        self.device_tabs = QTabWidget(page)
         self.device_tabs.addTab(self.device_detail, "Сведения")
         self.device_rules_table, self.device_rules_model, self.device_rules_proxy = self._table(
             ("Порядок", "Правило", "Действие", "Источник", "Назначение", "Сервис"),
@@ -1508,8 +1510,11 @@ class MainWindow(QMainWindow):
             self.device_table.setColumnWidth(column, width)
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(self.device_table)
-        split.addWidget(self.device_tabs)
-        split.setSizes([600, 560])
+        # Временно скрыто до переработки инфраструктуры (INFRA-001).
+        # Виджеты сохранены для действующих обработчиков и возврата панели.
+        # split.addWidget(self.device_tabs)
+        # split.setSizes([600, 560])
+        self.device_tabs.hide()
         layout.addWidget(split, 1)
         self.device_table.selectionModel().selectionChanged.connect(self._device_selected)
         actions = QGridLayout()
