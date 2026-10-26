@@ -43,16 +43,19 @@ uv sync --all-groups
 ## Проверки
 
 ```powershell
-uv run ruff format --check src tests scripts
-uv run ruff check src tests scripts
+uv run ruff format --check src scripts
+uv run ruff check src scripts
 uv run mypy src
-uv run pytest
 ```
 
 ## Локальный анализ
 
+Укажите путь к своей конфигурации оборудования. Тестовые конфигурации и набор
+тестов удалены из текущей рабочей папки; ссылки на них в исторических
+спецификациях описывают прежние проверки.
+
 ```powershell
-uv run firewall-compliance analyze tests/fixtures/assurance/policy_quality.cfg
+uv run firewall-compliance analyze "C:\configs\device.cfg"
 ```
 
 Команда выводит JSON с findings, Evidence, версиями и ограничениями анализа. Проверяются any-any, дубликаты, полное затенение одним правилом, кандидаты на объединение, логирование, описания и отключённые правила.
@@ -60,7 +63,7 @@ uv run firewall-compliance analyze tests/fixtures/assurance/policy_quality.cfg
 Логирование требуется для активных разрешений, описания - для активных правил. Эти требования можно отключить:
 
 ```powershell
-uv run firewall-compliance analyze tests/fixtures/assurance/policy_quality.cfg --no-require-logging --no-require-comments
+uv run firewall-compliance analyze "C:\configs\device.cfg" --no-require-logging --no-require-comments
 ```
 
 `partial` означает наличие непроверенных условий, `complete` - выполнение проверки в заданной границе. Отсутствие findings не является заключением о безопасности. Any-any относится к настроенным условиям правила для указанного сервиса; Network Assurance и влияние NAT ещё не вычисляются. Ошибка распознавания/парсинга возвращает JSON диагностику и код выхода 2; код 0 означает сформированный результат, включая partial и findings.
@@ -80,7 +83,7 @@ VMware, Advanced и Evolution.
 
 Из исходников: `Start-Desktop.cmd` или
 `.\.venv\Scripts\python.exe -m firewall_compliance.interfaces.desktop`.
-Portable: распакуйте `dist\FirewallCompliance-windows-x64.zip` и откройте `dist\FirewallCompliance\FirewallCompliance.exe`; переносите всю папку
+Portable после сборки: распакуйте `dist\FirewallCompliance-windows-x64.zip` и откройте `dist\FirewallCompliance\FirewallCompliance.exe`; переносите всю папку
 с `_internal`. Для portable Python/uv не нужны. Сборка из исходников:
 
 ```powershell
@@ -98,8 +101,7 @@ powershell -ExecutionPolicy Bypass -File scripts/build_desktop.ps1
 ASA network/forwarding инструменты находятся в «Расширенном анализе»; окончательная
 достижимость не вычисляется. Их документы/результаты живут в памяти и экспортируются отдельно.
 
-Первый synthetic пример: `tests/fixtures/assurance/policy_quality.cfg` — семь checks
-и 14 findings при стандартных настройках. Пошаговая работа:
+Пошаговая работа:
 [USER_GUIDE](specifications/USER_GUIDE.md), [сетевой гайд](specifications/NETWORK_UI_GUIDE.md).
 Реализация: [DESKTOP_UI](specifications/DESKTOP_UI.md).
 Подтверждённые проверки сборки и ограничения чистой Windows-матрицы:

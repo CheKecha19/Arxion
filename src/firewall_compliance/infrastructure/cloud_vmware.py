@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import ssl
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -11,12 +12,25 @@ from datetime import UTC, datetime
 from threading import Event
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import quote, unquote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 from xml.etree import ElementTree as ET
 
 MAX_RESPONSE = 16 * 1024 * 1024
 MAX_PAGES = 1000
+API_VERSIONS = (
+    "36.1",
+    "36.2",
+    "36.3",
+    "37.0",
+    "37.1",
+    "37.2",
+    "37.3",
+    "38.0",
+    "38.1",
+    "39.0",
+    "39.1",
+)
 RESOURCE_TYPES = {"vms": "Виртуальные машины", "edges": "Edge Gateway", "networks": "Сети Org VDC"}
 DATA_TYPES = {
     "vm_networks": "Сетевые подключения и IP-адреса ВМ",
@@ -41,11 +55,13 @@ class _NoRedirect(HTTPRedirectHandler):
 class VMwareConfig:
     site: str
     tenant: str
-    api_version: str = "36.1"
+    api_version: str = "auto"
     timeout: int = 30
 
     def __post_init__(self) -> None:
         parsed = urlsplit(self.site.strip())
+        tenant = self.tenant.strip()
+        tenant_path = re.fullmatch(r"/tenant/([^/]+)/?", parsed.path)
         if (
             parsed.scheme != "https"
             or not parsed.hostname
@@ -54,19 +70,27 @@ class VMwareConfig:
             or parsed.password
             or parsed.query
             or parsed.fragment
-            or parsed.path not in ("", "/")
+            or (parsed.path not in ("", "/") and not tenant_path)
             or parsed.port not in (None, 443)
         ):
             raise ValueError(
-                "Укажите HTTPS-адрес площадки Cloud.ru без пути, например https://vcd01-01.cloud.ru."
+                "Укажите HTTPS-адрес площадки Cloud.ru или ссылку входа https://<площадка>/tenant/<имя>/."
             )
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", self.tenant):
+        if tenant_path:
+            linked_tenant = unquote(tenant_path[1])
+            if tenant and tenant != linked_tenant:
+                raise ValueError("Tenant в поле и в ссылке Cloud Director не совпадают.")
+            tenant = linked_tenant
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", tenant):
             raise ValueError("Укажите имя tenant из ссылки /tenant/<имя>/.")
-        if not re.fullmatch(r"(?:36|37|38|39)\.\d{1,2}", self.api_version):
-            raise ValueError("Версия API должна иметь вид 36.1, 37.0, 38.1 или 39.1.")
+        if self.api_version != "auto" and self.api_version not in API_VERSIONS:
+            raise ValueError(
+                "Выберите автоматическую версию API или поддерживаемую версию 36.1–39.1."
+            )
         if not 5 <= self.timeout <= 120:
             raise ValueError("Таймаут должен быть от 5 до 120 секунд.")
         object.__setattr__(self, "site", f"https://{parsed.hostname}")
+        object.__setattr__(self, "tenant", tenant)
 
 
 @dataclass(frozen=True)
@@ -103,20 +127,39 @@ def _transport(request: Request, timeout: int) -> bytes:
             data: bytes = response.read(MAX_RESPONSE + 1)
     except HTTPError as error:
         messages = {
+            400: "Запрос отклонён. Проверьте параметры и тип ключа доступа.",
             401: "Токен недействителен или истёк.",
             403: "Недостаточно прав на чтение ресурса.",
             404: "Ресурс или API недоступен на площадке.",
             406: "Версия API не поддерживается площадкой.",
+            407: "Прокси-сервер требует авторизацию. Проверьте настройки прокси Windows.",
             429: "Превышен лимит запросов. Повторите позже.",
         }
         raise CloudError(
-            f"HTTP {error.code}: "
-            + messages.get(error.code, "Запрос Cloud Director завершился ошибкой.")
+            f"HTTP {error.code}: " + messages.get(error.code, "Запрос Cloud.ru завершился ошибкой.")
         ) from None
-    except (URLError, OSError, TimeoutError):
-        raise CloudError(
-            "Не удалось подключиться. Проверьте адрес, сеть, TLS-сертификат и таймаут."
-        ) from None
+    except (URLError, OSError) as error:
+        reason = error.reason if isinstance(error, URLError) else error
+        host = urlsplit(request.full_url).hostname
+        if isinstance(reason, socket.gaierror):
+            message = (
+                f"DNS: не удалось определить адрес {host}. Скопируйте адрес из ссылки входа "
+                "в Cloud Director; проверьте опечатки, DNS и необходимость VPN."
+            )
+        elif isinstance(reason, ssl.SSLCertVerificationError):
+            message = (
+                f"TLS: сертификат {host} не прошёл проверку. Проверьте адрес площадки, "
+                "дату компьютера и доверенные сертификаты Windows/корпоративного прокси."
+            )
+        elif isinstance(reason, ssl.SSLError):
+            message = f"TLS: не удалось установить защищённое соединение с {host}."
+        elif isinstance(reason, TimeoutError):
+            message = f"Таймаут: {host} не ответил за {timeout} с. Проверьте сеть, VPN и прокси."
+        elif isinstance(reason, ConnectionRefusedError):
+            message = f"Соединение с {host} отклонено. Проверьте доступ к HTTPS, VPN и прокси."
+        else:
+            message = f"Сетевая ошибка при обращении к {host}. Проверьте сеть, VPN и прокси."
+        raise CloudError(message) from None
     if len(data) > MAX_RESPONSE:
         raise CloudError("Ответ превышает допустимый размер; данные не получены полностью.")
     return data
@@ -153,6 +196,7 @@ class VMwareClient:
         if not api_token.strip():
             raise ValueError("Введите API Token VMware Cloud Director.")
         self.config = config
+        self.api_version = config.api_version
         self._api_token = api_token
         self._access_token = ""
         self.transport = transport
@@ -167,19 +211,58 @@ class VMwareClient:
         if not path.startswith(("/api/", "/cloudapi/", "/oauth/")) or "\r" in path or "\n" in path:
             raise CloudError("Недопустимый путь API.")
         accept = "application/*+xml" if xml else "application/json"
-        headers = {"Accept": accept + (f";version={self.config.api_version}" if auth else "")}
+        headers = {"Accept": accept + (f";version={self.api_version}" if auth else "")}
         if auth:
             headers["Authorization"] = f"Bearer {self._access_token}"
         if data is not None:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         method = "POST" if data is not None else "GET"
-        self.requests.append({"method": method, "path": path})
-        return self.transport(
-            Request(self.config.site + path, data=data, headers=headers, method=method),
-            self.config.timeout,
-        )
+        entry = {"method": method, "path": path}
+        if auth:
+            entry["api_version"] = self.api_version
+        self.requests.append(entry)
+        try:
+            response = self.transport(
+                Request(self.config.site + path, data=data, headers=headers, method=method),
+                self.config.timeout,
+            )
+        except CloudError as error:
+            entry["status"] = "error"
+            raise CloudError(f"{method} {path}: {error}") from None
+        entry["status"] = "ok"
+        return response
+
+    def _select_api_version(self) -> None:
+        root = _xml(self._request("/api/versions", xml=True, auth=False))
+        if root.tag.rsplit("}", 1)[-1] != "SupportedVersions":
+            raise CloudError("Ожидался список версий API. Проверьте адрес площадки Cloud Director.")
+        versions: dict[str, bool] = {}
+        for entry in root:
+            if entry.tag.rsplit("}", 1)[-1] != "VersionInfo":
+                continue
+            for child in entry:
+                version = (child.text or "").strip()
+                if child.tag.rsplit("}", 1)[-1] == "Version" and version in API_VERSIONS:
+                    versions[version] = entry.attrib.get("deprecated", "false").lower() != "true"
+        if not versions:
+            raise CloudError("У площадки нет совместимых версий API 36.1–39.1.")
+        if self.config.api_version == "auto":
+            preferred = [version for version, current in versions.items() if current] or list(
+                versions
+            )
+            self.api_version = max(
+                preferred, key=lambda version: tuple(map(int, version.split(".")))
+            )
+        elif self.config.api_version not in versions:
+            raise CloudError(
+                f"Площадка не поддерживает API {self.config.api_version}. "
+                "Выберите «Автоматически» в настройках. Доступны: " + ", ".join(versions) + "."
+            )
+        else:
+            self.api_version = self.config.api_version
 
     def authenticate(self) -> None:
+        self._select_api_version()
         body = urlencode({"grant_type": "refresh_token", "refresh_token": self._api_token}).encode()
         payload = _json(
             self._request(
@@ -232,11 +315,20 @@ class VMwareClient:
 
     def _vms(self) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
+        received = 0
         for page in range(1, MAX_PAGES + 1):
             root = _xml(
                 self._request(
                     "/api/query?"
-                    + urlencode({"type": "vm", "format": "records", "page": page, "pageSize": 128}),
+                    + urlencode(
+                        {
+                            "type": "vm",
+                            "format": "records",
+                            "filter": "(isVAppTemplate==false;isDeleted==false)",
+                            "page": page,
+                            "pageSize": 128,
+                        }
+                    ),
                     xml=True,
                 )
             )
@@ -245,16 +337,38 @@ class VMwareClient:
             values = [
                 dict(item.attrib) for item in root if item.tag.rsplit("}", 1)[-1] == "VMRecord"
             ]
-            records.extend(values)
+            received += len(values)
+            records.extend(
+                item
+                for item in values
+                if item.get("isVAppTemplate", "false").lower() not in {"true", "1"}
+                and item.get("isDeleted", "false").lower() not in {"true", "1"}
+            )
             try:
                 total = int(root.attrib["total"])
             except (KeyError, ValueError):
                 raise CloudError("В ответе отсутствует размер списка ВМ.") from None
-            if len(records) >= total:
+            if received >= total:
                 return records
             if not values:
                 raise CloudError("Список ВМ получен не полностью.")
         raise CloudError("Превышен лимит страниц списка ВМ.")
+
+    def _firewall(self, path: str) -> dict[str, Any]:
+        payload = _json(self._request(path))
+        if "userDefinedRules" not in payload:
+            raise CloudError("В ответе Firewall отсутствует поле userDefinedRules.")
+        for key in ("userDefinedRules", "systemRules", "defaultRules"):
+            if key not in payload:
+                continue
+            rules = payload[key]
+            # Cloud Director represents an empty rule group as either [] or null.
+            # Preserve the default/system rules even when user-defined rules are empty.
+            if rules is None:
+                payload[key] = []
+            elif not isinstance(rules, list) or any(not isinstance(rule, dict) for rule in rules):
+                raise CloudError(f"Неожиданный формат поля {key} в ответе Firewall.")
+        return payload
 
     def _vm_connections(self, vm: dict[str, Any]) -> list[dict[str, Any]]:
         href = str(vm.get("href", ""))
@@ -331,7 +445,7 @@ class VMwareClient:
                                 raise CloudError("Edge Gateway содержит недопустимый ID.")
                             version = (
                                 "2.0.0"
-                                if tuple(map(int, self.config.api_version.split("."))) >= (38, 1)
+                                if tuple(map(int, self.api_version.split("."))) >= (38, 1)
                                 else "1.0.0"
                             )
                             suffix = {
@@ -344,10 +458,7 @@ class VMwareClient:
                                 f"{quote(gateway_id, safe=':')}{suffix}"
                             )
                             if data_kind == "firewall":
-                                payload = _json(self._request(path))
-                                if not isinstance(payload.get("userDefinedRules"), list):
-                                    raise CloudError("Неожиданный формат правил Firewall.")
-                                record["data"][data_kind] = payload
+                                record["data"][data_kind] = self._firewall(path)
                             else:
                                 record["data"][data_kind] = self._collection(path)
                         except CloudError as error:

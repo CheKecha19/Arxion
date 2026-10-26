@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request
 
 from PySide6.QtCore import QCoreApplication, QEvent, QTimer
@@ -69,31 +69,75 @@ def run_packaged_smoke(output_dir: Path) -> None:
 
     project_id = window.create_project("Синтетическая проверка Windows-сборки")
     cloud = window.cloud_panel
-    cloud.site.setText("https://vcd01-01.cloud.ru")
-    cloud.tenant.setText("synthetic-tenant")
+    cloud.site.setText("https://vcd01-01.cloud.ru/tenant/synthetic-tenant/")
+    cloud.tenant.clear()
     cloud.token.setText("SYNTHETIC-CLOUD-API-TOKEN")
-    cloud.save()
-    assert store.get_vmware_token(project_id) == "SYNTHETIC-CLOUD-API-TOKEN"
 
     def cloud_transport(request: Request, _timeout: int) -> bytes:
+        if request.full_url.endswith("/api/versions"):
+            assert request.get_header("Authorization") is None
+            return (
+                b'<SupportedVersions><VersionInfo deprecated="false">'
+                b"<Version>39.1</Version></VersionInfo></SupportedVersions>"
+            )
         if request.get_method() == "POST":
             return b'{"access_token":"SYNTHETIC-ACCESS-TOKEN"}'
+        assert request.get_header("Accept", "").endswith("version=39.1")
+        if request.full_url.endswith("/api/org/"):
+            return b'<OrgList><Org name="synthetic-tenant"/></OrgList>'
+        if "/cloudapi/1.0.0/edgeGateways?" in request.full_url:
+            return (
+                b'{"values":[{"id":"urn:vcloud:gateway:abcd","name":"SYNTHETIC-EDGE"}],'
+                b'"resultTotal":1}'
+            )
+        if request.full_url.endswith("/firewall/rules"):
+            return (
+                b'{"status":"REALIZED","userDefinedRules":null,"systemRules":null,'
+                b'"defaultRules":[{"id":"default","actionValue":"DROP"}]}'
+            )
         assert "/api/query?" in request.full_url
+        assert parse_qs(urlsplit(request.full_url).query)["filter"] == [
+            "(isVAppTemplate==false;isDeleted==false)"
+        ]
         return (
-            b'<QueryResultRecords total="1"><VMRecord name="SYNTHETIC-CLOUD-VM" '
+            b'<QueryResultRecords total="2"><VMRecord name="SYNTHETIC-CLOUD-VM" '
             b'href="https://vcd01-01.cloud.ru/api/vApp/vm-abcd" '
-            b'ipAddress="10.10.3.30"/></QueryResultRecords>'
+            b'ipAddress="10.10.3.30"/><VMRecord name="SYNTHETIC-TEMPLATE" '
+            b'isVAppTemplate="true" href="https://vcd01-01.cloud.ru/api/vAppTemplate/vm-dcba"/>'
+            b"</QueryResultRecords>"
         )
 
     cloud.client_factory = partial(VMwareClient, transport=cloud_transport)
-    cloud.resource_checks["edges"].setChecked(False)
+    cloud.test_connection()
+    until(lambda: not cloud.busy)
+    assert "API 39.1" in cloud.connection_status.text()
+    assert store.get_vmware_integration(project_id) is None
+    assert "SYNTHETIC-CLOUD-API-TOKEN" not in cloud.connection_details.toPlainText()
+    cloud.save()
+    assert store.get_vmware_token(project_id) == "SYNTHETIC-CLOUD-API-TOKEN"
+    firewall_client = cloud.client_factory(cloud._config(), "SYNTHETIC-CLOUD-API-TOKEN")
+    firewall_client.authenticate()
+    firewall = firewall_client._firewall(
+        "/cloudapi/2.0.0/edgeGateways/urn:vcloud:gateway:abcd/firewall/rules"
+    )
+    assert firewall["userDefinedRules"] == []
+    assert firewall["systemRules"] == []
+    assert firewall["defaultRules"][0]["actionValue"] == "DROP"
+    cloud.resource_checks["edges"].setChecked(True)
     cloud.resource_checks["networks"].setChecked(False)
     cloud.data_checks["vm_networks"].setChecked(False)
+    cloud.data_checks["nat"].setChecked(False)
+    cloud.data_checks["routes"].setChecked(False)
     cloud.start_scan()
     until(lambda: not cloud.busy)
     scan = store.list_cloud_scans(project_id)[0]
     assert scan["state"] == "completed"
-    assert len(scan["result"]["records"]) == 1
+    assert len(scan["result"]["records"]) == 2
+    window._refresh_rules()
+    assert any(
+        value["value"].get("cloud_rule") and value["value"]["raw"].get("id") == "default"
+        for value in window.rules_model.payloads
+    )
     assert "SYNTHETIC-CLOUD-API-TOKEN" not in json.dumps(scan)
     assert "SYNTHETIC-ACCESS-TOKEN" not in json.dumps(scan)
     window._configure_cloud()
@@ -271,7 +315,7 @@ def run_packaged_smoke(output_dir: Path) -> None:
     assert window.grab().save(str(output_dir / "qt-network-map-properties.png"))
     window.navigate("findings")
     window.navigate("devices")
-    assert window.device_model.rowCount() == 4
+    assert window.device_model.rowCount() == 5
     assert {
         item.get("platform") for item in window.device_model.payloads if item.get("kind") == "cloud"
     } == {
@@ -358,6 +402,9 @@ def run_packaged_smoke(output_dir: Path) -> None:
                 "history_restored": True,
                 "modified_source_rejected": True,
                 "cloud_vmware_synthetic_scan": True,
+                "cloud_vmware_template_filter": True,
+                "cloud_vmware_nullable_firewall_groups": True,
+                "cloud_rules_in_common_table": True,
                 "cloud_credentials_protected": True,
                 "cloud_advanced_synthetic_scan": True,
                 "cloud_evolution_synthetic_scan": True,

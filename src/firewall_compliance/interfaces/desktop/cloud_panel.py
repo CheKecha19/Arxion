@@ -40,6 +40,7 @@ from firewall_compliance.infrastructure.cloud_public import (
     PublicSelection,
 )
 from firewall_compliance.infrastructure.cloud_vmware import (
+    API_VERSIONS,
     DATA_TYPES,
     RESOURCE_TYPES,
     ScanResult,
@@ -107,7 +108,8 @@ class CloudPanel:
         layout.addWidget(_label("Данные подключения сохраняются отдельно для каждого проекта."))
         form = QFormLayout()
         self.site = QLineEdit()
-        self.site.setPlaceholderText("https://vcd01-01.cloud.ru")
+        self.site.setPlaceholderText("Адрес площадки или полная ссылка https://…/tenant/…/")
+        self.site.editingFinished.connect(self._import_vmware_url)
         self.tenant = QLineEdit()
         self.tenant.setPlaceholderText("Имя из ссылки /tenant/<имя>/")
         self.token = QLineEdit()
@@ -117,7 +119,7 @@ class CloudPanel:
         )
         self.api_version = QComboBox()
         self.api_version.setEditable(True)
-        self.api_version.addItems(["36.1", "37.0", "38.1", "39.1"])
+        self.api_version.addItems(["Автоматически", *reversed(API_VERSIONS)])
         self.timeout = QSpinBox()
         self.timeout.setRange(5, 120)
         self.timeout.setValue(30)
@@ -141,7 +143,7 @@ class CloudPanel:
             _label(
                 "Нужны права чтения выбранных ВМ, сетей и Edge Gateway, "
                 "включая Firewall/NAT/маршруты. "
-                "Версию API можно уточнить у площадки или в https://<площадка>/docs/. "
+                "В режиме «Автоматически» совместимая версия выбирается через /api/versions. "
                 "Используется пользовательский API Token; сервисные аккаунты "
                 "с ротацией refresh_token пока не поддержаны."
             )
@@ -157,7 +159,15 @@ class CloudPanel:
             buttons.addWidget(button)
         layout.addLayout(buttons)
         self.connection_status = _label("Выберите или создайте проект.")
+        self.connection_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.connection_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.connection_status)
+        self.connection_details = QPlainTextEdit()
+        self.connection_details.setReadOnly(True)
+        self.connection_details.setPlaceholderText("Здесь появятся этапы проверки подключения.")
+        self.connection_details.setMaximumHeight(120)
+        self.connection_details.setAccessibleName("Диагностика подключения VMware")
+        layout.addWidget(self.connection_details)
         docs = _label(
             '<a href="https://cloud.ru/docs/vdc/ug/topics/basic-info/basic-info__api-token">'
             "Как создать API Token в Cloud.ru VMware</a>"
@@ -289,9 +299,11 @@ class CloudPanel:
         config = self.store.get_vmware_integration(project_id) if project_id else None
         self.site.setText(config.get("site", "") if config else "")
         self.tenant.setText(config.get("tenant", "") if config else "")
-        self.api_version.setCurrentText(config.get("api_version", "36.1") if config else "36.1")
+        version = config.get("api_version", "auto") if config else "auto"
+        self.api_version.setCurrentText("Автоматически" if version == "auto" else version)
         self.timeout.setValue(config.get("timeout", 30) if config else 30)
         self.token.clear()
+        self.connection_details.clear()
         self.connection_status.setText(
             "Подключение сохранено. API Token скрыт." if config else "Подключение не настроено."
         )
@@ -314,12 +326,37 @@ class CloudPanel:
         self._set_busy(self.busy)
 
     def _config(self) -> VMwareConfig:
+        version = self.api_version.currentText().strip()
         return VMwareConfig(
             self.site.text().strip(),
             self.tenant.text().strip(),
-            self.api_version.currentText().strip(),
+            "auto" if version == "Автоматически" else version,
             self.timeout.value(),
         )
+
+    def _import_vmware_url(self) -> None:
+        if "/tenant/" not in self.site.text():
+            return
+        try:
+            config = VMwareConfig(self.site.text().strip(), "")
+        except ValueError as error:
+            self.connection_status.setText(str(error))
+            return
+        self.site.setText(config.site)
+        self.tenant.setText(config.tenant)
+
+    def _form_token(self, config: VMwareConfig) -> str:
+        if not self.project_id:
+            raise ValueError("Выберите или создайте проект.")
+        token = self.token.text().strip()
+        if token:
+            return token
+        saved = self.store.get_vmware_integration(self.project_id)
+        if saved is None:
+            raise ValueError("Введите API Token VMware Cloud Director.")
+        if config.site != saved["site"] or config.tenant != saved["tenant"]:
+            raise ValueError("Для нового адреса площадки или tenant введите API Token заново.")
+        return self.store.get_vmware_token(self.project_id)
 
     def _saved_config(self) -> VMwareConfig:
         if not self.project_id:
@@ -336,17 +373,10 @@ class CloudPanel:
             if not self.project_id:
                 raise ValueError("Выберите или создайте проект.")
             config = self._config()
-            saved = self.store.get_vmware_integration(self.project_id)
-            if not self.token.text().strip() and saved is None:
-                raise ValueError("Введите API Token VMware Cloud Director.")
-            if (
-                not self.token.text().strip()
-                and saved
-                and (config.site != saved["site"] or config.tenant != saved["tenant"])
-            ):
-                raise ValueError("Для нового адреса площадки или tenant введите API Token заново.")
-            token = self.token.text().strip() or self.store.get_vmware_token(self.project_id)
+            token = self._form_token(config)
             self.store.save_vmware_integration(self.project_id, asdict(config), token)
+            self.site.setText(config.site)
+            self.tenant.setText(config.tenant)
             self.token.clear()
             self.connection_status.setText(
                 "Подключение сохранено. Теперь можно проверить доступ или запустить сканирование."
@@ -392,25 +422,49 @@ class CloudPanel:
         if self.busy:
             return
         try:
-            config = self._saved_config()
+            config = self._config()
+            token = self._form_token(config)
             assert self.project_id
-            client = self.client_factory(config, self.store.get_vmware_token(self.project_id))
+            client = self.client_factory(config, token)
+            needs_save = bool(self.token.text().strip()) or (
+                asdict(config) != self.store.get_vmware_integration(self.project_id)
+            )
         except ValueError as error:
             self.connection_status.setText(str(error))
             return
         project_id = self.project_id
         self.cancel = client.cancel
         self._set_busy(True)
-        self.connection_status.setText("Проверка доступа к tenant…")
+        self.connection_details.clear()
+        self.connection_status.setText("Проверка адреса, версии API, токена и доступа к tenant…")
 
         def completed(result: object) -> None:
             self._set_busy(False)
             if self.project_id == project_id:
                 if isinstance(result, ScanResult):
                     self.connection_status.setText(
-                        "Подключение успешно. Доступ к tenant подтверждён."
+                        f"Подключение успешно. API {client.api_version}. "
+                        "Доступ к tenant подтверждён."
+                        + (" Сохраните подключение перед сбором данных." if needs_save else "")
                         if result.state == "completed"
                         else result.errors[0]["message"]
+                    )
+                    self.connection_details.setPlainText(
+                        "\n".join(
+                            f"{request['method']} {request['path']}"
+                            + (
+                                f" · API {request['api_version']}"
+                                if "api_version" in request
+                                else ""
+                            )
+                            + (" · OK" if request.get("status") == "ok" else " · ошибка")
+                            for request in result.requests
+                        )
+                        + (
+                            "\n" + "\n".join(error["message"] for error in result.errors)
+                            if result.errors
+                            else ""
+                        )
                     )
                 else:
                     self.connection_status.setText("Не удалось проверить подключение.")

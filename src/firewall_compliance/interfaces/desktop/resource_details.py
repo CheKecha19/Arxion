@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from firewall_compliance.domain.source import SourceLocation
 from firewall_compliance.interfaces.desktop.backend import AnalysisSession, source_preview
+from firewall_compliance.interfaces.desktop.cloud_rule_presentation import cloud_rule_details
 from firewall_compliance.interfaces.desktop.object_presentation import object_details, rule_details
 from firewall_compliance.interfaces.desktop.result_presentation import (
     check_limitations,
@@ -37,6 +38,13 @@ def rule_evidence_text(
     item: dict[str, Any], value: dict[str, Any], session: AnalysisSession | None = None
 ) -> str:
     """Показывать только фрагменты, относящиеся к выбранному правилу или объекту."""
+    if item.get("kind") == "cloud" and value.get("cloud_rule"):
+        return (
+            "Источник: сохранённый ответ облачного API.\n"
+            + "\n".join(f"{key}: {text}" for key, text in cloud_rule_details(item, value))
+            + "\n\nИсходные поля правила API:\n"
+            + _json(value["raw"])
+        )
     location = value.get("source_location")
     text = f"Файл: {item.get('source_name', '—')}\nSHA-256: {item.get('content_sha256', '—')}\n"
     if not location or not location.get("line_start"):
@@ -216,7 +224,9 @@ class ResourceDetails:
 
         button = QPushButton("Подключить исходник")
         button.clicked.connect(attach)
-        button.setEnabled(not view._batch_active and not view._restore_busy)
+        button.setEnabled(
+            item.get("kind") != "cloud" and not view._batch_active and not view._restore_busy
+        )
         layout.addWidget(button)
         close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         close.rejected.connect(dialog.reject)
@@ -327,7 +337,7 @@ class ResourceDetails:
     def _show_device_value_details(self, kind: str) -> None:
         view = self.view
         item = self._selected_device()
-        if item is None or item.get("kind") == "cloud":
+        if item is None or (item.get("kind") == "cloud" and kind != "rules"):
             return
         selected = view._selected_payloads(
             getattr(view, f"device_{kind}_table"),
@@ -350,11 +360,23 @@ class ResourceDetails:
         dialog.resize(840, 600)
         layout = QVBoxLayout(dialog)
         tabs = QTabWidget()
-        fields = rule_details(value) if "rule_id" in value else object_details(value)
+        cloud = item.get("kind") == "cloud" and value.get("cloud_rule")
+        fields = (
+            cloud_rule_details(item, value)
+            if cloud
+            else rule_details(value)
+            if "rule_id" in value
+            else object_details(value)
+        )
         context = (
-            f"Файл: {item.get('source_name', '—')}\n"
-            f"SHA-256: {item.get('content_sha256') or 'не определён'}\n"
-            f"Получено: {item.get('run_created_at') or (view.run or {}).get('created_at', '—')}\n\n"
+            "Источник: облачный API, сохранённый снимок.\n\n"
+            if cloud
+            else (
+                f"Файл: {item.get('source_name', '—')}\n"
+                f"SHA-256: {item.get('content_sha256') or 'не определён'}\n"
+                "Получено: "
+                f"{item.get('run_created_at') or (view.run or {}).get('created_at', '—')}\n\n"
+            )
         )
         for title, text in (
             ("Понятное описание", context + "\n\n".join(f"{key}: {text}" for key, text in fields)),
