@@ -127,7 +127,9 @@ def create_workspace_backup(source: Path, destination: Path) -> WorkspaceBackup:
     _validate_backup_candidate(candidate)
     digest = _backup_sha256(candidate)
     size_bytes = candidate.stat().st_size
-    with candidate.open("rb") as stream:
+    # Windows _commit (used by os.fsync) requires a writable descriptor.
+    # r+b opens the existing validated snapshot without truncating its bytes.
+    with candidate.open("r+b") as stream:
         os.fsync(stream.fileno())
     os.replace(candidate, destination)
     return WorkspaceBackup(path=destination, sha256=digest, size_bytes=size_bytes)

@@ -69,11 +69,16 @@ class MapNetworkFacts:
             if self.owner
             else None
         )
-        if owner is not None and owner.association == "exact_same_revision":
-            if owner.analysis_revision_id != imported.revision.revision_id or set(
-                owner.source_document_ids
-            ) != {source.source_document_id for source in imported.revision.sources}:
-                raise MapNetworkFactsError("owner: exact revision/source anchors do not match")
+        if (
+            owner is not None
+            and owner.association == "exact_same_revision"
+            and (
+                owner.analysis_revision_id != imported.revision.revision_id
+                or set(owner.source_document_ids)
+                != {source.source_document_id for source in imported.revision.sources}
+            )
+        ):
+            raise MapNetworkFactsError("owner: exact revision/source anchors do not match")
         if context is not None:
             revision = imported.revision
             if (

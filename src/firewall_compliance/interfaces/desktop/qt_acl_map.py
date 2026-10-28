@@ -6,12 +6,25 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import escape
-from math import hypot
+from math import ceil, hypot, isfinite
+from pathlib import Path
 from typing import Literal
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import (
+    QByteArray,
+    QIODevice,
+    QObject,
+    QPoint,
+    QPointF,
+    QRectF,
+    QSaveFile,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import (
     QColor,
+    QImage,
+    QImageWriter,
     QKeyEvent,
     QMouseEvent,
     QPainter,
@@ -22,13 +35,17 @@ from PySide6.QtGui import (
     QWheelEvent,
 )
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QFileDialog,
     QGraphicsItem,
     QGraphicsObject,
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -37,7 +54,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from firewall_compliance.analysis.acl_map import build_acl_map
+from firewall_compliance.analysis.acl_map import AclMapFilter, build_acl_map, filter_acl_relations
+from firewall_compliance.application.acl_map import export_acl_map_html
 from firewall_compliance.domain.acl_map import AclMap, AclMapNode, AclMapRelation
 from firewall_compliance.domain.enums import RuleAction
 from firewall_compliance.domain.revision import DeviceRevision
@@ -536,7 +554,7 @@ class AclMapScene(QGraphicsScene):
         item.setTextWidth(960.0)
         self.setSceneRect(self.itemsBoundingRect().adjusted(-32.0, -32.0, 32.0, 32.0))
 
-    def set_map_state(self, state: AclMapState) -> None:
+    def set_map_state(self, state: AclMapState, *, filters: AclMapFilter | None = None) -> None:
         """Replace the entire presentation; never retain an earlier graph."""
         if not isinstance(state, AclMapState):
             raise TypeError("ACL map scene requires an AclMapState")
@@ -561,22 +579,39 @@ class AclMapScene(QGraphicsScene):
                 self.diagnostic = "Данные карты недоступны; карта не построена."
             self._show_message(f"{state.label}\n{self.diagnostic}")
             return
+        selected_relations = (
+            filter_acl_relations(graph, filters) if filters is not None else graph.relations
+        )
+        referenced_ids = {
+            node_id
+            for relation in selected_relations
+            for node_id in (
+                *relation.source_node_ids,
+                *relation.destination_node_ids,
+                *relation.service_node_ids,
+            )
+        }
+        selected_nodes = (
+            tuple(node for node in graph.nodes if node.node_id in referenced_ids)
+            if filters is not None
+            else graph.nodes
+        )
         segment_count = sum(
             len(set(relation.source_node_ids))
             + len(set(relation.destination_node_ids))
             + len(set(relation.service_node_ids))
-            for relation in graph.relations
+            for relation in selected_relations
         )
         if (
-            len(graph.nodes) > self.MAX_NODES
-            or len(graph.relations) > self.MAX_RELATIONS
+            len(selected_nodes) > self.MAX_NODES
+            or len(selected_relations) > self.MAX_RELATIONS
             or segment_count > self.MAX_SEGMENTS
         ):
             self.render_status = "limited"
             self.diagnostic = (
                 "Отображение ограничено бюджетом: "
-                f"узлов {len(graph.nodes)}/{self.MAX_NODES}, "
-                f"правил {len(graph.relations)}/{self.MAX_RELATIONS}, "
+                f"узлов {len(selected_nodes)}/{self.MAX_NODES}, "
+                f"правил {len(selected_relations)}/{self.MAX_RELATIONS}, "
                 f"сегментов {segment_count}/{self.MAX_SEGMENTS}. "
                 "Граф не отрисован; полные условия сохранены в данных карты. "
                 "Это не свидетельствует об отсутствии правил или достижимости."
@@ -603,6 +638,16 @@ class AclMapScene(QGraphicsScene):
                     "Связи по правилам",
                     state.label,
                     state.message,
+                    f"Ревизия: {graph.revision.revision_id}; "
+                    f"устройство: {graph.revision.device.device_id}",
+                    f"Источник: {graph.revision.parse_result.configuration.source_name}; "
+                    f"SHA-256: {graph.revision.parse_result.configuration.content_sha256}",
+                    f"Выбрано правил: {len(selected_relations)} из {len(graph.relations)}",
+                    *(
+                        ("Фильтры: " + filters.model_dump_json(exclude_none=True),)
+                        if filters is not None
+                        else ()
+                    ),
                     "Узел правила ACL объединяет условия, а не обозначает устройство. "
                     "Стрелки: источник/сервис → правило → назначение.",
                     *graph.limitations,
@@ -612,11 +657,11 @@ class AclMapScene(QGraphicsScene):
         banner.setDefaultTextColor(QColor(COLORS["text"]))
         banner.setTextWidth(1160.0)
         top = banner.boundingRect().height() + 48.0
-        relations = sorted(graph.relations, key=lambda item: item.relation_id)
+        relations = sorted(selected_relations, key=lambda item: item.relation_id)
         lanes: dict[tuple[str, str, str, str], list[AclMapRelation]] = {}
         for relation in relations:
             rule = relation.rule
-            lane = (
+            lane: tuple[str, str, str, str] = (
                 rule.policy_id or "",
                 rule.policy_direction or "",
                 rule.source_zone or "",
@@ -639,9 +684,9 @@ class AclMapScene(QGraphicsScene):
         # Preserve every domain node, including an unconnected condition should
         # a future projection carry one. This lane is presentation only.
         orphan_lane = ("Условия без связей", "", "", "")
-        if any(node.node_id not in node_lanes for node in graph.nodes):
+        if any(node.node_id not in node_lanes for node in selected_nodes):
             lanes.setdefault(orphan_lane, [])
-        nodes_by_id = {node.node_id: node for node in graph.nodes}
+        nodes_by_id = {node.node_id: node for node in selected_nodes}
         for lane in sorted(lanes):
             lane_nodes = sorted(
                 node_id for node_id in nodes_by_id if node_lanes.get(node_id, orphan_lane) == lane
@@ -734,7 +779,10 @@ class AclMapView(QGraphicsView):
         self._zoom(1.0 / self.ZOOM_STEP)
 
     def fit_map(self) -> None:
-        scene = self.scene()
+        self._fit_scene(self.scene())
+
+    def _fit_scene(self, scene: QGraphicsScene | None) -> None:
+        # Qt permits setScene(None), although its scene() stub omits nullability.
         if scene is None:
             return
         bounds = scene.itemsBoundingRect().adjusted(-32.0, -32.0, 32.0, 32.0)
@@ -801,11 +849,13 @@ class AclMapView(QGraphicsView):
         # This handler belongs only to the canvas; no window-wide shortcuts
         # consume typing in searches, selectors or the details panel.
         modifiers = event.modifiers()
-        if modifiers in {Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ShiftModifier}:
-            if event.key() == Qt.Key.Key_Plus:
-                self.zoom_in()
-                event.accept()
-                return
+        if (
+            modifiers in {Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ShiftModifier}
+            and event.key() == Qt.Key.Key_Plus
+        ):
+            self.zoom_in()
+            event.accept()
+            return
         if modifiers == Qt.KeyboardModifier.NoModifier:
             if event.key() == Qt.Key.Key_Minus:
                 self.zoom_out()
@@ -821,6 +871,9 @@ class AclMapView(QGraphicsView):
 class AclMapWidget(QWidget):
     """Configured-policy canvas and plain-text, canonical selection details."""
 
+    MAX_PNG_PIXELS = 16_000_000
+    MAX_PNG_DIMENSION = 16_384
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.state: AclMapState | None = None
@@ -829,6 +882,7 @@ class AclMapWidget(QWidget):
         self._relations: dict[str, AclMapRelation] = {}
         self._node_references: dict[str, list[tuple[AclMapRelation, str]]] = {}
         self._updating = False
+        self.filters: AclMapFilter | None = None
         layout = QVBoxLayout(self)
         self.mode_label = QLabel("Связи по правилам", self)
         self.mode_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -839,6 +893,51 @@ class AclMapWidget(QWidget):
         self.status_label.setWordWrap(True)
         self.status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.status_label)
+        filter_row = QHBoxLayout()
+        self.source_filter = QLineEdit(self)
+        self.source_filter.setPlaceholderText("Источник: IP / CIDR")
+        self.source_filter.setAccessibleName("Фильтр источника IP или CIDR")
+        self.destination_filter = QLineEdit(self)
+        self.destination_filter.setPlaceholderText("Назначение: IP / CIDR")
+        self.destination_filter.setAccessibleName("Фильтр назначения IP или CIDR")
+        self.protocol_filter = QComboBox(self)
+        self.protocol_filter.setAccessibleName("Фильтр протокола")
+        self.protocol_filter.addItem("Любой протокол", None)
+        for protocol in ("tcp", "udp", "icmp", "ip"):
+            self.protocol_filter.addItem(protocol.upper(), protocol)
+        self.port_filter = QLineEdit(self)
+        self.port_filter.setPlaceholderText("Порт 1–65535")
+        self.port_filter.setMaximumWidth(140)
+        self.port_filter.setAccessibleName("Фильтр порта назначения")
+        for control in (
+            self.source_filter,
+            self.destination_filter,
+            self.protocol_filter,
+            self.port_filter,
+        ):
+            filter_row.addWidget(control)
+        layout.addLayout(filter_row)
+        filter_actions = QHBoxLayout()
+        self.unknown_filter = QCheckBox("Показывать неизвестные условия", self)
+        self.unknown_filter.setChecked(True)
+        layout.addWidget(self.unknown_filter)
+        self.apply_filters_button = QPushButton("Применить фильтры", self)
+        self.reset_filters_button = QPushButton("Сбросить", self)
+        self.html_export_button = QPushButton("Экспорт HTML", self)
+        self.png_export_button = QPushButton("Экспорт PNG", self)
+        self.apply_filters_button.clicked.connect(self._apply_filter_controls)
+        self.reset_filters_button.clicked.connect(self.reset_filters)
+        self.html_export_button.clicked.connect(lambda: self._export_dialog("html"))
+        self.png_export_button.clicked.connect(lambda: self._export_dialog("png"))
+        for action_control in (
+            self.apply_filters_button,
+            self.reset_filters_button,
+            self.html_export_button,
+            self.png_export_button,
+        ):
+            filter_actions.addWidget(action_control)
+        filter_actions.addStretch(1)
+        layout.addLayout(filter_actions)
         self.scene = AclMapScene(self)
         self.view = AclMapView(self.scene, self)
         self.view.setAccessibleName("Карта заданных условий ACL")
@@ -904,7 +1003,7 @@ class AclMapWidget(QWidget):
             self.relation_selector.clear()
             self.relation_selector.addItem("Выберите правило", None)
             self.details.clear()
-            self.scene.set_map_state(state)
+            self.scene.set_map_state(state, filters=self.filters)
             if self.scene.render_status in {"ready", "partial", "limited"}:
                 self._graph = state.graph
             statuses = {
@@ -920,8 +1019,14 @@ class AclMapWidget(QWidget):
             if graph is not None:
                 lines.extend(graph.limitations)
                 self._nodes = {node.node_id: node for node in graph.nodes}
+                selected = (
+                    filter_acl_relations(graph, self.filters)
+                    if self.filters is not None
+                    else graph.relations
+                )
+                lines.append(f"Выбрано правил: {len(selected)} из {len(graph.relations)}")
                 for relation in sorted(
-                    graph.relations,
+                    selected,
                     key=lambda item: (item.rule.sequence, item.rule.rule_id),
                 ):
                     self._relations[relation.relation_id] = relation
@@ -942,6 +1047,10 @@ class AclMapWidget(QWidget):
                                 (relation, dimension)
                             )
             self.status_label.setText("\n".join(dict.fromkeys(lines)))
+            self.html_export_button.setEnabled(graph is not None)
+            self.png_export_button.setEnabled(
+                graph is not None and self.scene.render_status != "limited"
+            )
             self.relation_selector.setEnabled(bool(self._relations))
             self.details.setPlainText(
                 "\n".join(self._context_lines())
@@ -955,6 +1064,131 @@ class AclMapWidget(QWidget):
         finally:
             self.relation_selector.blockSignals(previous_block)
             self._updating = False
+
+    def set_filters(self, filters: AclMapFilter | None) -> None:
+        """Change only the presentation selection; the saved graph stays complete."""
+        validated = (
+            AclMapFilter.model_validate(filters.model_dump(mode="python"))
+            if filters is not None
+            else None
+        )
+        self.filters = validated
+        controls = validated or AclMapFilter()
+        self.source_filter.setText(controls.source_cidr or "")
+        self.destination_filter.setText(controls.destination_cidr or "")
+        self.protocol_filter.setCurrentIndex(
+            max(
+                0,
+                self.protocol_filter.findData(
+                    controls.protocol.value if controls.protocol is not None else None
+                ),
+            )
+        )
+        self.port_filter.setText(
+            str(controls.destination_port) if controls.destination_port is not None else ""
+        )
+        self.unknown_filter.setChecked(controls.include_unknown)
+        if self.state is not None:
+            self.set_map_state(self.state)
+
+    def reset_filters(self) -> None:
+        self.set_filters(None)
+
+    def _apply_filter_controls(self) -> None:
+        try:
+            self.set_filters(
+                AclMapFilter(
+                    source_cidr=self.source_filter.text().strip() or None,
+                    destination_cidr=self.destination_filter.text().strip() or None,
+                    protocol=self.protocol_filter.currentData(),
+                    destination_port=(
+                        int(self.port_filter.text().strip())
+                        if self.port_filter.text().strip()
+                        else None
+                    ),
+                    include_unknown=self.unknown_filter.isChecked(),
+                )
+            )
+        except ValueError:
+            self.status_label.setText(
+                "Некорректный фильтр: проверьте IP/CIDR, протокол и порт 1–65535. "
+                "Предыдущий вид карты сохранён."
+            )
+
+    def _export_target(self, path: Path) -> QSaveFile:
+        if self._graph is None:
+            raise ValueError("Нет подтверждённой карты для экспорта.")
+        source = Path(self._graph.revision.parse_result.configuration.source_name)
+        if source.exists() and (
+            source.resolve() == path.resolve() or (path.exists() and path.samefile(source))
+        ):
+            raise ValueError("Экспорт не может перезаписать исходный документ.")
+        stream = QSaveFile(str(path))
+        if not stream.open(QIODevice.OpenModeFlag.WriteOnly):
+            raise OSError("Не удалось открыть файл экспорта.")
+        return stream
+
+    def export_html(self, path: Path) -> None:
+        """Write the current selection with full original provenance and limits."""
+        if self._graph is None:
+            raise ValueError("Нет подтверждённой карты для экспорта.")
+        data = export_acl_map_html(self._graph, filters=self.filters).encode("utf-8")
+        stream = self._export_target(path)
+        if stream.write(data) != len(data):
+            stream.cancelWriting()
+            raise OSError("Не удалось записать HTML.")
+        if not stream.commit():
+            raise OSError("Не удалось сохранить HTML.")
+
+    def export_png(self, path: Path) -> None:
+        """Export the current scene at native scale, refusing unreadable huge images."""
+        if self._graph is None or self.scene.render_status in {"limited", "invalid"}:
+            raise ValueError("Карта не отрисована; уточните фильтры перед экспортом PNG.")
+        bounds = self.scene.itemsBoundingRect().adjusted(-24, -24, 24, 24)
+        if not all(isfinite(value) for value in (bounds.width(), bounds.height())):
+            raise ValueError("Некорректный размер карты.")
+        width, height = ceil(bounds.width()), ceil(bounds.height())
+        if (
+            width <= 0
+            or height <= 0
+            or max(width, height) > self.MAX_PNG_DIMENSION
+            or width * height > self.MAX_PNG_PIXELS
+        ):
+            raise ValueError("PNG превышает бюджет размера; уточните фильтры карты.")
+        image = QImage(width, height, QImage.Format.Format_ARGB32)
+        if image.isNull():
+            raise OSError("Недостаточно памяти для PNG.")
+        image.fill(QColor(COLORS["background"]))
+        painter = QPainter(image)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            self.scene.render(painter, QRectF(0, 0, width, height), bounds)
+        finally:
+            painter.end()
+        stream = self._export_target(path)
+        writer = QImageWriter(stream, QByteArray(b"png"))
+        if not writer.write(image):
+            stream.cancelWriting()
+            raise OSError("Не удалось записать PNG.")
+        if not stream.commit():
+            raise OSError("Не удалось сохранить PNG.")
+
+    def _export_dialog(self, format_name: Literal["html", "png"]) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Экспорт текущего вида ACL",
+            f"acl-map.{format_name}",
+            f"{format_name.upper()} (*.{format_name})",
+        )
+        if not path:
+            return
+        try:
+            if format_name == "html":
+                self.export_html(Path(path))
+            else:
+                self.export_png(Path(path))
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Экспорт карты", str(error))
 
     def _context_lines(self) -> list[str]:
         lines = ["Связи по правилам", CONFIGURED_POLICY_LABEL, self.scene.diagnostic]
@@ -1032,7 +1266,8 @@ class AclMapWidget(QWidget):
             f"Rule ID: {rule.rule_id}",
             f"Configuration ID: {rule.configuration_id}",
             f"Источник правила: {source.source_name}",
-            f"Строки: {source.line_start or 'не указаны'}–{source.line_end or source.line_start or 'не указаны'}",
+            f"Строки: {source.line_start or 'не указаны'}–"
+            f"{source.line_end or source.line_start or 'не указаны'}",
             f"Путь объекта: {source.object_path or 'не указан'}",
             f"ID объекта в источнике: {source.object_id or 'не указан'}",
         ]
@@ -1207,13 +1442,14 @@ def build_map_state(
                 return AclMapState(
                     "unsupported", None, "Версия сохранённой ревизии не поддерживается."
                 )
-            revision = _saved_revision(analysis)
-            if revision is None:
+            saved_revision = _saved_revision(analysis)
+            if saved_revision is None:
                 return AclMapState(
                     "unsupported",
                     None,
                     "Сохранённая ревизия недоступна; карта не построена.",
                 )
+            revision = saved_revision
         graph = build_acl_map(revision, built_at=built_at or datetime.now(UTC))
     except (ValueError, TypeError):
         return AclMapState(

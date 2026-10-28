@@ -9,6 +9,7 @@ from firewall_compliance.domain.configuration import Configuration, Rule
 from firewall_compliance.domain.enums import ParseIssueLevel
 from firewall_compliance.domain.management import ManagementInventory
 from firewall_compliance.domain.network import Endpoint, Service
+from firewall_compliance.domain.policy_attachment import PolicyAttachment
 from firewall_compliance.domain.source import SourceLocation
 
 
@@ -61,6 +62,7 @@ class ParseResult(DomainModel):
     rules: tuple[Rule, ...] = ()
     endpoints: tuple[Endpoint, ...] = ()
     services: tuple[Service, ...] = ()
+    policy_attachments: tuple[PolicyAttachment, ...] = Field(default=(), max_length=10000)
     warnings: tuple[ParseIssue, ...] = ()
     errors: tuple[ParseIssue, ...] = ()
     unsupported_constructs: tuple[UnsupportedConstruct, ...] = ()
@@ -72,12 +74,25 @@ class ParseResult(DomainModel):
         payload: dict[str, Any] = handler(self)
         if self.management is None:
             payload.pop("management", None)
+        if not self.policy_attachments:
+            payload.pop("policy_attachments", None)
         return payload
 
     @model_validator(mode="after")
     def validate_configuration_links(self) -> "ParseResult":
         """Проверить, что правила принадлежат снимку результата."""
         configuration_id = self.configuration.configuration_id
+        attachments = self.policy_attachments
+        if len({item.attachment_id for item in attachments}) != len(attachments):
+            raise ValueError("policy attachment IDs must be unique")
+        rule_ids = {rule.rule_id for rule in self.rules}
+        if any(
+            item.attachment_id in rule_ids
+            or item.source_location.source_name != self.configuration.source_name
+            or self.source_map.get(item.attachment_id) != item.source_location
+            for item in attachments
+        ):
+            raise ValueError("policy attachments must have distinct, exact source-map anchors")
         if self.management is not None:
             inventory = self.management
             locations = [inventory.source_location]

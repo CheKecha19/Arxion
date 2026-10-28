@@ -13,6 +13,7 @@ authors = [
   { name = "Firewall Compliance Team" },
 ]
 dependencies = [
+  "defusedxml>=0.7.1,<1",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.7,<3",
   "structlog>=24.4,<26",
@@ -36,10 +37,12 @@ storage = [
 dev = [
   "hypothesis>=6.120,<7",
   "mypy>=1.14,<2",
-  "pytest>=8.3,<9",
+  "pytest>=9.0.3,<10",
   "pytest-cov>=6.0,<7",
   "ruff>=0.9,<1",
   "pyinstaller>=6.11,<7",
+  "setuptools>=84.1.0,<85",
+  "types-defusedxml>=0.7,<1",
 ]
 
 [project.scripts]

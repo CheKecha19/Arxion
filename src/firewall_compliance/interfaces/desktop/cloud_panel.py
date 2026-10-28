@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict
 from functools import partial
@@ -48,6 +49,7 @@ from firewall_compliance.infrastructure.cloud_vmware import (
     VMwareClient,
     VMwareConfig,
 )
+from firewall_compliance.interfaces.desktop.cloud_analysis import analyze_saved_vmware
 from firewall_compliance.interfaces.desktop.cloud_public_form import PublicCloudForm
 from firewall_compliance.interfaces.desktop.jobs import JobError, JobRunner
 from firewall_compliance.interfaces.desktop.project_store import ProjectStore
@@ -81,6 +83,7 @@ class CloudPanel:
     ) -> None:
         self.store = store
         self.on_history_changed: Callable[[], None] = lambda: None
+        self.on_open_analysis: Callable[[str], None] = lambda _run_id: None
         self.client_factory = client_factory
         self.public_factories: dict[str, Callable[..., PublicCloudClient]] = {
             "advanced": AdvancedClient,
@@ -254,6 +257,11 @@ class CloudPanel:
         layout.addLayout(actions)
         self.scan_status = _label("Сначала настройте подключение Cloud.ru VMware.")
         layout.addWidget(self.scan_status)
+        self.auto_analyze = QCheckBox(
+            "После сбора VMware автоматически проверить правила Edge Firewall"
+        )
+        self.auto_analyze.setChecked(True)
+        layout.addWidget(self.auto_analyze)
         layout.addStretch()
         self.open_result_button = QPushButton("Открыть результат сбора")
         self.open_result_button.clicked.connect(lambda: self.collection_tabs.setCurrentIndex(1))
@@ -265,6 +273,16 @@ class CloudPanel:
         self.history.setAccessibleName("История сканирований текущего проекта")
         self.history.currentIndexChanged.connect(self._show_scan)
         layout.addWidget(self.history)
+        self.analyze_button = QPushButton("Проверить правила сохранённого сбора")
+        self.analyze_button.clicked.connect(self.analyze_saved_scan)
+        layout.addWidget(self.analyze_button)
+        self.open_analysis_button = QPushButton("Открыть проблемы и результаты проверок")
+        self.open_analysis_button.clicked.connect(self._open_analysis)
+        layout.addWidget(self.open_analysis_button)
+        self.analysis_status = _label(
+            "Для проверки выберите сохранённый сбор VMware с правилами Firewall."
+        )
+        layout.addWidget(self.analysis_status)
         layout.addWidget(self.export_button)
         self.result = QPlainTextEdit()
         self.result.setReadOnly(True)
@@ -294,6 +312,7 @@ class CloudPanel:
 
     def set_project(self, project_id: str | None) -> None:
         self.project_id = project_id
+        self.analysis_status.setText("Выберите сохранённый сбор для проверки правил.")
         for public_form in self.public_forms.values():
             public_form.set_project(project_id)
         config = self.store.get_vmware_integration(project_id) if project_id else None
@@ -417,6 +436,8 @@ class CloudPanel:
         for public_form in self.public_forms.values():
             public_form.set_busy(busy)
         self._update_data_choices()
+        self.auto_analyze.setEnabled(not busy)
+        self._update_analysis_controls()
 
     def test_connection(self) -> None:
         if self.busy:
@@ -534,6 +555,9 @@ class CloudPanel:
             return
         self._active_scan = scan_id
         self._active_project = self.project_id
+        scan_project_id = self.project_id
+        scan_cancel = self.cancel
+        auto_analyze = self.auto_analyze.isChecked()
         self._set_busy(True)
         self.scan_status.setText(
             "Сканирование выполняется в фоне… Отмена остановит сбор после текущего запроса."
@@ -567,8 +591,115 @@ class CloudPanel:
                 )
                 self._refresh_history(scan_id)
             self._active_project = None
+            if (
+                platform == "vmware"
+                and auto_analyze
+                and not scan_cancel.is_set()
+                and payload.get("state") in {"completed", "partial"}
+                and any(
+                    "firewall" in record.get("data", {}) for record in payload.get("records", [])
+                )
+            ):
+                self.analyze_saved_scan(scan_id, project_id=scan_project_id)
 
         self.runner.submit(work, completed)
+
+    def _update_analysis_controls(self) -> None:
+        scan = self.history.currentData()
+        eligible = bool(
+            scan
+            and scan["config"].get("platform", "vmware") == "vmware"
+            and any(
+                record.get("type") == "edges" and "firewall" in record.get("data", {})
+                for record in scan.get("result", {}).get("records", [])
+            )
+        )
+        self.analyze_button.setEnabled(eligible and not self.busy)
+        runs = (
+            self.store.cloud_analysis_runs(scan["id"], self.project_id)
+            if scan and self.project_id
+            else []
+        )
+        self.open_analysis_button.setEnabled(bool(runs) and not self.busy)
+
+    def _open_analysis(self) -> None:
+        scan = self.history.currentData()
+        runs = (
+            self.store.cloud_analysis_runs(scan["id"], self.project_id)
+            if scan and self.project_id
+            else []
+        )
+        if runs:
+            self.on_open_analysis(runs[0])
+
+    def analyze_saved_scan(
+        self, scan_id: str | None = None, *, project_id: str | None = None
+    ) -> None:
+        project_id = project_id or self.project_id
+        if self.busy or not project_id:
+            return
+        scan = (
+            next(
+                (s for s in self.store.list_cloud_scans(project_id) if s["id"] == scan_id),
+                None,
+            )
+            if scan_id
+            else self.history.currentData()
+        )
+        if not scan:
+            self.analysis_status.setText("Выберите сохранённый сбор текущего проекта.")
+            return
+        settings = self.store.get_project(project_id)["settings"]
+        if settings.get("enabled_check_ids") is not None and not any(
+            key.startswith("FW-") for key in settings["enabled_check_ids"]
+        ):
+            self.analysis_status.setText("Включите хотя бы одну проверку FW в Настройки → Правила.")
+            return
+        self.cancel = Event()
+        cancel = self.cancel
+        self._set_busy(True)
+        self.analysis_status.setText(
+            "Проверка сохранённых правил… Запросы к облаку не выполняются."
+        )
+
+        def completed(result: object) -> None:
+            self._set_busy(False)
+            if cancel.is_set():
+                message = "Проверка отменена; новый результат не сохранён."
+            elif isinstance(result, list) and result:
+                try:
+                    self.store.save_cloud_analysis(scan["id"], result, settings)
+                except (ValueError, OSError, sqlite3.Error):
+                    if self.project_id == project_id:
+                        self.analysis_status.setText(
+                            "Не удалось сохранить результат проверки. Исходный сбор доступен "
+                            "для повторной проверки."
+                        )
+                        self._update_analysis_controls()
+                    return
+                findings = sum(
+                    len(check["findings"])
+                    for item in result
+                    for check in (item.get("report") or {}).get("checks", [])
+                )
+                partial = sum(item["status"] == "partial" for item in result)
+                failed = sum(item["status"] == "error" for item in result)
+                message = (
+                    f"Проверено Edge Gateway: {len(result) - failed} · "
+                    f"частичных: {partial} · ошибок: {failed} · находок: {findings}."
+                )
+                self.on_history_changed()
+            else:
+                message = (
+                    result.message
+                    if isinstance(result, JobError)
+                    else "Не удалось проверить правила."
+                )
+            if self.project_id == project_id:
+                self.analysis_status.setText(message)
+                self._update_analysis_controls()
+
+        self.runner.submit(partial(analyze_saved_vmware, scan, settings, cancel), completed)
 
     def _test_public(self, platform: str) -> None:
         if self.busy:
@@ -629,6 +760,7 @@ class CloudPanel:
 
     def _show_scan(self, *_: Any) -> None:
         scan = self.history.currentData()
+        self._update_analysis_controls()
         self.export_button.setEnabled(bool(scan) and scan["state"] != "running")
         self.result.setPlainText(
             json.dumps(scan, ensure_ascii=False, indent=2)

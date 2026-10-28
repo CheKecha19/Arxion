@@ -10,14 +10,21 @@ from firewall_compliance.analysis.policy_checks import (
     DuplicateRulesCheck,
     LoggingCheck,
     MergeCandidateCheck,
+    PartialShadowedRulesCheck,
     PolicyCheck,
     PolicyCheckContext,
     ShadowedRulesCheck,
+    UnionShadowedRulesCheck,
     check_version,
+)
+from firewall_compliance.analysis.policy_exposure import (
+    DangerousServicesCheck,
+    UntrustedAdministrativeAccessCheck,
 )
 from firewall_compliance.domain import DeviceRevision
 from firewall_compliance.domain.assurance import FirewallAssuranceResult
 from firewall_compliance.domain.management import ManagementProfile
+from firewall_compliance.domain.policy_exposure import PolicyExposureProfile
 
 CHECK_CATALOG_VERSION = "1.0.0"
 
@@ -31,6 +38,8 @@ def analyze_firewall(
     max_pair_rules: int = 1000,
     checks: tuple[PolicyCheck, ...] | None = None,
     management_profile: ManagementProfile | None = None,
+    extended_policy_checks: bool = False,
+    policy_exposure_profile: PolicyExposureProfile | None = None,
 ) -> FirewallAssuranceResult:
     """Выполнить проверки без файлов, сети и изменения входной ревизии."""
     timestamp = analyzed_at or revision.imported_at
@@ -51,6 +60,13 @@ def analyze_firewall(
             DisabledRulesCheck(),
         )
     )
+    if checks is None and extended_policy_checks:
+        catalog += (
+            PartialShadowedRulesCheck(),
+            UnionShadowedRulesCheck(),
+            DangerousServicesCheck(policy_exposure_profile),
+            UntrustedAdministrativeAccessCheck(policy_exposure_profile),
+        )
     if checks is None and revision.parse_result.management is not None:
         catalog += management_checks(management_profile)
     used_profiles = [check.profile for check in catalog if isinstance(check, ManagementCheck)]
@@ -71,7 +87,20 @@ def analyze_firewall(
         device_id=revision.device.device_id,
         application_version=revision.application_version,
         parser_version=revision.parse_result.configuration.parser_version,
-        check_catalog_version="1.2.0"
+        check_catalog_version="1.4.0"
+        if any(check.check_id in {"FW-RULE-GOVERNANCE", "FW-UNUSED-CANDIDATE"} for check in catalog)
+        else "1.3.0"
+        if any(
+            check.check_id
+            in {
+                "FW-PARTIAL-SHADOWED",
+                "FW-UNION-SHADOWED",
+                "FW-DANGEROUS-SERVICES",
+                "FW-ADMIN-UNTRUSTED",
+            }
+            for check in catalog
+        )
+        else "1.2.0"
         if any(check.check_id.startswith("MGMT-") for check in catalog)
         else check_version(context),
         require_logging=require_logging,

@@ -6,6 +6,7 @@ import errno
 import json
 import os
 import stat
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -150,7 +151,7 @@ def _check_lock_identity(path: Path, descriptor: int) -> None:
 
 def _acquire_os_lock(descriptor: int) -> None:
     """Acquire the platform lock without waiting for another owner."""
-    if os.name == "nt":
+    if sys.platform == "win32":
         import msvcrt
 
         os.lseek(descriptor, 0, os.SEEK_SET)
@@ -163,7 +164,7 @@ def _acquire_os_lock(descriptor: int) -> None:
 
 def _release_os_lock(descriptor: int) -> None:
     """Release the platform lock while its owning handle remains open."""
-    if os.name == "nt":
+    if sys.platform == "win32":
         import msvcrt
 
         os.lseek(descriptor, 0, os.SEEK_SET)

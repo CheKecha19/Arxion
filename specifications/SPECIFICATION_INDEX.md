@@ -10,6 +10,9 @@
 |---|---|
 | [USER_GUIDE.md](USER_GUIDE.md) | Установка, запуск, анализ файлов, findings/evidence, отчёты, ревизии и устранение ошибок |
 | [NETWORK_UI_GUIDE.md](NETWORK_UI_GUIDE.md) | Сетевые вкладки, явные metadata, примеры импорта/query/binding и forwarding |
+| [ANALYSIS_RESULT.md](ANALYSIS_RESULT.md) | Общие результаты, сохранение проекта, CLI и JSON/CSV/HTML |
+| [ACL_MAP_WORKFLOW.md](ACL_MAP_WORKFLOW.md) | Фильтры ACL, HTML, пакетный запуск и SQLite/CLI |
+| [CHECK_PASSPORTS.md](CHECK_PASSPORTS.md) | Область, evidence, профили и версии дополнительных checks |
 
 Пользовательские руководства описывают рабочее пространство от 14.10.2026.
 Целевые требования ниже могут включать ещё не реализованные возможности.
@@ -30,6 +33,7 @@
 | Документ | Назначение |
 |---|---|
 | `ARCHITECTURE.md` | Границы слоёв и правила зависимостей |
+| [REQUIREMENTS_TRACEABILITY.md](REQUIREMENTS_TRACEABILITY.md) | Сопоставление внутреннего архитектурного/ИБ baseline, доказательства и недостающий внешний обязательный документ |
 | `UI_BACKEND_INTEGRATION.md` | Проверенные API, версии результатов, ограничения и порядок подключения UI |
 | [ACL_MAP.md](ACL_MAP.md) | Backend карты заданных условий ACL, API, JSON/DOT и границы интерпретации |
 | `DESKTOP_UI.md` | Qt desktop, проекты, история, отчёты и границы аналитических сценариев |

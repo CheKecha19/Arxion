@@ -17,8 +17,14 @@ from firewall_compliance.analysis.policy_checks import (
     DuplicateRulesCheck,
     LoggingCheck,
     MergeCandidateCheck,
+    PartialShadowedRulesCheck,
     PolicyCheck,
     ShadowedRulesCheck,
+    UnionShadowedRulesCheck,
+)
+from firewall_compliance.analysis.policy_exposure import (
+    DangerousServicesCheck,
+    UntrustedAdministrativeAccessCheck,
 )
 from firewall_compliance.analysis.revision_diff import compare_device_revisions
 from firewall_compliance.domain import Device, DeviceRevision, RevisionSource, SourceDocumentKind
@@ -27,6 +33,7 @@ from firewall_compliance.domain.configuration import Configuration, Rule
 from firewall_compliance.domain.management import ManagementProfile
 from firewall_compliance.domain.network import Endpoint, Service
 from firewall_compliance.domain.parse_result import ParseResult
+from firewall_compliance.domain.policy_exposure import PolicyExposureProfile
 from firewall_compliance.domain.revision import DeviceRevisionDiff
 from firewall_compliance.domain.source import SourceLocation
 from firewall_compliance.infrastructure.source_reader import FileSourceReader
@@ -58,7 +65,9 @@ class AnalysisSession:
 
 
 def selected_checks(
-    enabled_check_ids: tuple[str, ...] | None, management_profile: ManagementProfile | None = None
+    enabled_check_ids: tuple[str, ...] | None,
+    management_profile: ManagementProfile | None = None,
+    policy_exposure_profile: PolicyExposureProfile | None = None,
 ) -> tuple[PolicyCheck, ...] | None:
     """Проверить явный выбор проверок, сохранив прежний каталог по умолчанию."""
     if enabled_check_ids is None:
@@ -71,6 +80,10 @@ def selected_checks(
         LoggingCheck(),
         CommentsCheck(),
         DisabledRulesCheck(),
+        PartialShadowedRulesCheck(),
+        UnionShadowedRulesCheck(),
+        DangerousServicesCheck(policy_exposure_profile),
+        UntrustedAdministrativeAccessCheck(policy_exposure_profile),
         *management_checks(management_profile),
     )
     known = {check.check_id for check in catalog}
@@ -89,6 +102,7 @@ def analyze_file(
     enabled_check_ids: tuple[str, ...] | None = None,
     management_profile: ManagementProfile | None = None,
     configuration_complete: bool = False,
+    policy_exposure_profile: PolicyExposureProfile | None = None,
 ) -> AnalysisSession | ParseFailure:
     """Прочитать и разобрать файл один раз; исключения обрабатывает граница задания."""
     source = FileSourceReader().read(path)
@@ -132,7 +146,7 @@ def analyze_file(
         revision,
         require_logging=require_logging,
         require_comments=require_comments,
-        checks=selected_checks(enabled_check_ids, management_profile),
+        checks=selected_checks(enabled_check_ids, management_profile, policy_exposure_profile),
         management_profile=management_profile,
     )
     return AnalysisSession(job_id or uuid4(), path.resolve(), source, outcome, revision, report)
@@ -329,6 +343,7 @@ def reanalyze_session(
     require_comments: bool = True,
     enabled_check_ids: tuple[str, ...] | None = None,
     management_profile: ManagementProfile | None = None,
+    policy_exposure_profile: PolicyExposureProfile | None = None,
 ) -> AnalysisSession:
     """Повторить проверки сохранённого снимка без чтения и создания новой ревизии."""
     if management_profile is None and session.report.management_profile is not None:
@@ -339,7 +354,7 @@ def reanalyze_session(
             session.revision,
             require_logging=require_logging,
             require_comments=require_comments,
-            checks=selected_checks(enabled_check_ids, management_profile),
+            checks=selected_checks(enabled_check_ids, management_profile, policy_exposure_profile),
             management_profile=management_profile,
         ),
     )
