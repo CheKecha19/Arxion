@@ -1,11 +1,19 @@
 """Неизменяемые ревизии устройства, сетевые факты и результаты их сравнения."""
 
+from collections.abc import Mapping
 from datetime import datetime
 from ipaddress import ip_address, ip_interface, ip_network
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from uuid import UUID, uuid4
 
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from firewall_compliance.domain.base import DomainModel
 from firewall_compliance.domain.configuration import Device
@@ -207,8 +215,26 @@ class RevisionChange(RevisionModel):
     evidence: Evidence
 
 
+class RevisionComparisonDetail(RevisionModel):
+    """A classified representation/evidence delta, never a claimed network deletion."""
+
+    entity_kind: RevisionEntityKind
+    entity_id: str = Field(min_length=1)
+    code: Literal[
+        "provenance_changed",
+        "normalization_changed",
+        "normalization_dependent",
+        "availability_changed",
+        "not_observed",
+        "first_observed",
+        "scope_incomparable",
+    ]
+    changed_fields: tuple[str, ...] = ()
+    evidence: Evidence
+
+
 class DeviceRevisionDiff(RevisionModel):
-    """Результат сравнения двух ревизий одного устройства."""
+    """Versioned evidence-aware diff; unversioned payloads retain legacy meaning."""
 
     before_revision_id: UUID
     after_revision_id: UUID
@@ -216,6 +242,60 @@ class DeviceRevisionDiff(RevisionModel):
     changes: tuple[RevisionChange, ...] = ()
     normalization_changed: bool = False
     limitations: tuple[str, ...] = ()
+    schema_version: Literal["2.0.0"] | None = None
+    provenance_changes: tuple[RevisionComparisonDetail, ...] = ()
+    normalization_changes: tuple[RevisionComparisonDetail, ...] = ()
+    completeness_changes: tuple[RevisionComparisonDetail, ...] = ()
+
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
+        """Copies keep schema/section invariants instead of bypassing validation."""
+        payload = self.model_dump(mode="python")
+        if update:
+            payload.update(update)
+        return type(self).model_validate(payload)
+
+    @model_validator(mode="after")
+    def validate_comparison_version(self) -> "DeviceRevisionDiff":
+        if self.schema_version is None and (
+            self.provenance_changes or self.normalization_changes or self.completeness_changes
+        ):
+            raise ValueError("classified changes require the evidence-aware diff schema")
+        if self.schema_version is not None:
+            sections = (
+                (self.provenance_changes, {"provenance_changed"}),
+                (
+                    self.normalization_changes,
+                    {"normalization_changed", "normalization_dependent"},
+                ),
+                (
+                    self.completeness_changes,
+                    {
+                        "availability_changed",
+                        "not_observed",
+                        "first_observed",
+                        "scope_incomparable",
+                    },
+                ),
+            )
+            if any(detail.code not in codes for details, codes in sections for detail in details):
+                raise ValueError("comparison detail belongs to another section")
+            if self.normalization_changed != bool(self.normalization_changes):
+                raise ValueError("normalization flag must match classified normalization changes")
+        freeze_snapshot_fields(self)
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_legacy(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        payload: dict[str, Any] = handler(self)
+        if self.schema_version is None:
+            for key in (
+                "schema_version",
+                "provenance_changes",
+                "normalization_changes",
+                "completeness_changes",
+            ):
+                payload.pop(key, None)
+        return payload
 
 
 class CollectionEvidence(RevisionModel):

@@ -15,6 +15,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def gate_environment() -> dict[str, str]:
+    """Keep child JSON and diagnostics UTF-8 even when Windows pipes use an ACP."""
+    env = os.environ.copy()
+    env.setdefault("UV_CACHE_DIR", str(ROOT.parent / ".cache" / "arxion-uv"))
+    env.setdefault("XDG_CACHE_HOME", str(ROOT.parent / ".cache" / "arxion-harness"))
+    env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    env["PYTHONHASHSEED"] = "0"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    # Passing a UTF-8 TextIO file as stdout does not encode the child's writes:
+    # subprocess hands over its descriptor, so the child must select UTF-8 too.
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    return env
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -42,12 +57,7 @@ def main() -> int:
         / (datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8])
     )
     run.mkdir(parents=True)
-    env = os.environ.copy()
-    env.setdefault("UV_CACHE_DIR", str(ROOT.parent / ".cache" / "arxion-uv"))
-    env.setdefault("XDG_CACHE_HOME", str(ROOT.parent / ".cache" / "arxion-harness"))
-    env.setdefault("QT_QPA_PLATFORM", "offscreen")
-    env["PYTHONHASHSEED"] = "0"
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env = gate_environment()
     records = []
 
     def execute(name: str, command: list[str], stdout: Path | None = None) -> int:
@@ -126,10 +136,21 @@ def main() -> int:
             )
             execute("types", uv + ["mypy", "src"])
         elif gate == "test":
-            execute("harness-tests", uv + ["pytest", "harness/tests", "--hypothesis-seed=0"])
+            execute(
+                "harness-tests",
+                uv + ["python", "-m", "pytest", "harness/tests", "--hypothesis-seed=0"],
+            )
             execute(
                 "pytest",
-                uv + ["pytest", "tests", "--hypothesis-seed=0", f"--junitxml={run / 'pytest.xml'}"],
+                uv
+                + [
+                    "python",
+                    "-m",
+                    "pytest",
+                    "tests",
+                    "--hypothesis-seed=0",
+                    f"--junitxml={run / 'pytest.xml'}",
+                ],
             )
         elif gate == "smoke":
             output = run / "cli.json"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -45,6 +46,10 @@ from firewall_compliance.interfaces.desktop.network_backend import (
     run_forwarding_query,
     run_network_query,
 )
+from firewall_compliance.interfaces.desktop.qt_network_forms import (
+    ContractKind,
+    NetworkContractForm,
+)
 from firewall_compliance.parsers.forwarding_contracts import ForwardingParseResult
 
 
@@ -66,8 +71,11 @@ class NetworkQuerySnapshot:
     facts: NetworkFactsSnapshot
     profile_id: str
     query: ReachabilityQuery | None
-    result: BaseModel | ForwardingQueryResult
+    result: BaseModel | ForwardingQueryResult | JobError
     input_generation: int
+    project_reference: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class JsonEditor(QPlainTextEdit):
@@ -104,6 +112,8 @@ class NetworkWidget(QWidget):
         self.forwarding_results: dict[UUID, BaseModel] = {}
         self.tickets: dict[tuple[UUID, str], object] = {}
         self.current_result: BaseModel | ForwardingQueryResult | None = None
+        self._project_context: str | None = None
+        self.query_snapshots: dict[tuple[UUID, str], NetworkQuerySnapshot] = {}
         self._query_generation = 0
         layout = QVBoxLayout(self)
         warning = QLabel(
@@ -165,6 +175,17 @@ class NetworkWidget(QWidget):
         layout.addWidget(editor)
         return editor
 
+    @staticmethod
+    def typed_editor(
+        layout: QVBoxLayout, title: str, kind: ContractKind, value: dict[str, Any]
+    ) -> NetworkContractForm:
+        label = QLabel(title)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        editor = NetworkContractForm(kind, value)
+        layout.addWidget(editor)
+        return editor
+
     def file_field(self, layout: QVBoxLayout) -> QLineEdit:
         bar = QHBoxLayout()
         field = QLineEdit()
@@ -182,11 +203,12 @@ class NetworkWidget(QWidget):
     def build_import(self) -> None:
         _, layout = self.tab("Сетевые документы")
         self.network_path = self.file_field(layout)
-        self.metadata = self.editor(
+        self.metadata = self.typed_editor(
             layout,
             "Metadata: команду, версию и provenance задаёт оператор. "
             "Роли: asa_running_config_interfaces / asa_running_config_static_routes / "
             "asa_ipv4_rib.",
+            "metadata",
             {
                 "source_kind": "asa_running_config_interfaces",
                 "context_mode": "single",
@@ -209,14 +231,14 @@ class NetworkWidget(QWidget):
                 "completeness_reference": None,
             },
         )
-        self.observation = self.editor(
-            layout, "Observation файла: observed_at, method, reference; {} = неизвестно", {}
+        self.observation = self.typed_editor(
+            layout, "Наблюдение состояния из файла", "observation", {}
         )
-        self.baseline_observation = self.editor(
-            layout, "Observation базовой конфигурации; {} = неизвестно", {}
+        self.baseline_observation = self.typed_editor(
+            layout, "Наблюдение базовой конфигурации", "observation", {}
         )
-        self.observation_window = self.editor(
-            layout, "ObservationWindow: start, end, reason; {} = не заявлен", {}
+        self.observation_window = self.typed_editor(
+            layout, "Согласованный интервал наблюдений", "window", {}
         )
         self.button(layout, "Добавить документ", self.stage)
         self.draft_list = QListWidget()
@@ -269,10 +291,11 @@ class NetworkWidget(QWidget):
             field.textChanged.connect(self._query_inputs_changed)
             form.addRow(title, field)
         layout.addLayout(form)
-        self.binding = self.editor(
+        self.binding = self.typed_editor(
             layout,
             "PolicyBindingEvidence: source mapping, label↔interface, "
             "основания complete/terminal. Наличие ACL не доказывает полноту цепочки.",
+            "binding",
             {
                 "policy_id": "",
                 "direction": "in",
@@ -366,7 +389,8 @@ class NetworkWidget(QWidget):
                 self.base_combo.removeItem(self.base_combo.count() - 1)
             revision = saved.network_import.revision
             self.base_combo.addItem(
-                f"Сохранённый сетевой снимок · {revision.device.device_id} · {revision.revision_id}",
+                f"Сохранённый сетевой снимок · {revision.device.device_id} · "
+                f"{revision.revision_id}",
                 saved,
             )
             self.base_combo.setCurrentIndex(self.base_combo.count() - 1)
@@ -402,9 +426,10 @@ class NetworkWidget(QWidget):
         label.setWordWrap(True)
         layout.addWidget(label)
         self.forward_path = self.file_field(layout)
-        self.forward_metadata = self.editor(
+        self.forward_metadata = self.typed_editor(
             layout,
             "ForwardingSource: точная команда, версия и provenance",
+            "forward_metadata",
             {
                 "purpose": "configuration",
                 "command": "",
@@ -421,8 +446,12 @@ class NetworkWidget(QWidget):
                 "completeness_reference": None,
             },
         )
-        self.forward_observation = self.editor(layout, "ObservationEvidence; {} = неизвестно", {})
-        self.forward_profile = self.editor(layout, "Необязательный профиль и profile_reference", {})
+        self.forward_observation = self.typed_editor(
+            layout, "Наблюдение forwarding-документа", "observation", {}
+        )
+        self.forward_profile = self.typed_editor(
+            layout, "Необязательный профиль forwarding", "profile", {}
+        )
         self.button(layout, "Разобрать forwarding-контекст", self.forwarding)
 
     def refresh_sessions(self) -> None:
@@ -450,6 +479,13 @@ class NetworkWidget(QWidget):
         if index < 0 or index >= len(self.sessions):
             raise ValueError("Нужна реальная ASA-сессия текущего запуска или проверенный исходник.")
         return self.sessions[index]
+
+    def set_project_context(self, project_id: str | None) -> None:
+        """Invalidate queued query delivery when the owning project changes."""
+        if project_id != self._project_context:
+            self._project_context = project_id
+            self.query_snapshots.clear()
+            self._query_inputs_changed()
 
     def context_changed(self) -> None:
         selected = self.base_combo.currentData()
@@ -494,7 +530,9 @@ class NetworkWidget(QWidget):
             self.saved.blockSignals(False)
 
     def invalid(self) -> None:
-        self.status.setText("Входные данные не приняты. Проверьте JSON, обязательные поля и файл.")
+        self.status.setText(
+            "Входные данные не приняты. Проверьте подсказку под формой, обязательные поля и файл."
+        )
 
     def stage(self) -> None:
         try:
@@ -533,6 +571,8 @@ class NetworkWidget(QWidget):
             else self.base().revision.revision_id
         )
         ticket = object()
+        project_reference = self._project_context
+        started_at = datetime.now(UTC)
         self.tickets[base_id, label] = ticket
         self.current_result = None
         self.output.clear()
@@ -541,6 +581,8 @@ class NetworkWidget(QWidget):
 
         def receive(result: object) -> None:
             if self.tickets.get((base_id, label)) is not ticket:
+                return
+            if project_reference != self._project_context:
                 return
             facts_updated = False
             if isinstance(result, (BaseModel, ForwardingQueryResult)):
@@ -562,6 +604,19 @@ class NetworkWidget(QWidget):
                     self._query_inputs_changed()
                 if isinstance(result, JobError):
                     self.status.setText(result.message)
+                    if query_facts is not None and query_generation is not None:
+                        snapshot = NetworkQuerySnapshot(
+                            query_facts,
+                            query_profile_id,
+                            query,
+                            result,
+                            query_generation,
+                            project_reference,
+                            started_at,
+                            datetime.now(UTC),
+                        )
+                        self.query_snapshots[base_id, label] = snapshot
+                        self.query_result_changed.emit(snapshot)
                 elif isinstance(result, (BaseModel, ForwardingQueryResult)):
                     if not isinstance(self.base_combo.currentData(), MapNetworkFacts):
                         self.context_changed()
@@ -574,7 +629,8 @@ class NetworkWidget(QWidget):
                             f"{reason.code}: {reason.message}" for reason in result.reasons
                         )
                         self.status.setText(
-                            f"Neutral: {result.status}. Условная policy; итоговая достижимость unknown. "
+                            f"Neutral: {result.status}. Условная policy; "
+                            "итоговая достижимость unknown. "
                             + (
                                 reason_text
                                 or "Ограничения и conditional trace сохранены в результате."
@@ -586,15 +642,18 @@ class NetworkWidget(QWidget):
                             candidate = getattr(result, "query", None)
                             if isinstance(candidate, ReachabilityQuery):
                                 completed_query = candidate
-                        self.query_result_changed.emit(
-                            NetworkQuerySnapshot(
-                                query_facts,
-                                query_profile_id,
-                                completed_query,
-                                result,
-                                query_generation,
-                            )
+                        snapshot = NetworkQuerySnapshot(
+                            query_facts,
+                            query_profile_id,
+                            completed_query,
+                            result,
+                            query_generation,
+                            project_reference,
+                            started_at,
+                            datetime.now(UTC),
                         )
+                        self.query_snapshots[base_id, label] = snapshot
+                        self.query_result_changed.emit(snapshot)
 
         self.runner.submit(work, receive)
 
@@ -634,6 +693,18 @@ class NetworkWidget(QWidget):
                     int(values["destination_port"]) if values["destination_port"] else None
                 )
             binding = self.binding.values() if operation in {"policy", "device"} else None
+            query = (
+                None
+                if operation == "interface"
+                else ReachabilityQuery.model_validate(
+                    {
+                        **values,
+                        "revision_id": revision.revision_id,
+                        "device_id": revision.device.device_id,
+                        "device_context": revision.device.context,
+                    }
+                )
+            )
             op = cast(Literal["route", "reachability", "interface", "policy", "device"], operation)
             self.run(
                 f"API {operation}",
@@ -641,6 +712,7 @@ class NetworkWidget(QWidget):
                     revision, op, values, binding_values=binding, imported=imported
                 ),
                 query_facts=self.facts_snapshot(),
+                query=query,
                 query_generation=self._query_generation,
             )
         except (ValueError, TypeError):
@@ -661,6 +733,9 @@ class NetworkWidget(QWidget):
                 None,
                 reason,
                 self._query_generation,
+                self._project_context,
+                datetime.now(UTC),
+                datetime.now(UTC),
             )
         )
 
@@ -687,7 +762,8 @@ class NetworkWidget(QWidget):
                 self._forwarding_issue(
                     "forwarding_parse_contract_unsupported",
                     "Нужен исходный ForwardingParseResult с source_map/diagnostics. "
-                    "ForwardingContext или bound-контекст не преобразуется; требуется backend adapter.",
+                    "ForwardingContext или bound-контекст не преобразуется; "
+                    "требуется backend adapter.",
                     unsupported=True,
                 )
                 return
@@ -804,6 +880,11 @@ class NetworkWidget(QWidget):
             result = self.results.get((self.base().revision.revision_id, self.saved.currentText()))
             if result:
                 self.show_result(result)
+                snapshot = self.query_snapshots.get(
+                    (self.base().revision.revision_id, self.saved.currentText())
+                )
+                if snapshot is not None:
+                    self.query_result_changed.emit(snapshot)
         except ValueError:
             self.invalid()
 

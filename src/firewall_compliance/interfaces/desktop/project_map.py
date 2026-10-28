@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -11,6 +12,7 @@ from hashlib import sha256
 from ipaddress import ip_address, ip_interface, ip_network
 from typing import Any
 
+from firewall_compliance.application.cloud_analysis import vmware_revision
 from firewall_compliance.domain.enums import DataStatus, EndpointKind
 from firewall_compliance.domain.network import Endpoint
 from firewall_compliance.domain.revision import DeviceRevision
@@ -82,6 +84,7 @@ class RuleEvidence:
     status: str
     location: str
     owner_id: str = ""
+    direction: str = ""
 
 
 @dataclass(frozen=True)
@@ -150,6 +153,7 @@ def build_project_map(
     warnings: list[str] = []
     parsed: list[tuple[DeviceRevision, str, str]] = []
     address_index: dict[str, list[str]] = defaultdict(list)
+    scope_areas: dict[str, str] = {}
 
     def integration(config: dict[str, Any]) -> str:
         area = cloud_area(config)
@@ -183,6 +187,9 @@ def build_project_map(
     for item in integrations:
         integration({**item["config"], "platform": item["provider"].removeprefix("cloud_ru_")})
     for item in devices:
+        if item.get("cloud_origin"):
+            # The original cloud inventory node owns this policy; avoid a second device.
+            continue
         try:
             revision = (revisions or {}).get(str(item["id"]))
             if revision is None:
@@ -253,6 +260,21 @@ def build_project_map(
             "interfaces": "network",
         }.get(record.get("type"), "server")
         key = str(item["id"])
+        inventory = record.get("inventory", {})
+        vdc = inventory.get("vdc")
+        for field_name in ("orgVdc", "ownerRef"):
+            reference = inventory.get(field_name)
+            if not vdc:
+                vdc = reference.get("id") if isinstance(reference, dict) else reference
+        match = re.search(
+            r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$", str(vdc or "").rstrip("/")
+        )
+        scope = (
+            area + ":vdc:" + (match[0].lower() if match else str(vdc or record.get("id") or key))
+        )
+        if item.get("platform", "vmware") != "vmware":
+            scope = area
+        scope_areas[scope] = area
         nodes[key] = ProjectMapNode(
             key,
             str(record.get("name") or record.get("id") or "Ресурс"),
@@ -266,11 +288,30 @@ def build_project_map(
                 f"Сбор: {item['scan']['id']}",
                 f"Наблюдение: {record.get('collected_at', '')}",
             ),
-            area,
+            scope,
         )
         for address in values:
             address_index[address].append(key)
         cloud_records.append((record, area, key))
+        if (
+            item.get("platform", "vmware") == "vmware"
+            and record.get("type") == "edges"
+            and isinstance(record.get("data", {}).get("firewall"), dict)
+        ):
+            try:
+                index = item.get("record_index")
+                if index is None:
+                    index = next(
+                        i
+                        for i, value in enumerate(item["scan"]["result"]["records"])
+                        if value.get("id") == record.get("id") and value.get("type") == "edges"
+                    )
+                parsed.append((vmware_revision(item["scan"], index), key, nodes[key].label))
+            except (ValueError, KeyError, StopIteration):
+                warnings.append(
+                    f"{nodes[key].label}: правила Firewall не нормализованы; "
+                    "проверьте ошибки сбора."
+                )
 
     aggregated: dict[tuple[str, str, str, bool, str], list[RuleEvidence]] = defaultdict(list)
 
@@ -294,12 +335,14 @@ def build_project_map(
                     address = str(network.network_address)
                 area = CONTOUR if _private(value) else EXTERNAL
                 if scope.startswith("cloud:") and area == CONTOUR:
-                    area = scope
+                    area = scope_areas.get(scope, scope)
                 zone = subnet_zone(value)
             except ValueError:
                 pass
             if network_value is not None and endpoint.resolution_status == DataStatus.KNOWN:
                 candidates = address_index.get(address or network_value, [])
+                if scope.startswith("cloud:"):
+                    candidates = [key for key in candidates if nodes[key].scope == scope]
                 if len(candidates) == 1 and (
                     nodes[candidates[0]].scope == scope or scope == "default" or not _private(value)
                 ):
@@ -338,7 +381,11 @@ def build_project_map(
         return tuple(dict.fromkeys(result))
 
     for revision, owner, label in parsed:
-        scope = revision.device.context or "default"
+        scope = (
+            nodes[owner].scope
+            if owner.startswith("cloud:")
+            else revision.device.context or "default"
+        )
         for rule in revision.parse_result.rules:
             sources = tuple(
                 dict.fromkeys(
@@ -381,8 +428,10 @@ def build_project_map(
                 ", ".join(endpoint.name for endpoint in rule.sources) or "Неизвестно",
                 ", ".join(endpoint.name for endpoint in rule.destinations) or "Неизвестно",
                 status,
-                f"{rule.source_location.source_name}:{rule.source_location.line_start}",
+                f"{rule.source_location.source_name}:"
+                f"{rule.source_location.object_path or rule.source_location.line_start}",
                 owner,
+                rule.policy_direction or "unknown",
             )
             if not sources or not destinations:
                 warnings.append(f"{label} / {rule.name}: неполные адресные условия")
@@ -395,7 +444,7 @@ def build_project_map(
                         key,
                         f"{dimension}: {len(values)}",
                         "network",
-                        CONTOUR,
+                        nodes[owner].area,
                         "Группы ACL",
                         details=tuple(nodes[value].label for value in values),
                         scope=scope,
@@ -468,46 +517,6 @@ def build_project_map(
                 for peer in peers:
                     source, target = (peer, owner) if direction == "ingress" else (owner, peer)
                     aggregated[source, target, "allow", True, "known"].append(evidence)
-        firewall = data.get("firewall", {})
-        raw_rules = firewall.get("userDefinedRules", []) if isinstance(firewall, dict) else []
-        for index, raw in enumerate(raw_rules):
-            if not isinstance(raw, dict):
-                continue
-            sources = cloud_endpoints(raw.get("sourceIpAddresses"), area, owner)
-            targets = cloud_endpoints(raw.get("destinationIpAddresses"), area, owner)
-            if (
-                not sources
-                or not targets
-                or raw.get("sourceFirewallGroups")
-                or raw.get("destinationFirewallGroups")
-                or raw.get("sourceGroupsExcluded")
-                or raw.get("destinationGroupsExcluded")
-                or len(sources) * len(targets) > 400
-            ):
-                warnings.append(
-                    f"{nodes[owner].label}: правило Edge требует дополнительных объектов"
-                )
-                continue
-            action = str(raw.get("action", "unknown")).lower()
-            if action not in {"allow", "deny", "drop", "reject"}:
-                action = "unknown"
-            enabled = raw.get("enabled") is True
-            evidence = RuleEvidence(
-                nodes[owner].label,
-                str(raw.get("id", index)),
-                str(raw.get("name") or "Правило Edge"),
-                action,
-                enabled,
-                (),
-                ", ".join(str(v) for v in raw["sourceIpAddresses"]),
-                ", ".join(str(v) for v in raw["destinationIpAddresses"]),
-                "unknown",
-                "Облачный сбор / firewall",
-                owner,
-            )
-            for source in sources:
-                for target in targets:
-                    aggregated[source, target, action, enabled, "unknown"].append(evidence)
     edges = [
         ProjectMapEdge(source, target, "acl", action, enabled, status, tuple(rules))
         for (source, target, action, enabled, status), rules in aggregated.items()

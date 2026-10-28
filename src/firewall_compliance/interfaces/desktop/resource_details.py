@@ -38,6 +38,16 @@ def rule_evidence_text(
     item: dict[str, Any], value: dict[str, Any], session: AnalysisSession | None = None
 ) -> str:
     """Показывать только фрагменты, относящиеся к выбранному правилу или объекту."""
+    if item.get("cloud_origin"):
+        origin = item["cloud_origin"]
+        connection = origin.get("connection", {})
+        return (
+            f"Источник: сохранённый облачный сбор {origin['scan_id']}\n"
+            f"Площадка: {connection.get('site', '—')}\nTenant: {connection.get('tenant', '—')}\n"
+            f"Ресурс: {origin['resource_id']}\n"
+            f"Путь API: {value.get('source_location', {}).get('object_path', '—')}\n\n"
+            + _json(value)
+        )
     if item.get("kind") == "cloud" and value.get("cloud_rule"):
         return (
             "Источник: сохранённый ответ облачного API.\n"
@@ -102,7 +112,9 @@ class ResourceDetails:
             findings,
         )
         view.resource_findings_hint.setText(
-            "Проверки недоступны: облачный сбор сохраняет данные API."
+            "Правила Edge Firewall проверены; охват и ограничения указаны в отчёте."
+            if cloud and report
+            else "Не проверено: выполните анализ сохранённого облачного сбора."
             if cloud
             else "Находки выбранного снимка. Полнота проверок указана в Сведениях."
             if report
@@ -211,7 +223,7 @@ class ResourceDetails:
         viewer = QPlainTextEdit()
         viewer.setReadOnly(True)
         session = view.sessions.get(str(item["id"]))
-        viewer.setPlainText(rule_evidence_text(item, value, session))
+        viewer.setPlainText(self._rule_evidence(item, value, session))
         layout.addWidget(viewer)
 
         def attach() -> None:
@@ -225,13 +237,38 @@ class ResourceDetails:
         button = QPushButton("Подключить исходник")
         button.clicked.connect(attach)
         button.setEnabled(
-            item.get("kind") != "cloud" and not view._batch_active and not view._restore_busy
+            item.get("kind") != "cloud"
+            and not item.get("cloud_origin")
+            and not view._batch_active
+            and not view._restore_busy
         )
         layout.addWidget(button)
         close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         close.rejected.connect(dialog.reject)
         layout.addWidget(close)
         dialog.exec()
+
+    def _rule_evidence(
+        self, item: dict[str, Any], value: dict[str, Any], session: AnalysisSession | None = None
+    ) -> str:
+        text = rule_evidence_text(item, value, session)
+        origin = item.get("cloud_origin")
+        path = value.get("source_location", {}).get("object_path", "")
+        if not origin or not path.startswith("/result/records/"):
+            return text
+        scans = (
+            self.view.store.list_cloud_scans(self.view.project_id) if self.view.project_id else []
+        )
+        source = next((scan for scan in scans if scan["id"] == origin["scan_id"]), None)
+        if source is None:
+            return text + "\nИсходный сбор недоступен."
+        try:
+            raw: Any = source
+            for segment in path.strip("/").split("/"):
+                raw = raw[int(segment)] if isinstance(raw, list) else raw[segment]
+        except (ValueError, KeyError, IndexError, TypeError):
+            return text + "\nИсходное правило по сохранённому пути недоступно."
+        return text + "\n\nИсходные поля правила API:\n" + _json(raw)
 
     def show_rule_json(self) -> None:
         """Сохранить доступ ко всем исходным полям нормализованной модели."""
@@ -380,7 +417,10 @@ class ResourceDetails:
         )
         for title, text in (
             ("Понятное описание", context + "\n\n".join(f"{key}: {text}" for key, text in fields)),
-            ("Доказательство", rule_evidence_text(item, value, view.sessions.get(str(item["id"])))),
+            (
+                "Доказательство",
+                self._rule_evidence(item, value, view.sessions.get(str(item["id"]))),
+            ),
             ("Технический JSON", _json(value)),
         ):
             editor = QPlainTextEdit()

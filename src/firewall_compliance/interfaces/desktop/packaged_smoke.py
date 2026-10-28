@@ -13,13 +13,21 @@ from urllib.request import Request
 from PySide6.QtCore import QCoreApplication, QEvent, QTimer
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPlainTextEdit, QPushButton
 
+from firewall_compliance.application.analysis_reports import (
+    export_analysis_csv,
+    export_analysis_html,
+    export_analysis_json,
+)
+from firewall_compliance.application.analysis_result import AnalysisResult
 from firewall_compliance.application.network_import import NetworkImportResult
 from firewall_compliance.infrastructure.cloud_public import AdvancedClient, EvolutionClient
 from firewall_compliance.infrastructure.cloud_vmware import VMwareClient
+from firewall_compliance.interfaces.desktop.analysis_result_adapter import analysis_from_run
 from firewall_compliance.interfaces.desktop.batch_reports import (
     export_batch_html,
     export_batch_json,
 )
+from firewall_compliance.interfaces.desktop.cloud_analysis_smoke import run_cloud_analysis_smoke
 from firewall_compliance.interfaces.desktop.project_store import ProjectStore
 from firewall_compliance.interfaces.desktop.qt_app import MainWindow
 from firewall_compliance.interfaces.desktop.qt_theme import apply_theme
@@ -69,6 +77,7 @@ def run_packaged_smoke(output_dir: Path) -> None:
 
     project_id = window.create_project("Синтетическая проверка Windows-сборки")
     cloud = window.cloud_panel
+    cloud.auto_analyze.setChecked(False)
     cloud.site.setText("https://vcd01-01.cloud.ru/tenant/synthetic-tenant/")
     cloud.tenant.clear()
     cloud.token.setText("SYNTHETIC-CLOUD-API-TOKEN")
@@ -385,12 +394,59 @@ def run_packaged_smoke(output_dir: Path) -> None:
     reopened = MainWindow(store=restored)
     assert reopened.project_id == project_id
     assert reopened.run_id == run_id
+    common_result = analysis_from_run(restored, project_id, run_id)
+    common_id = restored.save_analysis_result(project_id, common_result)
+    retained = ProjectStore(restored.path).get_analysis_result(project_id, common_id)
+    assert retained == common_result
+    common_json = export_analysis_json(retained)
+    assert AnalysisResult.model_validate_json(common_json) == retained
+    assert "PRIVATE-SOURCE-MARKER" not in common_json
+    for extension, contents in (
+        ("json", common_json),
+        ("csv", export_analysis_csv(retained)),
+        ("html", export_analysis_html(retained)),
+    ):
+        (output_dir / f"common-analysis.{extension}").write_text(contents, encoding="utf-8")
+    registry = restored.resource_registry
+    resources = registry.list_resources(project_id)
+    assert any(row.get("source", {}).get("device_id") for row in resources)
+    assert any(row.get("category") == "cloud" for row in resources)
+    manual_id = registry.add_manual(project_id, {"name": "SYNTHETIC-MANUAL", "category": "network"})
+    registry.update(project_id, manual_id, {"label": "Synthetic rack", "rack": "R-01"})
+    reopened._refresh_all()
+    assert reopened.infrastructure_tabs.tabText(0) == "Реестр ресурсов"
+    assert reopened.overview_scroll.isHidden()
+    assert (
+        next(row for row in registry.list_resources(project_id) if row["id"] == manual_id)[
+            "last_scan"
+        ]
+        is None
+    )
+    registry.archive(project_id, manual_id)
+    reopened._registry_changed()
+    assert all(row["id"] != manual_id for row in registry.list_resources(project_id))
+    registry.restore(project_id, manual_id)
+    reopened._refresh_all()
+    restored_manual = next(
+        row
+        for row in ProjectStore(restored.path).resource_registry.list_resources(project_id)
+        if row["id"] == manual_id
+    )
+    assert restored_manual["label"] == "Synthetic rack" and restored_manual["rack"] == "R-01"
+    reopened.show()
+    reopened.navigate("home")
+    app.processEvents()
+    reopened.grab().save(str(output_dir / "qt-compact-dashboard.png"))
+    reopened.navigate("devices")
+    app.processEvents()
+    reopened.grab().save(str(output_dir / "qt-infrastructure-registry.png"))
     reopened.close()
     reopened.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     del reopened, window
     gc.collect()
     app.processEvents()
+    run_cloud_analysis_smoke(output_dir)
     (output_dir / "smoke-result.json").write_text(
         json.dumps(
             {
@@ -400,11 +456,16 @@ def run_packaged_smoke(output_dir: Path) -> None:
                 "files": 2,
                 "checks": len(successful[0]["report"]["checks"]),
                 "history_restored": True,
+                "common_analysis_persistent_and_exports": True,
+                "infrastructure_persistent_registry": True,
+                "infrastructure_archive_restore": True,
+                "compact_project_dashboard": True,
                 "modified_source_rejected": True,
                 "cloud_vmware_synthetic_scan": True,
                 "cloud_vmware_template_filter": True,
                 "cloud_vmware_nullable_firewall_groups": True,
                 "cloud_rules_in_common_table": True,
+                "cloud_vmware_seven_checks_and_map": True,
                 "cloud_credentials_protected": True,
                 "cloud_advanced_synthetic_scan": True,
                 "cloud_evolution_synthetic_scan": True,

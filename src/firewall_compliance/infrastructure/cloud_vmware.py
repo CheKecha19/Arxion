@@ -16,6 +16,9 @@ from urllib.parse import quote, unquote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 from xml.etree import ElementTree as ET
 
+from defusedxml import ElementTree as SafeET
+from defusedxml.common import DefusedXmlException
+
 MAX_RESPONSE = 16 * 1024 * 1024
 MAX_PAGES = 1000
 API_VERSIONS = (
@@ -166,11 +169,11 @@ def _transport(request: Request, timeout: int) -> bytes:
 
 
 def _xml(data: bytes) -> ET.Element:
-    if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
-        raise CloudError("Неподдерживаемый XML-ответ.")
     try:
-        return ET.fromstring(data)
-    except ET.ParseError:
+        return SafeET.fromstring(data, forbid_dtd=True, forbid_entities=True, forbid_external=True)
+    except DefusedXmlException:
+        raise CloudError("Неподдерживаемый XML-ответ.") from None
+    except (ET.ParseError, LookupError, ValueError):
         raise CloudError("Cloud Director вернул некорректный XML.") from None
 
 
@@ -202,6 +205,7 @@ class VMwareClient:
         self.transport = transport
         self.cancel = cancel or Event()
         self.requests: list[dict[str, str]] = []
+        self._reference_cache: dict[tuple[str, str], dict[str, Any] | None] = {}
 
     def _request(
         self, path: str, *, xml: bool = False, auth: bool = True, data: bytes | None = None
@@ -370,6 +374,73 @@ class VMwareClient:
                 raise CloudError(f"Неожиданный формат поля {key} в ответе Firewall.")
         return payload
 
+    def _firewall_objects(
+        self, firewall: dict[str, Any]
+    ) -> tuple[dict[str, dict[str, Any]], list[str]]:
+        """Read referenced objects on the configured origin; failed references remain unknown."""
+        objects: dict[str, dict[str, Any]] = {
+            "firewall_groups": {},
+            "application_port_profiles": {},
+        }
+        errors: list[str] = []
+        for section in ("systemRules", "userDefinedRules", "defaultRules"):
+            for rule in firewall.get(section) or []:
+                for reference_field, collection, endpoint, kind in (
+                    ("sourceFirewallGroups", "firewall_groups", "firewallGroups", "firewallGroup"),
+                    (
+                        "destinationFirewallGroups",
+                        "firewall_groups",
+                        "firewallGroups",
+                        "firewallGroup",
+                    ),
+                    (
+                        "applicationPortProfiles",
+                        "application_port_profiles",
+                        "applicationPortProfiles",
+                        "applicationPortProfile",
+                    ),
+                ):
+                    refs = rule.get(reference_field)
+                    if not isinstance(refs, list):
+                        continue
+                    for ref in refs:
+                        if self.cancel.is_set():
+                            return objects, errors
+                        identifier = ref.get("id") if isinstance(ref, dict) else None
+                        if not isinstance(identifier, str) or not re.fullmatch(
+                            rf"(?:urn:vcloud:{kind}:)?[a-fA-F0-9]{{8}}(?:-[a-fA-F0-9]{{4}}){{3}}-[a-fA-F0-9]{{12}}",
+                            identifier,
+                        ):
+                            errors.append(
+                                "Ссылка на группу или профиль сервиса "
+                                "не содержит поддерживаемого UUID."
+                            )
+                            continue
+                        key = collection, identifier
+                        if key not in self._reference_cache:
+                            try:
+                                if len(self._reference_cache) >= 4096:
+                                    raise CloudError("Превышен лимит разрешения ссылок Firewall.")
+                                value = _json(
+                                    self._request(
+                                        f"/cloudapi/1.0.0/{endpoint}/{quote(identifier, safe=':')}"
+                                    )
+                                )
+                                if value.get("id") != identifier:
+                                    raise CloudError(
+                                        "ID группы/профиля в ответе не соответствует запросу."
+                                    )
+                                self._reference_cache[key] = value
+                            except CloudError as error:
+                                self._reference_cache[key] = None
+                                errors.append(str(error))
+                        cached = self._reference_cache[key]
+                        if cached is not None:
+                            objects[collection][identifier] = cached
+                        elif not errors:
+                            errors.append("Не удалось прочитать одну из групп/профилей Firewall.")
+        return objects, errors
+
     def _vm_connections(self, vm: dict[str, Any]) -> list[dict[str, Any]]:
         href = str(vm.get("href", ""))
         parsed = urlsplit(href)
@@ -459,6 +530,17 @@ class VMwareClient:
                             )
                             if data_kind == "firewall":
                                 record["data"][data_kind] = self._firewall(path)
+                                objects, object_errors = self._firewall_objects(
+                                    record["data"][data_kind]
+                                )
+                                record["data"].update(objects)
+                                result.errors.extend(
+                                    {
+                                        "resource": record["name"] + " / Объекты Firewall",
+                                        "message": message,
+                                    }
+                                    for message in object_errors
+                                )
                             else:
                                 record["data"][data_kind] = self._collection(path)
                         except CloudError as error:

@@ -192,6 +192,7 @@ class ProjectEdgeItem(QGraphicsPathItem):
 
 class ProjectMapWidget(QWidget):
     labels_changed = Signal(object)
+    rules_requested = Signal(object)
     MAX_DISPLAY_EDGES = 1500
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -251,6 +252,9 @@ class ProjectMapWidget(QWidget):
         self.properties_button = QPushButton("Свойства")
         self.properties_button.setCheckable(True)
         tools.addWidget(self.properties_button)
+        self.open_rules_button = QPushButton("Правила выбранной связи")
+        self.open_rules_button.clicked.connect(self._open_selected_rules)
+        tools.addWidget(self.open_rules_button)
         layout.addLayout(tools)
         self.details = QPlainTextEdit()
         self.details.setReadOnly(True)
@@ -629,6 +633,7 @@ class ProjectMapWidget(QWidget):
                         f"{rule.source} → {rule.destination}",
                         f"Сервисы: {', '.join(rule.services) or 'неизвестны'}",
                         f"Действие: {rule.action} · включено: {rule.enabled}",
+                        f"Направление: {rule.direction or 'не указано'}",
                         f"Условия: {rule.status} · {rule.location}",
                     )
                 )
@@ -645,3 +650,19 @@ class ProjectMapWidget(QWidget):
             return
         self.details.setPlainText("\n".join(lines))
         self.properties_button.setChecked(True)
+
+    def _open_selected_rules(self) -> None:
+        selected = self.scene.selectedItems()
+        rules: list[str] = []
+        for item in selected:
+            if isinstance(item, ProjectEdgeItem):
+                rules.extend(rule.rule_id for rule in item.edge.rules)
+            elif isinstance(item, ProjectIconItem):
+                rules.extend(
+                    rule.rule_id
+                    for edge in self.graph.edges
+                    for rule in edge.rules
+                    if rule.owner_id == item.node.key
+                )
+        if rules:
+            self.rules_requested.emit(tuple(dict.fromkeys(rules)))

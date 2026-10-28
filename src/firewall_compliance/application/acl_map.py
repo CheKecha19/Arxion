@@ -1,8 +1,155 @@
 """Общие для CLI и desktop экспорты аналитической карты ACL."""
 
 import json
+from collections.abc import Sequence
+from datetime import datetime
+from html import escape
+from typing import Literal
 
+from pydantic import ConfigDict, Field, model_validator
+
+from firewall_compliance.analysis.acl_map import AclMapFilter, build_acl_map, filter_acl_relations
 from firewall_compliance.domain.acl_map import AclMap
+from firewall_compliance.domain.base import DomainModel
+from firewall_compliance.domain.parse_result import ParseIssue
+from firewall_compliance.domain.revision import DeviceRevision
+from firewall_compliance.domain.snapshot import freeze_snapshot_fields
+
+
+class AclMapBatchFailure(DomainModel):
+    """An explicit failed input; an absent graph is never an empty policy."""
+
+    model_config = ConfigDict(frozen=True)
+    input_reference: str = Field(min_length=1)
+    code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    source_name: str | None = None
+    content_sha256: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")
+    diagnostics: tuple[ParseIssue, ...] = ()
+
+
+class AclMapBatchItem(DomainModel):
+    model_config = ConfigDict(frozen=True)
+    input_reference: str = Field(min_length=1)
+    graph: AclMap
+
+
+class AclMapBatch(DomainModel):
+    """Independent device/revision maps, without address-based merging."""
+
+    model_config = ConfigDict(frozen=True)
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    mode: Literal["declared_rules_batch"] = "declared_rules_batch"
+    items: tuple[AclMapBatchItem, ...] = ()
+    failures: tuple[AclMapBatchFailure, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_batch(self) -> "AclMapBatch":
+        references = [item.input_reference for item in self.items]
+        references.extend(item.input_reference for item in self.failures)
+        if len(references) != len(set(references)):
+            raise ValueError("batch input references must be unique")
+        for item in self.items:
+            AclMap.model_validate(item.graph.model_dump(mode="python"))
+        freeze_snapshot_fields(self)
+        return self
+
+
+def build_acl_map_batch(
+    revisions: Sequence[tuple[str, DeviceRevision]],
+    *,
+    built_at: datetime,
+    failures: tuple[AclMapBatchFailure, ...] = (),
+    max_maps: int = 1000,
+    max_rules: int = 100_000,
+) -> AclMapBatch:
+    """Bounded batch projection over already captured immutable revisions."""
+    if max_maps < 1 or max_rules < 1:
+        raise ValueError("batch budgets must be positive")
+    if len(revisions) + len(failures) > max_maps:
+        raise ValueError("batch map budget exceeded")
+    if sum(len(revision.parse_result.rules) for _, revision in revisions) > max_rules:
+        raise ValueError("batch rule budget exceeded")
+    items = tuple(
+        AclMapBatchItem(input_reference=reference, graph=build_acl_map(revision, built_at=built_at))
+        for reference, revision in revisions
+    )
+    return AclMapBatch(items=items, failures=failures)
+
+
+def export_acl_map_html(graph: AclMap, *, filters: AclMapFilter | None = None) -> str:
+    """Standalone escaped report; selected rows retain their original evidence."""
+    validated = AclMap.model_validate(graph.model_dump(mode="python"))
+    filters = filters or AclMapFilter()
+    relations = filter_acl_relations(validated, filters)
+    revision = validated.revision
+    header = (
+        f"<h1>Карта заданных условий ACL</h1><p>Устройство: {escape(revision.device.device_id)}; "
+        f"ревизия: {revision.revision_id}; построена: {escape(validated.built_at.isoformat())}</p>"
+        f"<p>Показано правил: {len(relations)} из {len(validated.relations)}. "
+        "Фильтры меняют представление; неизвестное совпадение не доказывает доступ.</p>"
+        f"<details><summary>Фильтры</summary><pre>{escape(filters.model_dump_json(indent=2))}</pre>"
+        "</details><ul>"
+        + "".join(f"<li>{escape(reason)}</li>" for reason in validated.limitations)
+        + "</ul><h2>Источники</h2><ul>"
+        + "".join(
+            f"<li>{escape(source.source_name)}; {source.source_document_id}; "
+            f"SHA-256 {escape(source.content_sha256)}</li>"
+            for source in revision.sources
+        )
+        + "</ul>"
+    )
+    rows: list[str] = []
+    for relation in relations:
+        rule = relation.rule
+        cells = (
+            rule.policy_id or "unknown",
+            rule.rule_id,
+            str(rule.sequence),
+            rule.action.value,
+            "enabled" if rule.enabled else "disabled",
+            relation.condition_status,
+            json.dumps(
+                [value.model_dump(mode="json") for value in rule.sources], ensure_ascii=False
+            ),
+            json.dumps(
+                [value.model_dump(mode="json") for value in rule.destinations], ensure_ascii=False
+            ),
+            json.dumps(
+                [value.model_dump(mode="json") for value in rule.services], ensure_ascii=False
+            ),
+            rule.source_location.model_dump_json(),
+        )
+        rows.append(
+            "<tr>" + "".join(f"<td><pre>{escape(cell)}</pre></td>" for cell in cells) + "</tr>"
+        )
+    labels = (
+        "ACL",
+        "Правило",
+        "Порядок",
+        "Действие",
+        "Активность",
+        "Условия",
+        "Источник",
+        "Назначение",
+        "Сервис",
+        "Доказательство",
+    )
+    table = (
+        "<table><thead><tr>"
+        + "".join(f"<th>{label}</th>" for label in labels)
+        + "</tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>"
+    )
+    return (
+        '<!doctype html><html lang="ru"><meta charset="utf-8"><title>Карта ACL</title>'
+        "<style>body{font:14px system-ui;margin:24px;color:#182434}"
+        "table{border-collapse:collapse;width:100%}"
+        "td,th{border:1px solid #ccd3dc;padding:8px;text-align:left;vertical-align:top}"
+        "pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px monospace;max-width:40em}"
+        "th{background:#edf2f9}li{margin:5px 0}</style><body>" + header + table + "</body></html>"
+    )
 
 
 def export_acl_map_json(graph: AclMap) -> str:

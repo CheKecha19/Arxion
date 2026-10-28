@@ -77,6 +77,11 @@ class TopologyTraceProjection:
     physical_transitions: tuple[()] = ()
 
 
+def _supported_trace_result(value: object) -> ForwardingQueryResult | None:
+    """Validate dynamic UI input while retaining the typed public trace contract."""
+    return value if isinstance(value, ForwardingQueryResult) else None
+
+
 def build_topology_trace(
     result: ForwardingQueryResult,
     projection: TopologyProjection,
@@ -90,6 +95,7 @@ def build_topology_trace(
     present in this contract, even when conditional policy_status is allow.
     """
     boundaries = ("route_selection_unknown", "physical_transition_unknown", "delivery_unknown")
+    supported_result = _supported_trace_result(result)
 
     def unavailable(
         code: str,
@@ -97,7 +103,6 @@ def build_topology_trace(
         *,
         unsupported: bool = True,
     ) -> TopologyTraceProjection:
-        supported = isinstance(result, ForwardingQueryResult)
         reason = AnalysisReason(
             code=code,
             category="unsupported" if unsupported else "missing_evidence",
@@ -105,19 +110,19 @@ def build_topology_trace(
         )
         return TopologyTraceProjection(
             "unsupported" if unsupported else "unavailable",
-            result.query if supported else None,
-            result.profile_id if supported else None,
-            result.status if supported else None,
+            supported_result.query if supported_result is not None else None,
+            supported_result.profile_id if supported_result is not None else None,
+            supported_result.status if supported_result is not None else None,
             None,
             (),
             None,
             None,
             None,
-            (*result.reasons, reason) if supported else (reason,),
+            (*supported_result.reasons, reason) if supported_result is not None else (reason,),
             boundaries,
         )
 
-    if not isinstance(result, ForwardingQueryResult):
+    if supported_result is None:
         return unavailable(
             "trace_contract_unsupported", "Тип результата не содержит поддержанный trace."
         )
@@ -238,10 +243,10 @@ def build_topology_projection(
         for document in (imported.documents if imported else ())
         if document.scope == "interfaces"
     }
-    for document in documents.values():
+    for network_document in documents.values():
         if (
-            document.metadata.device_id != revision.device.device_id
-            or document.metadata.context != revision.device.context
+            network_document.metadata.device_id != revision.device.device_id
+            or network_document.metadata.context != revision.device.context
         ):
             raise ValueError("Network document belongs to another device scope")
     sources = {source.source_document_id: source for source in revision.sources}

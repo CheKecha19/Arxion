@@ -45,12 +45,12 @@ class ManagementSettings(QWidget):
             checkbox.setChecked(default)
             self.options[key] = checkbox
             layout.addWidget(checkbox)
-            checkbox.toggled.connect(self.changed.emit)
+            checkbox.toggled.connect(lambda _checked: self.changed.emit())
         layout.addWidget(QLabel("Максимальный тайм-аут сессии, секунд"))
         self.timeout = QSpinBox()
         self.timeout.setRange(1, 86400)
         self.timeout.setValue(900)
-        self.timeout.valueChanged.connect(self.changed.emit)
+        self.timeout.valueChanged.connect(lambda _value: self.changed.emit())
         layout.addWidget(self.timeout)
         self.complete = QCheckBox(
             "Следующий импорт: подтверждаю полноту всех выбранных конфигураций"

@@ -1,5 +1,114 @@
 # Harness validation log
 
+## Post-build continuation, 2026-10-28
+
+Delivered EXE remains untested as requested; subsequent source work is separate.
+Cloud XML now uses locked defusedxml with DTD/entity/external denial independent
+of encoding.21 synthetic UTF8/UTF16/malformed-input tests passed, strict mypy and
+Ruff passed. No live Cloud Director requests. Impact160710Z-bef067a3.
+
+PolicyAttachment domain and omitted-when-empty ParseResult.policy_attachments
+preserve declared role/ACL association with exact source-map identity. No
+effective direction/order inferred. Source types/lint pass; seven attachment
+tests plus five common-result version tests pass (12 total). Impact
+160950Z-964b0f89. Controller parser owner will populate the new field.
+
+Governance MainWindow integration:18 owned tests exit0; combined64 assertions
+across governance/controls/common-results/registry passed, but native subprocess
+returned3221226505 (0xC0000409) at teardown. Combined validation is FAILED,
+not64 passing tests. Runtime minimization and read-only lifetime review ongoing;
+no test disabled or assertion weakened. Current binary was not launched.
+
+## Requested EXE without checks, 2026-10-28
+
+User explicitly requested a fresh EXE without checks, then continued backlog work.
+Ran only scripts/build_desktop.ps1 for this build: PyInstaller6.22.3/Python3.12.13,
+Windows10, exit0. Primary dist/FirewallCompliance/FirewallCompliance.exe and
+dist/FirewallCompliance-windows-x64.zip replaced by the build script. Version
+remains0.3.0, interim snapshot; no Git push or final release performed.
+No tests, frozen self-test, runtime launch, archive test or hash verification run
+for this artifact. Earlier test evidence must not be treated as its acceptance.
+
+After delivering that EXE, root resumed backlog and wired GovernancePanel into
+Reports as 'Метаданные правил', with project lifecycle, cached-result refresh
+and shutdown. This subsequent source change is NOT inside the just-built EXE.
+Verification of that MainWindow integration is pending; panel's preceding
+standalone tests predate the new build and dependency upgrade.
+
+Dependency lock/env: pytest9.0.3, setuptools84.1.0, defusedxml0.7.1 and stubs
+installed before build. Subsequent locked security audit has not run. Cloud XML
+code has not yet been migrated to defusedxml. Old XML finding remains unresolved.
+The previously started pytest compatibility session54943 is no longer present;
+root did not restart it after the user's no-checks request.
+
+## Backlog continuation, 2026-10-28
+
+Baseline HEAD ba991ab; existing worktree edits preserved. Intermediate EXE from
+27 October remains the published local checkpoint below; subsequent source
+changes are not claimed to be inside that EXE. No push/release performed.
+
+- Required `harness/build all`: first sandbox attempt
+  20261028T031751Z-b01d9d03 could not access the existing uv cache outside the
+  workspace; those commands were unrun, not passing. Approved native rerun:
+  artifacts/harness/20261028T042510Z-e1ba2c99/results.json. Architecture,
+  diff/format/lint/types, 471 harness tests, CLI and JSON contract, Qt smoke and
+  wheel/sdist passed. Historical suite: 1812 passed, nine failed on previously
+  diagnosed application-version goldens. No goldens changed. Bandit and locked
+  audit failed: four MEDIUM source findings (XML parser, static SQL table-name
+  interpolation, two parsed wildcard address literals); two dependency advisories
+  (pytest8.4.2 and setuptools84.0.0). Full gate remains NOT green. Source work
+  continued while this checkpoint ran, so this is not final-tree validation.
+- Common AnalysisResult accepted on 96 model/adapter/store/Qt tests and 30
+  workflow/real CLI tests. Hardlink output aliases were found and fixed, covering
+  configuration and selected profiles. The shared result now preserves actual
+  forwarding parser and flow-derived binding while rejecting unrelated changes.
+- ACL-map backend: 26 new +123 historical tests; real CLI entrypoint: 21 tests;
+  Qt filters/HTML/PNG: 15 new and 131 related tests. Source snapshot retained,
+  no source reread, unknown visible, bounded PNG, exact project/run/item isolation.
+  Full project batch/persistence integration is still in progress; task not closed.
+- Exposure and order evidence now versioned1.0/1.1. Saved versions replay
+  separately; JSON canonical comparison avoids rejecting tuple/list forms of
+  administrative evidence. Combined versions/core/adapter/workflow: 103 passed.
+  Check-level versioning preserves existing catalogue membership and finding IDs.
+
+Security scope stays as root SECURITY.md: own application Python and launcher,
+no tests/caches/installed library scan; dependency audit separately uses uv.lock.
+No clean OS/visible GUI acceptance or v0.4 completion claimed.
+
+## Current backlog EXE checkpoint, 2026-10-27
+
+User explicitly requested building the current EXE before continuing backlog work.
+Baseline HEAD ba991ab with the in-progress source changes preserved. Captured
+135 application/launcher/data inputs before PyInstaller and verified their hashes
+unchanged before EXE execution. No live cloud or customer configuration accessed.
+
+- Full required gate: artifacts/harness/20261027T162645Z-48374de9/results.json.
+  Architecture, diff-check, format/lint, strict mypy, 367 harness tests and Python
+  packaging passed. Historical application suite: 1812 passed / nine failed;
+  the nine historical golden application-version differences remain explicit.
+  CLI contract failed on Windows output encoding; old Qt smoke still expects
+  the former 14-findings scenario despite the additional selected checks. Both
+  gate issues are assigned for diagnosis, not skipped. Overall gate is NOT green.
+  Bandit: 113 LOW / four MEDIUM. Dependency audit: pytest8.4.2 PYSEC-2026-1845,
+  setuptools84.0.0 GHSA-xmj3-9gf7-h52w. No dependency remediation in this checkpoint.
+- Source self-contained smoke passed with 23 selected checks and shared result
+  persistence, JSON/CSV/HTML exports, registry, dashboard, cloud and DPAPI scenarios.
+- New frozen Windows10 EXE passed --self-test with the same scenarios:
+  build/verification/current-backlog-exe-smoke-20261027/smoke-result.json.
+- Main dist/FirewallCompliance updated; no extra stale files compared with staging.
+  Main ZIP integrity and embedded EXE match verified. EXE SHA256:
+  61cb57047c90394f0f2ba5c05315f0f87884dc7790609e9d85d810ade7954b0f.
+  ZIP SHA256: 14605d0aeaa3205f9bd2b2dc469c86394d393284d5a201fa827dd278f3946f06.
+  Evidence: build/verification/current-backlog-artifacts-20261027.json.
+  Native visible GUI/clean Windows11 testing not performed. Version remains0.3.0;
+  this is an interim build, not the requested final releasev0.4.
+
+CLI distribution separately passed 32 focused tests, standalone native version/
+7-or-11-check smoke with system-only PATH, actual inventory/CycloneDX validation
+and a byte-identical independent build. Contract: WINDOWS_CLI_DISTRIBUTION.md.
+EXE SHA256 a5705e99d203a06b77ca633088fa4353ab19d8aa798c705c3adcb00a3e1d4e0f;
+ZIP SHA256 6fec3e4dc70be5024f869b303caabbbb97bc438200303375fc99db79ddb86566.
+
 Baseline: c97c8a06205c6259a7893c67a2494f0dced2e058.
 Date: 2026-10-23. Linux, CPython 3.12.14, uv 0.12.23.
 User-approved harness infrastructure only. Existing application, tests, root
@@ -157,3 +266,53 @@ runtime/CLI version 0.3.0, CLI findings JSON, saved analysis/device selection,
 one full-width infrastructure table and six retained hidden tabs; findings
 inspector on its own page remains visible. No live Cloud.ru requests were made.
 No native Windows binary built. GitHub Releases API returns Forbidden.
+
+## 2026-10-26 — CLOUD-001 VMware Edge analysis and map (Windows)
+
+Fetched origin and fast-forwarded clean main 2924860 to 1503106. At the user's
+subsequent request switched to release/v0.3 at ab56db0 (same source tree). No
+commit, push, tag or publication. Baseline full report before code changes:
+artifacts/harness/20261026T161509Z-bc52102d/results.json. It confirms missing
+tests/fixtures/Qt scripts, baseline lint/type failures, sandbox temp-directory
+failures and initially missing tools in harness/tools/.venv. Installed that
+environment with its existing lock; root dependency declarations stayed unchanged.
+
+Impact/context: 20261026T161321Z-3f5ec7e1 and 20261026T161320Z-25900221.
+Added a pure VMware-to-domain adapter and reused the seven existing FW checks.
+Analysis creates ordinary runs/items atomically, with additive cloud_origin JSON
+linking the exact scan/resource/source path. Original scans/results/marks and
+SQLite schema definitions remain unchanged. Only requested static IP sets and
+application profiles are resolved on future collections; missing/dynamic/L7 and
+unrepresentable conditions remain explicitly partial. NAT is not an ALLOW rule.
+Maps use the same adapter, isolate connection/VDC scope and expose rule evidence.
+The intentionally hidden INFRA-001 inspector is preserved.
+
+Validation:
+
+- Focused synthetic VMware pipeline: 21 passed, including all seven check types,
+  incomplete conditions, source paths, persistence, project isolation, automatic
+  analysis, duplicate IPs across VDCs and map-to-rule navigation.
+- Required full gate: artifacts/harness/20261026T163305Z-daadd4d3/results.json.
+  Architecture, diff-check, 23 harness tests and wheel/sdist packaging passed.
+  Main pytest/fixture CLI/legacy Qt smoke could not run because their inputs were
+  removed upstream. Full lint retains six baseline errors plus the missing tests
+  path; full mypy retains twelve baseline errors in three unchanged modules.
+- Ruff passed for changed Python paths; targeted strict mypy passed for twelve
+  changed modules. Source self-contained packaged smoke passed.
+- Full gate security scope was Python application sources plus qt_launcher.py,
+  excluding caches, tests and third-party environments per SECURITY.md. Bandit
+  retains 103 LOW/4 MEDIUM findings (new smoke asserts are B101 LOW); dependency
+  audit reports pytest and setuptools. No dependency update or unrelated source
+  security remediation was performed. PowerShell/Windows launch scripts are not
+  covered by Bandit. The overall gate is explicitly NOT green.
+- Built portable Windows EXE from this source and ran --self-test successfully,
+  including cloud_vmware_seven_checks_and_map and existing DPAPI/cloud scenarios.
+  Main dist/FirewallCompliance and dist/FirewallCompliance-windows-x64.zip updated;
+  stage/main/ZIP EXE digests and ZIP integrity verified. Artifacts are under ignored
+  build/verification. Offscreen Qt ran on Windows 10; visible GUI validation and a
+  clean Windows 11 run were not performed. No live Cloud.ru account accessed.
+
+Remaining scope: VMware NSX-T Edge Firewall only; Advanced/Evolution policy
+analysis, dynamic group membership, L7/source-port conditions and effective
+end-to-end/NAT reachability remain unsupported. INFRA-001 metadata/lifecycle and
+DASH-001 redesign are proposals for later work, not implemented by this change.

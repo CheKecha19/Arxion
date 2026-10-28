@@ -47,6 +47,7 @@ def cloud_resources(scans: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
                     "kind": "cloud",
                     "scan": scan,
                     "record": record,
+                    "record_index": index,
                     "platform": scan["config"].get("platform", "vmware"),
                 },
             )
