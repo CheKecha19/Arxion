@@ -1,0 +1,181 @@
+{
+  "firewall": {
+    "rules": [
+      {
+        "id": 1,
+        "name": "Allow Any to Any HTTP",
+        "action": "accept",
+        "src": [{"id": "any"}],
+        "dst": [{"id": "any"}],
+        "service": [{"id": "HTTP"}],
+        "enabled": true
+      },
+      {
+        "id": 2,
+        "name": "Allow LAN to DMZ SSH",
+        "action": "accept",
+        "src": [{"id": "LAN_Networks"}],
+        "dst": [{"id": "DMZ_Servers"}],
+        "service": [{"id": "SSH"}],
+        "enabled": true
+      },
+      {
+        "id": 3,
+        "name": "Allow LAN to DMZ HTTPS",
+        "action": "accept",
+        "src": [{"id": "LAN_Networks"}],
+        "dst": [{"id": "DMZ_Servers"}],
+        "service": [{"id": "HTTPS"}],
+        "enabled": true
+      },
+      {
+        "id": 4,
+        "name": "Allow LAN to DMZ Telnet - INSECURE",
+        "action": "accept",
+        "src": [{"id": "LAN_Networks"}],
+        "dst": [{"id": "DMZ_Servers"}],
+        "service": [{"id": "TELNET"}],
+        "enabled": true
+      },
+      {
+        "id": 5,
+        "name": "Allow DMZ to Internet HTTPS",
+        "action": "accept",
+        "src": [{"id": "DMZ"}],
+        "dst": [{"id": "Internet"}],
+        "service": [{"id": "HTTPS"}],
+        "enabled": true
+      },
+      {
+        "id": 6,
+        "name": "Allow DMZ to Internet HTTP",
+        "action": "accept",
+        "src": [{"id": "DMZ"}],
+        "dst": [{"id": "Internet"}],
+        "service": [{"id": "HTTP"}],
+        "enabled": true
+      },
+      {
+        "id": 7,
+        "name": "Allow DMZ to Internet FTP - INSECURE",
+        "action": "accept",
+        "src": [{"id": "DMZ"}],
+        "dst": [{"id": "Internet"}],
+        "service": [{"id": "FTP"}],
+        "enabled": true
+      },
+      {
+        "id": 8,
+        "name": "Allow Internet to WebServers HTTP",
+        "action": "accept",
+        "src": [{"id": "Internet"}],
+        "dst": [{"id": "WebServers"}],
+        "service": [{"id": "HTTP"}],
+        "enabled": true
+      },
+      {
+        "id": 9,
+        "name": "Allow Internet to WebServers HTTPS",
+        "action": "accept",
+        "src": [{"id": "Internet"}],
+        "dst": [{"id": "WebServers"}],
+        "service": [{"id": "HTTPS"}],
+        "enabled": true
+      },
+      {
+        "id": 10,
+        "name": "Deny All Other",
+        "action": "deny",
+        "src": [{"id": "any"}],
+        "dst": [{"id": "any"}],
+        "service": [{"id": "any"}],
+        "enabled": true
+      }
+    ]
+  },
+  "zones": [
+    {"id": "LAN", "name": "Local Network", "networks": [{"id": "LAN_Networks"}]},
+    {"id": "DMZ", "name": "Demilitarized Zone", "networks": [{"id": "DMZ_Servers"}]},
+    {"id": "Internet", "name": "Internet Zone", "networks": [{"id": "Internet"}]},
+    {"id": "Trusted", "name": "Trusted Zone", "networks": [{"id": "LAN_Networks"}]}
+  ],
+  "objects": {
+    "network_groups": [
+      {
+        "id": "LAN_Networks",
+        "name": "LAN Networks",
+        "members": [
+          {"id": "Office_LAN"},
+          {"id": "Guest_LAN"}
+        ]
+      },
+      {
+        "id": "DMZ_Servers",
+        "name": "DMZ Servers",
+        "members": [
+          {"id": "WebServers"},
+          {"id": "DB_Servers"}
+        ]
+      }
+    ],
+    "ip_lists": [
+      {
+        "id": "Office_LAN",
+        "name": "Office LAN",
+        "content": [
+          {"ip": "192.168.1.0/24"},
+          {"ip": "192.168.2.0/24"}
+        ]
+      },
+      {
+        "id": "Guest_LAN",
+        "name": "Guest LAN",
+        "content": [
+          {"ip": "192.168.10.0/24"}
+        ]
+      },
+      {
+        "id": "WebServers",
+        "name": "Web Servers",
+        "content": [
+          {"ip": "10.0.1.10"},
+          {"ip": "10.0.1.11"},
+          {"ip": "10.0.1.12"}
+        ]
+      },
+      {
+        "id": "DB_Servers",
+        "name": "Database Servers",
+        "content": [
+          {"ip": "10.0.1.50"},
+          {"ip": "10.0.1.51"}
+        ]
+      },
+      {
+        "id": "Internet",
+        "name": "Internet",
+        "content": [
+          {"ip": "0.0.0.0/0"}
+        ]
+      }
+    ],
+    "services": [
+      {"id": "HTTP", "name": "HTTP", "protocol": "tcp", "ports": [80]},
+      {"id": "HTTPS", "name": "HTTPS", "protocol": "tcp", "ports": [443]},
+      {"id": "SSH", "name": "SSH", "protocol": "tcp", "ports": [22]},
+      {"id": "TELNET", "name": "Telnet", "protocol": "tcp", "ports": [23]},
+      {"id": "FTP", "name": "FTP", "protocol": "tcp", "ports": [21]},
+      {"id": "DNS", "name": "DNS", "protocol": "udp", "ports": [53]}
+    ],
+    "service_groups": [
+      {
+        "id": "Web_Services",
+        "name": "Web Services",
+        "members": [
+          {"id": "HTTP"},
+          {"id": "HTTPS"}
+        ]
+      }
+    ]
+  }
+}

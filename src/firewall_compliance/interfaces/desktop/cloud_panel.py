@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from firewall_compliance.infrastructure.cloud_public import (
+from firewall_compliance.devices.cloud.cloud_ru.public_client import (
     PLATFORM_RESOURCES,
     PUBLIC_DATA,
     PUBLIC_RESOURCES,
@@ -40,7 +40,7 @@ from firewall_compliance.infrastructure.cloud_public import (
     PublicCloudClient,
     PublicSelection,
 )
-from firewall_compliance.infrastructure.cloud_vmware import (
+from firewall_compliance.devices.cloud.cloud_ru.vmware.client import (
     API_VERSIONS,
     DATA_TYPES,
     RESOURCE_TYPES,
@@ -310,7 +310,7 @@ class CloudPanel:
         self._refresh_history(scan_id)
         self.collection_tabs.setCurrentIndex(1)
 
-    def set_project(self, project_id: str | None) -> None:
+    def set_project(self, project_id: str | None, *, refresh_history: bool = True) -> None:
         self.project_id = project_id
         self.analysis_status.setText("Выберите сохранённый сбор для проверки правил.")
         for public_form in self.public_forms.values():
@@ -341,7 +341,11 @@ class CloudPanel:
             if scan_config
             else f"Сначала настройте подключение Cloud.ru {platform.capitalize()}."
         )
-        self._refresh_history()
+        if refresh_history:
+            self._refresh_history()
+        else:
+            # Clear the old project's selection without reading or formatting saved scans.
+            self._fill_history([])
         self._set_busy(self.busy)
 
     def _config(self) -> VMwareConfig:
@@ -734,10 +738,24 @@ class CloudPanel:
         self.scan_status.setText("Отмена запрошена. Ожидается завершение текущего API-запроса.")
 
     def _refresh_history(self, selected_id: str | None = None) -> None:
+        scans = self.store.list_cloud_scans(self.project_id) if self.project_id else []
+        self._fill_history(scans, selected_id)
+        self.on_history_changed()
+
+    def refresh_history(self, scans: list[dict[str, Any]] | None = None) -> None:
+        """Populate the visible history from a shared snapshot without change notifications."""
+        if scans is None:
+            scans = self.store.list_cloud_scans(self.project_id) if self.project_id else []
+        selected = self.history.currentData()
+        self._fill_history(scans, selected["id"] if selected else None)
+
+    def _fill_history(
+        self, scans: list[dict[str, Any]], selected_id: str | None = None
+    ) -> None:
         self.history.blockSignals(True)
         self.history.clear()
         if self.project_id:
-            for scan in self.store.list_cloud_scans(self.project_id):
+            for scan in scans:
                 platform_name = scan["config"].get("platform", "vmware").capitalize()
                 self.history.addItem(
                     f"{scan['created_at']} · {platform_name} · {SCAN_STATES[scan['state']]}",
@@ -756,7 +774,6 @@ class CloudPanel:
                 self.history.setCurrentIndex(index)
         self.history.blockSignals(False)
         self._show_scan()
-        self.on_history_changed()
 
     def _show_scan(self, *_: Any) -> None:
         scan = self.history.currentData()

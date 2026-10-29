@@ -67,8 +67,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from firewall_compliance.analysis.management_checks import MANAGEMENT_CHECKS
 from firewall_compliance.application.cloud_analysis import vmware_device_id
+from firewall_compliance.checks.management.rules import MANAGEMENT_CHECKS
 from firewall_compliance.domain.revision import DeviceRevision
 from firewall_compliance.domain.source import SourceLocation
 from firewall_compliance.infrastructure.source_reader import FileSourceReader
@@ -118,6 +118,10 @@ from firewall_compliance.interfaces.desktop.organization_lock import WorkspaceBu
 from firewall_compliance.interfaces.desktop.policy_exposure_settings import PolicyExposureSettings
 from firewall_compliance.interfaces.desktop.policy_scope_settings import PolicyScopeSettings
 from firewall_compliance.interfaces.desktop.project_map import build_project_map
+from firewall_compliance.interfaces.desktop.project_snapshot import (
+    ProjectSnapshot,
+    read_project_snapshot,
+)
 from firewall_compliance.interfaces.desktop.qt_acl_map import (
     AclMapState,
     AclMapWidget,
@@ -328,13 +332,18 @@ class MainWindow(QMainWindow):
             [Callable[[], tuple[AnalysisSession, ...]], JobRunner], QWidget
         ]
         | None = None,
+        defer_startup: bool = False,
     ) -> None:
         super().__init__()
-        if store is None:
-            from firewall_compliance.interfaces.desktop.project_store import ProjectStore
-
-            store = ProjectStore()
         self.store = store
+        self._defer_startup = defer_startup
+        self._ui_ready = False
+        self._project_load_ticket: object | None = None
+        self._project_snapshot: ProjectSnapshot | None = None
+        self._snapshot_token: tuple[Any, ...] | None = None
+        self._dirty_pages: set[str] = set(SECTION_IDS)
+        self._map_pending_item: dict[str, Any] | None = None
+        self._advanced_widget_factory = advanced_widget_factory
         self._inventory_evidence_token: tuple[Any, ...] | None = None
         self._inventory_runs: list[dict[str, Any]] = []
         self._inventory_scans: list[dict[str, Any]] = []
@@ -383,11 +392,80 @@ class MainWindow(QMainWindow):
         if screen is not None:
             available = screen.availableGeometry()
             self.resize(min(1600, available.width() - 40), min(940, available.height() - 60))
-        self._build(advanced_widget_factory)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.poll_jobs)
         self.timer.start(80)
-        self.refresh_projects()
+        if defer_startup:
+            self._show_startup_loading("Открываем локальное хранилище проектов…")
+            QTimer.singleShot(0, self._load_workspace)
+        else:
+            if self.store is None:
+                from firewall_compliance.interfaces.desktop.project_store import ProjectStore
+
+                self.store = ProjectStore()
+            self._finish_workspace()
+
+    def _show_startup_loading(self, message: str, *, failed: bool = False) -> None:
+        loading = QWidget()
+        layout = QVBoxLayout(loading)
+        layout.addStretch()
+        self._startup_message = _label(message)
+        layout.addWidget(self._startup_message)
+        self._startup_indicator = QProgressBar()
+        self._startup_indicator.setRange(0, 0)
+        self._startup_indicator.setVisible(not failed)
+        layout.addWidget(self._startup_indicator)
+        self._startup_retry = _button("Повторить загрузку", self._load_workspace)
+        self._startup_retry.setVisible(failed)
+        layout.addWidget(self._startup_retry)
+        layout.addStretch()
+        self.setCentralWidget(loading)
+
+    def _load_workspace(self) -> None:
+        if self._closed:
+            return
+        self._startup_retry.hide()
+        self._startup_indicator.show()
+        self._startup_message.setText("Открываем локальное хранилище проектов…")
+
+        def work() -> object:
+            from firewall_compliance.interfaces.desktop.project_store import ProjectStore
+
+            store = self.store if self.store is not None else ProjectStore()
+            return store, store.list_projects()
+
+        def done(value: object) -> None:
+            if self._closed:
+                return
+            if not isinstance(value, tuple):
+                self._show_startup_loading(
+                    "Не удалось открыть хранилище. Проверьте доступ к папке FirewallCompliance.",
+                    failed=True,
+                )
+                return
+            self.store, projects = value
+            try:
+                self._finish_workspace(projects)
+            except (OSError, sqlite3.Error, ValueError):
+                self._ui_ready = False
+                for name in ("controls_panel", "governance_panel"):
+                    panel = getattr(self, name, None)
+                    if panel is not None:
+                        panel.shutdown()
+                cloud = getattr(self, "cloud_panel", None)
+                if cloud is not None:
+                    cloud.close()
+                self._show_startup_loading(
+                    "Не удалось подготовить рабочее место. Проверьте локальное хранилище.",
+                    failed=True,
+                )
+
+        self.runner.submit(work, done)
+
+    def _finish_workspace(self, projects: list[dict[str, Any]] | None = None) -> None:
+        self._build(self._advanced_widget_factory)
+        self._ui_ready = True
+        self.refresh_projects(projects=projects)
 
     def _build(self, advanced_factory: Any) -> None:
         central = QWidget()
@@ -752,6 +830,9 @@ class MainWindow(QMainWindow):
                 )
 
     def _refresh_project_map(self) -> None:
+        if self._defer_startup and self.current_section_id != "map":
+            self._dirty_pages.add("map")
+            return
         resources, _, scans = self._inventory_context()
         archived = {
             identity
@@ -809,6 +890,11 @@ class MainWindow(QMainWindow):
 
     def _refresh_map_items(self, preferred_item: dict[str, Any] | None = None) -> None:
         """Use saved payloads or exact live item IDs, never reread a source."""
+        if self._defer_startup and self.current_section_id != "map":
+            self._dirty_pages.add("map")
+            if preferred_item is not None:
+                self._map_pending_item = preferred_item
+            return
         previous_id = self.map_result_selector.currentData()
         items = [] if self._batch_active else self._items()
         self._map_items = {str(item["id"]): item for item in items}
@@ -846,6 +932,7 @@ class MainWindow(QMainWindow):
             self._refresh_project_map()
 
     def _clear_map_selection(self) -> None:
+        self._dirty_pages.add("map")
         previous_block = self.map_result_selector.blockSignals(True)
         self.map_result_selector.setCurrentIndex(0)
         self.map_result_selector.blockSignals(previous_block)
@@ -1065,9 +1152,10 @@ class MainWindow(QMainWindow):
         if not project_id or not callable(listing):
             self._fill_saved_acl_maps([], [], previous, previous_run)
             return
+        runs = self._project_runs()
 
         def work() -> object:
-            return listing(project_id), self.store.list_runs(project_id)
+            return listing(project_id), runs
 
         def done(value: object) -> None:
             if (
@@ -1130,7 +1218,7 @@ class MainWindow(QMainWindow):
             return
 
         def work() -> object:
-            run = self.store.get_run(run_id)
+            run = self._get_run(run_id)
             if run.get("project_id") != project_id:
                 raise ValueError("Run project differs")
             return run
@@ -1817,11 +1905,15 @@ class MainWindow(QMainWindow):
         actions = QHBoxLayout()
         self.folder_button = _button("Добавить папку", self.choose_folder, primary=True)
         self.files_button = _button("Добавить файлы", self.choose_files)
+        self.ideco_button = _button("Ideco · только чтение", self.choose_ideco)
+        self.usergate_button = _button("UserGate · только чтение", self.choose_usergate)
         self.clear_button = _button("Очистить список", self.clear_staged)
         self.remove_button = _button("Убрать выбранные", self.remove_staged)
         for button in (
             self.folder_button,
             self.files_button,
+            self.usergate_button,
+            self.ideco_button,
             self.clear_button,
             self.remove_button,
         ):
@@ -2528,16 +2620,8 @@ class MainWindow(QMainWindow):
             self.workspace_history.remember()
         self.current_section_id = section_id
         self.pages.setCurrentIndex(index)
-        if section_id == "home":
-            self._refresh_summary()
-        elif section_id == "devices":
-            self._inventory_context()
-            self.registry_panel.refresh()
-        elif section_id == "reports":
-            self._refresh_analysis_results()
-        if section_id == "map":
-            self._refresh_project_map()
-            self._refresh_saved_acl_maps()
+        if self._ui_ready and not self._loading_settings:
+            self._refresh_page(section_id)
         section = section_for_page(section_id)
         self.section_tabs.blockSignals(True)
         while self.section_tabs.count():
@@ -2616,7 +2700,7 @@ class MainWindow(QMainWindow):
             self.progress_label.setText("Дождитесь завершения текущей проверки.")
             return
         self.workspace_history.remember()
-        runs = self.store.list_runs(self.project_id) if self.project_id else []
+        runs = self._project_runs()
         latest = next((run for run in runs if run.get("finished_at")), None)
         if latest:
             self.load_run(latest["id"])
@@ -2645,20 +2729,26 @@ class MainWindow(QMainWindow):
         elif item.childCount():
             item.setExpanded(not item.isExpanded())
 
-    def refresh_projects(self, selected_id: str | None = None) -> None:
+    def refresh_projects(
+        self,
+        selected_id: str | None = None,
+        *,
+        projects: list[dict[str, Any]] | None = None,
+        load_immediately: bool = False,
+    ) -> None:
         self.project_combo.blockSignals(True)
         self.project_combo.clear()
-        for project in self.store.list_projects():
+        for project in self.store.list_projects() if projects is None else projects:
             self.project_combo.addItem(project["name"], project["id"])
         if selected_id:
             self.project_combo.setCurrentIndex(self.project_combo.findData(selected_id))
         self.project_combo.blockSignals(False)
-        self._project_changed()
+        self._project_changed(load_immediately=load_immediately)
 
     def create_project(self, name: str) -> str:
         result = self.store.create_project(name)
         project_id = result["id"] if isinstance(result, dict) else result
-        self.refresh_projects(str(project_id))
+        self.refresh_projects(str(project_id), load_immediately=True)
         return str(project_id)
 
     def _create_project_dialog(self) -> None:
@@ -2666,14 +2756,90 @@ class MainWindow(QMainWindow):
         if accepted and name.strip():
             self.create_project(name.strip())
 
-    def _project_changed(self, *_: Any) -> None:
+    def _project_changed(self, *_: Any, load_immediately: bool = False) -> None:
+        project_id = self.project_combo.currentData()
+        ticket = object()
+        self._project_load_ticket = ticket
+        self._loading_settings = True
+        self._restore_busy = True
+        self._set_controls_busy(True)
+        self.pages.setEnabled(False)
+        self.navigation.setEnabled(False)
+        self.settings_button.setEnabled(False)
+        self.add_data_button.setEnabled(False)
+        self.prepare_button.setEnabled(False)
+        self.progress.setRange(0, 0)
+        self.progress.show()
+        self.cancel_button.setEnabled(False)
+        self.progress_label.setText("Загружаем проект…")
+
+        def work() -> object:
+            if not project_id:
+                return None, self._database_token(None)
+            snapshot, token = self._read_stable_snapshot(project_id)
+            self.store.resource_registry.reconcile(
+                project_id, project_observations(snapshot.history, snapshot.scans)
+            )
+            if token != self._database_token(project_id):
+                snapshot, token = self._read_stable_snapshot(project_id)
+            return snapshot, token
+
+        def done(value: object) -> None:
+            if self._closed or self._project_load_ticket is not ticket:
+                return
+            self._restore_busy = False
+            self._set_controls_busy(False)
+            self.pages.setEnabled(True)
+            self.navigation.setEnabled(True)
+            self.settings_button.setEnabled(True)
+            self.add_data_button.setEnabled(True)
+            self.prepare_button.setEnabled(True)
+            self.progress.hide()
+            if isinstance(value, JobError):
+                self._loading_settings = False
+                self.project_combo.blockSignals(True)
+                self.project_combo.setCurrentIndex(self.project_combo.findData(self.project_id))
+                self.project_combo.blockSignals(False)
+                self.progress_label.setText("Не удалось загрузить проект. Выберите проект повторно.")
+                return
+            snapshot, token = value if isinstance(value, tuple) else (None, None)
+            self._project_snapshot = snapshot
+            self._snapshot_token = token
+            self._inventory_evidence_token = token
+            self._inventory_runs = snapshot.history if snapshot is not None else []
+            self._inventory_scans = snapshot.scans if snapshot is not None else []
+            try:
+                self._apply_project_context()
+            except (OSError, sqlite3.Error, ValueError, KeyError):
+                self._loading_settings = False
+                self._restore_busy = True
+                self.pages.setEnabled(False)
+                self.navigation.setEnabled(False)
+                self.settings_button.setEnabled(False)
+                self.add_data_button.setEnabled(False)
+                self.prepare_button.setEnabled(False)
+                self.project_combo.blockSignals(True)
+                self.project_combo.setCurrentIndex(-1)
+                self.project_combo.blockSignals(False)
+                self.progress_label.setText(
+                    "Не удалось восстановить проект. Выберите другой проект или повторите загрузку."
+                )
+                return
+            self.progress_label.setText("Проект загружен. Выберите раздел или добавьте данные.")
+
+        if self._defer_startup and not load_immediately:
+            self.runner.submit(work, done)
+        else:
+            done(work())
+
+    def _apply_project_context(self) -> None:
         self.workspace_history.clear()
         self._loading_settings = True
         self.project_id = self.project_combo.currentData()
         if self.controls_panel is not None:
-            self.controls_panel.set_project_context(self.project_id)
+            self.controls_panel.set_project_context(self.project_id, refresh=not self._defer_startup)
         if self.governance_panel is not None:
-            self.governance_panel.set_project_context(self.project_id)
+            self.governance_panel.set_project_context(self.project_id, refresh=not self._defer_startup)
         self._analysis_network_snapshot = None
         self._analysis_result_active = None
         self._analysis_result_active_id = None
@@ -2695,9 +2861,8 @@ class MainWindow(QMainWindow):
         project_context = getattr(self.advanced_panel, "set_project_context", None)
         if callable(project_context):
             project_context(self.project_id)
-        self._inventory_evidence_token = None
-        self.registry_panel.set_project(self.project_id)
-        self.cloud_panel.set_project(self.project_id)
+        self.registry_panel.set_project(self.project_id, refresh=not self._defer_startup)
+        self.cloud_panel.set_project(self.project_id, refresh_history=not self._defer_startup)
         self.run_id = None
         self.run = None
         for name in self.workspace_history.searches:
@@ -2713,11 +2878,10 @@ class MainWindow(QMainWindow):
             widget.blockSignals(False)
         self.sessions.clear()
         self._map_live_item_ids.clear()
-        self._refresh_map_items()
         self.staged.clear()
         self.notification.hide()
         if self.project_id:
-            project = self.store.get_project(self.project_id)
+            project = self._read_project_snapshot().project
             settings = project.get("settings", {})
             self.management_settings.load_profile(settings.get("management_profile"))
             self.policy_exposure_settings.load_profile(settings.get("policy_exposure_profile"))
@@ -2732,11 +2896,38 @@ class MainWindow(QMainWindow):
             )
             for check_id, checkbox in self.check_boxes.items():
                 checkbox.setChecked(check_id in enabled)
-            runs = self.store.list_runs(self.project_id)
+            runs = self._project_runs()
             if runs:
-                self.load_run(runs[0]["id"])
+                self.run_id = str(runs[0]["id"])
+                self.run = self._get_run(self.run_id)
         self._loading_settings = False
         self._refresh_all()
+
+    def choose_usergate(self) -> None:
+        if not self._ensure_project() or self._batch_active or self._restore_busy:
+            return
+        from firewall_compliance.interfaces.desktop.usergate_dialog import collect_usergate
+
+        project_id = self.project_id
+
+        def saved(path: Path) -> None:
+            if self.project_id == project_id:
+                self.stage_paths([path])
+
+        collect_usergate(self, self.runner, saved)
+
+    def choose_ideco(self) -> None:
+        if not self._ensure_project() or self._batch_active or self._restore_busy:
+            return
+        from firewall_compliance.interfaces.desktop.ideco_dialog import collect_ideco
+
+        project_id = self.project_id
+
+        def saved(path: Path) -> None:
+            if self.project_id == project_id:
+                self.stage_paths([path])
+
+        collect_ideco(self, self.runner, saved)
 
     def choose_folder(self) -> None:
         if not self._ensure_project():
@@ -2748,7 +2939,7 @@ class MainWindow(QMainWindow):
                     path
                     for path in Path(folder).iterdir()
                     if path.is_file()
-                    and path.suffix.lower() in {".txt", ".cfg", ".conf", ".config"}
+                    and path.suffix.lower() in {".txt", ".cfg", ".conf", ".config", ".json"}
                 )
             )
 
@@ -2759,12 +2950,14 @@ class MainWindow(QMainWindow):
             self,
             "Конфигурации",
             "",
-            "Конфигурации (*.txt *.cfg *.conf *.config);;Все файлы (*)",
+            "Конфигурации (*.txt *.cfg *.conf *.config *.json);;Все файлы (*)",
         )
         if paths:
             self.stage_paths([Path(path) for path in paths])
 
     def _ensure_project(self) -> bool:
+        if self._restore_busy:
+            return False
         if self.project_id:
             return True
         self._create_project_dialog()
@@ -2980,6 +3173,8 @@ class MainWindow(QMainWindow):
     def poll_jobs(self) -> None:
         """Доставить завершения backend только в Qt-потоке и обновить счётчик пакета."""
         events = self.runner.poll()
+        if not self._ui_ready or self._loading_settings:
+            return
         terminal_jobs = {
             event.job_id
             for event in events
@@ -3097,14 +3292,14 @@ class MainWindow(QMainWindow):
         if self._batch_active:
             return
         self.run_id = str(run_id)
-        self.run = self.store.get_run(self.run_id)
+        self.run = self._get_run(self.run_id)
         known = {str(item["id"]) for item in self.run.get("items", [])}
         self.sessions = {key: session for key, session in self.sessions.items() if key in known}
         self._map_live_item_ids.intersection_update(known)
         self._refresh_all()
 
-    def _inventory_token(self) -> tuple[Any, ...]:
-        values: list[Any] = [self.project_id]
+    def _database_token(self, project_id: str | None) -> tuple[Any, ...]:
+        values: list[Any] = [project_id]
         for path in (self.store.path, Path(str(self.store.path) + "-wal")):
             try:
                 stat = path.stat()
@@ -3113,6 +3308,42 @@ class MainWindow(QMainWindow):
                 values.extend((None, None))
         return tuple(values)
 
+    def _inventory_token(self) -> tuple[Any, ...]:
+        return self._database_token(self.project_id)
+
+    def _read_stable_snapshot(self, project_id: str) -> tuple[ProjectSnapshot, tuple[Any, ...]]:
+        for _ in range(3):
+            before = self._database_token(project_id)
+            snapshot = read_project_snapshot(self.store, project_id)
+            if before == self._database_token(project_id):
+                return snapshot, before
+        raise ValueError("История проекта изменяется во время загрузки")
+
+    def _read_project_snapshot(self) -> ProjectSnapshot:
+        if self.project_id is None:
+            raise ValueError("Проект не выбран")
+        token = self._inventory_token()
+        snapshot = self._project_snapshot
+        if (
+            snapshot is None
+            or snapshot.project_id != self.project_id
+            or token != self._snapshot_token
+        ):
+            snapshot, token = self._read_stable_snapshot(self.project_id)
+            self._project_snapshot = snapshot
+            self._snapshot_token = token
+        return snapshot
+
+    def _project_runs(self) -> list[dict[str, Any]]:
+        return self._read_project_snapshot().runs if self.project_id else []
+
+    def _get_run(self, run_id: str) -> dict[str, Any]:
+        if self.project_id:
+            run = self._read_project_snapshot().run_by_id.get(run_id)
+            if run is not None:
+                return run
+        return self.store.get_run(run_id)
+
     def _inventory_context(
         self,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -3120,13 +3351,14 @@ class MainWindow(QMainWindow):
             return [], [], []
         token = self._inventory_token()
         if token != self._inventory_evidence_token:
-            runs = self.store.project_history(self.project_id)
-            scans = self._cloud_scans()
+            snapshot = self._read_project_snapshot()
+            runs, scans = snapshot.history, snapshot.scans
             self.store.resource_registry.reconcile(
                 self.project_id, project_observations(runs, scans)
             )
             self._inventory_runs, self._inventory_scans = runs, scans
-            self._inventory_evidence_token = self._inventory_token()
+            # Reconciliation writes must not certify older evidence as current.
+            self._inventory_evidence_token = self._snapshot_token
         return (
             self.store.resource_registry.list_resources(self.project_id, include_archived=True),
             self._inventory_runs,
@@ -3146,7 +3378,7 @@ class MainWindow(QMainWindow):
         source = resource.get("source") or {}
         run_id = source.get("run_id")
         if run_id:
-            run = self.store.get_run(run_id)
+            run = self._get_run(run_id)
             if run["project_id"] == self.project_id:
                 self.load_run(run_id)
                 self.navigate("reports")
@@ -3159,30 +3391,80 @@ class MainWindow(QMainWindow):
             )
 
     def _refresh_all(self) -> None:
-        self._inventory_evidence_token = None
-        self._inventory_context()
-        self.registry_panel.refresh()
+        self._dirty_pages.update(SECTION_IDS)
+        self._map_pending_item = None
         self._refresh_staged()
-        self.refresh_findings()
-        self._refresh_devices()
-        self._refresh_rules()
-        self._refresh_history()
-        self._refresh_summary()
-        self._refresh_analysis_results()
-        self._refresh_saved_acl_maps()
+        if not self._defer_startup:
+            # Embedded consumers keep the synchronous, fully populated window contract.
+            self._inventory_context()
+            self.registry_panel.refresh()
+            self.refresh_findings()
+            self._refresh_devices()
+            self._refresh_rules()
+            self._refresh_history()
+            self._refresh_summary()
+            self._refresh_report_runs()
+            self._refresh_report_summary()
+            self._refresh_analysis_results()
+            self._refresh_saved_acl_maps()
+            self._refresh_map_items()
+            refresher = getattr(self.advanced_panel, "refresh_sessions", None)
+            if callable(refresher):
+                refresher()
+            self._dirty_pages.clear()
+            self._refresh_context()
+            return
+        self._refresh_page(self.current_section_id)
         self._refresh_context()
-        self._refresh_map_items()
-        refresher = getattr(self.advanced_panel, "refresh_sessions", None)
-        if callable(refresher):
-            refresher()
+
+    def _refresh_page(self, page: str) -> None:
+        if self.project_id and self._snapshot_token != self._inventory_token():
+            self._dirty_pages.update(SECTION_IDS)
+        if page not in self._dirty_pages:
+            return
+        self._dirty_pages.discard(page)
+        if page == "home":
+            self._refresh_summary()
+        elif page == "findings":
+            self.refresh_findings()
+        elif page == "devices":
+            self._inventory_context()
+            self.registry_panel.refresh()
+            self._refresh_devices()
+        elif page == "rules":
+            self._refresh_rules()
+        elif page == "history":
+            self._refresh_history()
+        elif page == "reports":
+            self._refresh_report_runs()
+            self._refresh_report_summary()
+            self._refresh_analysis_results()
+            if self.controls_panel is not None:
+                self.controls_panel.refresh_results()
+            if self.governance_panel is not None:
+                self.governance_panel.refresh_results()
+        elif page == "map":
+            pending, self._map_pending_item = self._map_pending_item, None
+            self._refresh_map_items(pending)
+            self._refresh_project_map()
+            self._refresh_saved_acl_maps()
+        elif page == "scans":
+            self.cloud_panel.refresh_history(self._cloud_scans())
+        elif page == "advanced":
+            refresher = getattr(self.advanced_panel, "refresh_sessions", None)
+            if callable(refresher):
+                refresher()
 
     def _items(self) -> list[dict[str, Any]]:
         return self.run.get("items", []) if self.run else []
 
     def _marks(self) -> dict[str, Any]:
-        return self.store.get_run(self.run_id).get("marks", {}) if self.run_id else {}
+        return self._get_run(self.run_id).get("marks", {}) if self.run_id else {}
 
     def refresh_findings(self, *_: Any) -> None:
+        if self._defer_startup and self.current_section_id != "findings":
+            self._dirty_pages.add("findings")
+            return
         items = (
             self._project_devices()
             if self.finding_scope.currentData() == "project"
@@ -3198,7 +3480,7 @@ class MainWindow(QMainWindow):
         self.finding_device.blockSignals(False)
         device = self.finding_device.currentData()
         marks_by_run = {
-            run_id: self.store.get_run(run_id).get("marks", {})
+            run_id: self._get_run(run_id).get("marks", {})
             for run_id in {item["run_id"] for item in items if item.get("run_id")}
         }
         rows, payloads = [], []
@@ -3503,29 +3785,21 @@ class MainWindow(QMainWindow):
                 self.rules_table.scrollTo(index)
 
     def _project_devices(self) -> list[dict[str, Any]]:
-        return self.store.list_project_devices(self.project_id) if self.project_id else []
+        return self._read_project_snapshot().devices if self.project_id else []
 
     def _cloud_scans(self) -> list[dict[str, Any]]:
-        return self.store.list_cloud_scans(self.project_id) if self.project_id else []
+        return self._read_project_snapshot().scans if self.project_id else []
 
     def _cloud_history_changed(self) -> None:
         self._inventory_evidence_token = None
         if not self._loading_settings:
-            self._inventory_context()
-            self.registry_panel.refresh()
-            self.refresh_findings()
-            self._refresh_devices()
-            self._refresh_rules()
-            self._refresh_history()
-            self._refresh_summary()
-            self._refresh_project_map()
-            self._refresh_map_items()
+            self._refresh_all()
 
     def _open_cloud_analysis(self, run_id: str) -> None:
         if self._batch_active or self._restore_busy:
             self.progress_label.setText("Дождитесь завершения текущей проверки.")
             return
-        run = self.store.get_run(run_id)
+        run = self._get_run(run_id)
         if run["project_id"] != self.project_id:
             return
         self.load_run(run_id)
@@ -3560,6 +3834,9 @@ class MainWindow(QMainWindow):
             self.navigate("reports", remember=False)
 
     def _refresh_devices(self, *_: Any) -> None:
+        if self._defer_startup and self.current_section_id != "devices":
+            self._dirty_pages.add("devices")
+            return
         self._refresh_context()
         self._clear_map_selection()
         rows: list[tuple[Any, ...]] = []
@@ -3592,7 +3869,7 @@ class MainWindow(QMainWindow):
                     )
             items = [*(item for item in items if not item.get("cloud_origin")), *inventory]
             error_runs = (
-                [self.store.get_run(run["id"]) for run in self.store.list_runs(self.project_id)]
+                self._read_project_snapshot().history
                 if self.project_id
                 else []
             )
@@ -3842,6 +4119,9 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_rules(self, *_: Any) -> None:
+        if self._defer_startup and self.current_section_id != "rules":
+            self._dirty_pages.add("rules")
+            return
         self._refresh_context()
         rows, payloads = [], []
         cloud_count = 0
@@ -3958,6 +4238,10 @@ class MainWindow(QMainWindow):
             )
 
     def _refresh_summary(self) -> None:
+        if self._defer_startup and self.current_section_id != "home":
+            self._dirty_pages.add("home")
+            self._dirty_pages.add("reports")
+            return
         resources, history, saved_scans = self._inventory_context()
         self.compact_dashboard.refresh(
             build_dashboard(
@@ -3999,14 +4283,7 @@ class MainWindow(QMainWindow):
         self.vendor_model.replace(
             [(vendor_labels.get(key, key), count) for key, count in sorted(vendors.items())]
         )
-        runs = self.store.list_runs(self.project_id) if self.project_id else []
-        self.report_run.blockSignals(True)
-        self.report_run.clear()
-        for run in runs:
-            self.report_run.addItem(f"{run['created_at']} · {run['id']}", run["id"])
-        self.report_run.setCurrentIndex(self.report_run.findData(self.run_id))
-        self.report_run.setEnabled(not self._batch_active and not self._restore_busy)
-        self.report_run.blockSignals(False)
+        runs = self._project_runs()
         operations = project_operations(runs, scans)[:3]
         self.activity_text.setHtml(
             "<b>Последние операции</b><br>"
@@ -4028,7 +4305,7 @@ class MainWindow(QMainWindow):
             )
             self.coverage_text.setPlainText("Результатов завершённых проверок пока нет.")
         else:
-            latest = self.store.get_run(last["id"])
+            latest = self._get_run(last["id"])
             items = latest["items"]
             states = Counter(item["status"] for item in items)
             findings = Counter(
@@ -4062,6 +4339,17 @@ class MainWindow(QMainWindow):
                 + "</p><p>Ноль находок не доказывает безопасность. "
                 "Частичный разбор ограничивает выводы.</p>"
             )
+
+    def _refresh_report_runs(self) -> None:
+        self.report_run.blockSignals(True)
+        self.report_run.clear()
+        for run in self._project_runs():
+            self.report_run.addItem(f"{run['created_at']} · {run['id']}", run["id"])
+        self.report_run.setCurrentIndex(self.report_run.findData(self.run_id))
+        self.report_run.setEnabled(not self._batch_active and not self._restore_busy)
+        self.report_run.blockSignals(False)
+
+    def _refresh_report_summary(self) -> None:
         if not self.run:
             self.report_summary.setPlainText("Откройте или выполните запуск анализа.")
             return
@@ -4092,7 +4380,10 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_history(self) -> None:
-        runs = self.store.list_runs(self.project_id) if self.project_id else []
+        if self._defer_startup and self.current_section_id != "history":
+            self._dirty_pages.add("history")
+            return
+        runs = self._project_runs()
         operations = project_operations(runs, self._cloud_scans())
         self.history_model.replace(
             [
@@ -4136,7 +4427,7 @@ class MainWindow(QMainWindow):
             )
             return
         runs = [
-            self.store.get_run(run["id"])
+            self._get_run(run["id"])
             for run in sorted(selected, key=lambda run: run.get("created_at", ""))
         ]
 
@@ -4357,6 +4648,11 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         """Отключить поздние callbacks без ожидания выполняющегося worker."""
         self._closed = True
+        if not self._ui_ready:
+            self.timer.stop()
+            self.runner.shutdown()
+            event.accept()
+            return
         if self.controls_panel is not None:
             self.controls_panel.shutdown()
         if self.governance_panel is not None:
@@ -4387,7 +4683,7 @@ def main() -> None:
     app.setOrganizationName("FirewallCompliance")
     apply_theme(app)
     try:
-        window = MainWindow()
+        window = MainWindow(defer_startup=True)
     except (OSError, sqlite3.Error, ValueError):
         QMessageBox.critical(
             None,

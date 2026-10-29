@@ -1,0 +1,8 @@
+{
+  "name": "policy_quality.cfg",
+  "sha256": "94cea6cb6fab6b4fdabe072a92c5bc0cad7153d718ad8ce910cbfe83a0bd2408",
+  "format": "Cisco ASA textual configuration",
+  "format_version": "9.16",
+  "origin": "Специально созданный тестовый сценарий проекта",
+  "contains_customer_data": false
+}

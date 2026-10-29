@@ -9,8 +9,14 @@ from uuid import UUID, uuid4
 
 from firewall_compliance import __version__
 from firewall_compliance.analysis.firewall_assurance import analyze_firewall
-from firewall_compliance.analysis.management_checks import management_checks
-from firewall_compliance.analysis.policy_checks import (
+from firewall_compliance.analysis.revision_diff import compare_device_revisions
+from firewall_compliance.checks.access.exposure import (
+    DangerousServicesCheck,
+    UntrustedAdministrativeAccessCheck,
+)
+from firewall_compliance.checks.access.scope import ExcessiveAccessCheck, PolicyAttachmentCheck
+from firewall_compliance.checks.management.rules import management_checks
+from firewall_compliance.checks.policy_quality.rules import (
     AnyAnyCheck,
     CommentsCheck,
     DisabledRulesCheck,
@@ -22,12 +28,6 @@ from firewall_compliance.analysis.policy_checks import (
     ShadowedRulesCheck,
     UnionShadowedRulesCheck,
 )
-from firewall_compliance.analysis.policy_exposure import (
-    DangerousServicesCheck,
-    UntrustedAdministrativeAccessCheck,
-)
-from firewall_compliance.analysis.policy_scope import ExcessiveAccessCheck, PolicyAttachmentCheck
-from firewall_compliance.analysis.revision_diff import compare_device_revisions
 from firewall_compliance.domain import Device, DeviceRevision, RevisionSource, SourceDocumentKind
 from firewall_compliance.domain.assurance import FirewallAssuranceResult
 from firewall_compliance.domain.configuration import Configuration, Rule

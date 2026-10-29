@@ -75,8 +75,10 @@ def main() -> int:
     # Only enforce boundaries explicitly documented in ARCHITECTURE.md.
     allowed = {
         "domain": {"domain"},
-        "analysis": {"analysis", "domain"},
-        "parsers": {"parsers", "domain"},
+        "analysis": {"analysis", "domain", "checks"},
+        "parsers": {"parsers", "domain", "devices"},
+        "checks": {"checks", "analysis", "domain"},
+        "devices": {"devices", "parsers", "domain", "infrastructure"},
     }
     for name, info in modules.items():
         layer = name.split(".")[1] if name.startswith(PREFIX + ".") else ""

@@ -5,11 +5,11 @@ from uuid import UUID
 
 from pydantic import ConfigDict, model_validator
 
+from firewall_compliance.devices.ngfw.cisco.asa.network import CiscoAsaNetworkParser
 from firewall_compliance.domain import DataStatus, DeviceRevision, ParseIssue, ParseIssueLevel
 from firewall_compliance.domain.base import DomainModel
 from firewall_compliance.domain.revision import CollectionEvidence
 from firewall_compliance.domain.snapshot import freeze_snapshot_fields
-from firewall_compliance.parsers.cisco_asa_network import CiscoAsaNetworkParser
 from firewall_compliance.parsers.contracts import ParseFailure
 from firewall_compliance.parsers.network_contracts import (
     NetworkInterfaceBinding,

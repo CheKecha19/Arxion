@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "firewall-compliance"
-version = "0.3.0"
+version = "0.3.1"
 description = "Локальная система анализа конфигураций сетевого оборудования"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -56,7 +56,8 @@ packages = ["src/firewall_compliance"]
 target-version = "py312"
 line-length = 100
 src = ["src", "scripts"]
-extend-exclude = [".uv-cache", ".venv"]
+cache-dir = "_temp_files/cache/ruff"
+extend-exclude = [".uv-cache", ".venv", "_temp_files"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -65,6 +66,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 known-first-party = ["firewall_compliance"]
 
 [tool.mypy]
+cache_dir = "_temp_files/cache/mypy"
 python_version = "3.12"
 files = ["src"]
 strict = true
@@ -75,3 +77,6 @@ pretty = true
 [[tool.mypy.overrides]]
 module = ["networkx.*"]
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+cache_dir = "_temp_files/cache/pytest"

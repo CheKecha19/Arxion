@@ -1,5 +1,32 @@
 # Harness validation log
 
+## Requested Windows v0.3.1 build — 2026-10-30
+
+Baseline HEAD: 0893237147fd00aed1bae8d54c93192863adafd1 with existing local edits.
+User authorized a local application build and then requested version 0.3.1.
+The already-running 0.3.0 build finished with exit 0 before version edits.
+Updated pyproject.toml, package __version__ and root uv.lock to 0.3.1, then ran
+powershell -ExecutionPolicy Bypass -File scripts/build_desktop.ps1 again: exit 0,
+PyInstaller 6.22.3 / Python 3.12.13 / Windows 10. Full application output:
+dist/FirewallComplience_v0.3.1/FirewallComplience_v0.3.1.exe and _internal.
+Build emitted a missing optional tzdata hidden-import warning. Source/version
+diff and generated file metadata reviewed; no tests, gates, EXE launch or startup
+timing performed. No ZIP, commit, push, tag or GitHub release publication.
+
+## Desktop deferred startup — 2026-10-30
+
+Baseline HEAD: 0893237147fd00aed1bae8d54c93192863adafd1, with existing local edits.
+Source inspection: desktop entrypoint/MainWindow, jobs, SQLite history readers,
+snapshot derivation, map selectors/scenes, cloud/report/registry panels and
+navigation-history restoration. Commands: git status --short, git rev-parse HEAD,
+rg/Get-Content source reads and git diff on scoped application/documentation files.
+Independent read-only review identified and resolved creation-flow, hidden map,
+cache-token and startup-error/close races. SQLite schema, stored JSON and analysis
+semantics unchanged. No local automated checks, tests, profiling, EXE launch or
+build performed under AGENTS.md. No tests added or edited. No CI run validates
+these unpublished local edits; impact/context, CI and native Windows timing remain
+pending. Existing dist/FirewallCompliance binary has not been replaced.
+
 ## Unified distribution rules — 2026-10-29
 
 Baseline HEAD: 49e2bcae3f825e81f133245bf3ee0fecb81ee0dc with existing local edits.
@@ -362,9 +389,74 @@ analysis, dynamic group membership, L7/source-port conditions and effective
 end-to-end/NAT reachability remain unsupported. INFRA-001 metadata/lifecycle and
 DASH-001 redesign are proposals for later work, not implemented by this change.
 
+## Structural migration 2026-10-29
+Baseline beb4d7b. Impact 20261029T065150Z-a604a912. Platform/check implementations relocated; old modules alias new implementations to preserve private/runtime imports. Source and test imports updated. Cache/build data moved where accessible; .pytest_cache access denied. Full gate 20261029T065257Z-a956f527: architecture/diff/format/types passed; test import lint fixed after invocation. Test execution ongoing. Functional subdivision of combined modules and test consolidation remain outstanding. No EXE rebuild or live cloud access.
+
+## Structural refactor completed 2026-10-29
+Baseline beb4d7bab8f348d8a656e04e835f801c075175d3; no commit/push. Devices/checks relocated, policy classes split, management definitions grouped; Advanced/Evolution clients separated with common transport. Tests consolidated under tests/regression and tests/harness, imports updated; test source no longer ignored. Existing controller and policy diff work preserved. Disposable caches and build outputs moved to _temp_files, protected cache move completed with approval. Empty legacy directories archived. Shared Aruba switch grammar stays in a common vendor implementation.
+Final full gate: artifacts/harness/20261029T070657Z-63ca1ae1/results.json. Architecture, diff, format, lint, strict mypy, 5 harness tests, CLI contract, Qt smoke, wheel/sdist and dependency audit pass. Full pytest: 2643 passed, 9 existing version golden failures; goldens untouched. Bandit: 3 pre-existing MEDIUM, 115 LOW; overall gate remains nonzero.
+Windows build scripts/build_desktop.ps1 exit 0. Final dist EXE and ZIP rebuilt from final source. Packaged synthetic --self-test: exit 0, passed=true, frozen=true; report _temp_files/runs/reorganized-exe/smoke-result.json. No clean-OS or visible interactive acceptance claimed. EXE SHA256 7D902D47CFE8F5F25DC20D8DBADCF0DD70BB827CCC5E0943CE5D46A4970F30AB; ZIP SHA256 5AACBCAE42F06AD570AFA97D7DEFDCD4DC71CF63BBB90B9D9A9F815050F568B1.
+
+
+## UserGate read-only integration — 2026-10-29
+
+Baseline beb4d7bab8f348d8a656e04e835f801c075175d3. Impact exit 0:
+20261029T072957Z-eeaba100/impact.json. Architecture exit 0, no layer violations:
+20261029T073307Z-b09737e9/architecture.json. Focused `.venv/Scripts/python -m
+ruff check` and `ruff format --check` pass for new collector/parser/dialog,
+CLI and registry. Focused mypy including qt_app.py (`--follow-imports silent`)
+passes. Inline synthetic checks: read-only collection 6.1.5, write-method rejection,
+XML decoding, registry parsing including missing/unresolved selectors, complete
+application analysis pipeline and Qt dialog construction with three profiles pass.
+No persistent test files added, full suites or real device calls made. Native
+interactive GUI, real HTTP/HTTPS firmware interoperability and executable build
+remain unverified. See specifications/USERGATE.md for supported semantic subset.
+
+## 2026-10-29 Ideco classic v23 API integration
+Baseline SHA: beb4d7bab8f348d8a656e04e835f801c075175d3; unrelated edits preserved.
+Impact: python harness/build impact <Ideco/registry/CLI/Qt paths>, exit 0;
+artifacts/harness/20261029T084304Z-d600a041/impact.json inspected, direct runtime
+consumers registry/analyze_source/stage_paths/JobRunner reviewed.
+.venv/Scripts/python.exe -m ruff check (six relevant files): pass.
+.venv/Scripts/python.exe -m ruff format --check (five relevant files): pass.
+.venv/Scripts/python.exe -m mypy (collector/parser/registry/CLI/dialog,
+--follow-imports=silent): pass, 5 source files. Agent collector/parser checks pass.
+Inline synthetic collector session/filtering, parser unsupported selectors and
+analyze_source: pass. Parent synthetic default-registry -> analyze_source and
+Qt offscreen dialog construction: pass. CLI ideco-collect --help: exit 0.
+python harness/build architecture: exit 0; no layer violations, report
+artifacts/harness/20261029T084447Z-d382a39f/architecture.json inspected.
+Scoped git diff --check: pass. No tests added or full suites run per AGENTS.md.
+No live device, VCE switching, native interactive GUI, EXE build or effective
+policy completeness verified. Interface/routing/statistics collection deferred.
+
 ## Requested EXE build only — 2026-10-29
 
 Baseline HEAD: 49e2bcae3f825e81f133245bf3ee0fecb81ee0dc, with existing local changes.
 Command: scripts/build_desktop.ps1. Exit 0; PyInstaller 6.22.3, Python 3.12.13, Windows.
 Generated dist/FirewallCompliance/FirewallCompliance.exe and dist/FirewallCompliance-windows-x64.zip.
 Per explicit user request, no tests, checks, executable launch or runtime validation performed.
+
+## Windows distribution build — 2026-10-30
+
+User requested local application build without tests. Baseline:
+0893237147fd00aed1bae8d54c93192863adafd1 plus current checkout edits.
+Command: powershell -ExecutionPolicy Bypass -File scripts/build_desktop.ps1.
+Initial attempt failed reading project.version because Windows PowerShell removed
+Python -c string quotes. Changed version reading to pipe source via stdin;
+reviewed the one-line script diff. Repeat build exited 0 (PyInstaller 6.22.3,
+Python 3.12.13). Output: dist/FirewallComplience_v0.3.0/FirewallComplience_v0.3.0.exe
+with _internal and README.txt. PyInstaller reported hidden import tzdata missing.
+No tests, lint, types, harness gates, smoke, executable launch or ZIP creation.
+Runtime/native GUI behavior remains unverified; CI not run for this local build.
+
+## Application rebuild — 2026-10-30
+User explicitly requested local application build. Baseline HEAD:
+0893237147fd00aed1bae8d54c93192863adafd1 with existing checkout changes preserved.
+Reviewed specifications/WINDOWS_DISTRIBUTION.md and scripts/build_desktop.ps1.
+Command: powershell -ExecutionPolicy Bypass -File scripts/build_desktop.ps1.
+Exit 0 (PyInstaller 6.22.3, Python 3.12.13, Windows). Replaced current-version
+bundle dist/FirewallComplience_v0.3.0; EXE, _internal and README.txt present.
+Build warning: hidden import tzdata not found. No source fixes, tests, lint,
+types, harness gates, smoke, EXE launch, CI run or ZIP creation performed.
+Application runtime remains unverified.

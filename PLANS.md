@@ -1,5 +1,28 @@
 # Working plans
 
+## Desktop startup and deferred project views — 2026-10-30
+
+Baseline HEAD: 0893237147fd00aed1bae8d54c93192863adafd1, with existing unrelated edits.
+Scope: qt_app.py, cloud_panel.py, report/registry panels, navigation history and
+a project_snapshot read model. Show the
+window before storage/project loading, load project data on the existing worker,
+reuse one decoded history snapshot, remove duplicate refresh, and populate hidden
+views/maps on navigation. Preserve SQLite/JSON formats and existing analysis,
+report, project-switch and close semantics. Inspect signal callbacks, background
+job tickets, mutations/cache invalidation and saved/live map selection directly.
+No new tests or local automated checks/builds under current AGENTS.md policy.
+CI impact/context and Windows runtime timing remain pending publication, which
+this task does not authorize. Completed: same-window loading shell, background
+storage/project reads with indeterminate progress and retry, one shared decoded
+snapshot with stable DB/WAL file tokens, single project refresh and lazy visible
+page population/maps. Existing explicit-store/embedded default retains its
+synchronous populated-window contract; the desktop entrypoint opts into deferred
+startup. Reviewed close-before-load, partial construction cleanup, initial project
+creation, map invalidation, report/scan callbacks and history selection restoration.
+Independent source review findings resolved. No automated checks or new tests;
+actual startup timings, CI and rebuilt Windows EXE remain unverified. Existing
+checkout and unrelated edits preserved.
+
 ## Unified Windows distribution — 2026-10-29
 
 Scope: unify Windows packaging and its specification, preserving unrelated edits.
@@ -414,3 +437,48 @@ or release publication were performed.
 - Required tests, manual checks and expected baseline failures:
 - Review findings, actual results and unresolved issues:
 - Decision/context documents updated:
+
+## Structural refactor 2026-10-29
+User authorized devices/checks packages and temporary-data separation. Baseline beb4d7b; preserve existing untracked controller/diff work. Move implementations with compatibility imports; preserve JSON/SQLite/check IDs and runtime behavior. Validate architecture and full gate; do not refresh goldens. Tests remain durable source under tests; caches are disposable.
+
+Continuation: consolidate tests/regression and tests/harness; split policy classes into access, attachments, rule_hygiene, policy_quality and governance, management catalogues into access/snmp/logging/time. Split Advanced/Evolution clients with shared transport. Build EXE using _temp_files/build/desktop. Windows sandbox temp access failures require elevated test invocation; preserve golden baseline.
+
+## Structural refactor completed 2026-10-29
+Baseline beb4d7bab8f348d8a656e04e835f801c075175d3; no commit/push. Devices/checks relocated, policy classes split, management definitions grouped; Advanced/Evolution clients separated with common transport. Tests consolidated under tests/regression and tests/harness, imports updated; test source no longer ignored. Existing controller and policy diff work preserved. Disposable caches and build outputs moved to _temp_files, protected cache move completed with approval. Empty legacy directories archived. Shared Aruba switch grammar stays in a common vendor implementation.
+Final full gate: artifacts/harness/20261029T070657Z-63ca1ae1/results.json. Architecture, diff, format, lint, strict mypy, 5 harness tests, CLI contract, Qt smoke, wheel/sdist and dependency audit pass. Full pytest: 2643 passed, 9 existing version golden failures; goldens untouched. Bandit: 3 pre-existing MEDIUM, 115 LOW; overall gate remains nonzero.
+Windows build scripts/build_desktop.ps1 exit 0. Final dist EXE and ZIP rebuilt from final source. Packaged synthetic --self-test: exit 0, passed=true, frozen=true; report _temp_files/runs/reorganized-exe/smoke-result.json. No clean-OS or visible interactive acceptance claimed. EXE SHA256 7D902D47CFE8F5F25DC20D8DBADCF0DD70BB827CCC5E0943CE5D46A4970F30AB; ZIP SHA256 5AACBCAE42F06AD570AFA97D7DEFDCD4DC71CF63BBB90B9D9A9F815050F568B1.
+
+
+## UserGate read-only integration, 2026-10-29
+
+Baseline: beb4d7bab8f348d8a656e04e835f801c075175d3. User approved implementation,
+clarified minimum 6.1.5 and forbids changes to NGFW configuration.
+Scope: allowlisted XML-RPC reader, conservative snapshot parser/default registry,
+CLI collection, desktop background dialog and JSON file staging.
+Impact: artifacts/harness/20261029T072957Z-eeaba100/impact.json. Direct consumers
+reviewed: CLI analyze, parser registry, desktop staging/backend and JobRunner.
+No SQLite/domain migration. Additive source JSON format. Preserve unrelated edits.
+Login/logout only manage API sessions; remaining methods read data. No fallback
+from verified HTTPS to HTTP. Missing/unsupported semantics remain explicit.
+Focused Ruff/mypy and inline synthetic collection/parser checks pass; no new tests,
+no full suites, no live device access. Scope and limits: specifications/USERGATE.md.
+
+## Ideco NGFW v23 integration, 2026-10-29
+Baseline beb4d7bab8f348d8a656e04e835f801c075175d3; preserve existing unrelated changes.
+Scope: verified HTTPS read-only classic VCE collector, additive arxion-ideco-v1 JSON,
+conservative parser, default registry, CLI and desktop background collection.
+Impact: artifacts/harness/20261029T084304Z-d600a041/impact.json. Runtime consumers:
+CLI analyze, Qt stage_paths, JobRunner, canonical findings/maps/report persistence.
+No domain/SQLite migration. No claim of full effective policy or atomic snapshot.
+Unsupported selectors retain explicit unknown/unsupported status. No live access,
+new tests, full suites, commits or publication. Verify focused Ruff/mypy, synthetic
+in-memory parse/collection, CLI help, Qt imports and architecture boundaries.
+
+Implementation complete: infrastructure/ideco.py, parsers/ideco.py, default registry,
+CLI ideco-collect and desktop Ideco button/dialog. Guide: specifications/IDECO.md.
+Focused Ruff lint/format and strict mypy pass; inline synthetic collector session,
+parser/analysis, negation/unknown-selector checks pass. CLI help and offscreen Qt
+dialog construction pass. Architecture reports no layer violations:
+artifacts/harness/20261029T084447Z-d382a39f/architecture.json. No new tests/full suite,
+no live device access. Routing/interfaces/counters/journals deferred; no effective
+policy, verified rule order or native interactive GUI acceptance claim.

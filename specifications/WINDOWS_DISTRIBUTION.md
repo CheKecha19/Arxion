@@ -10,7 +10,7 @@
   `FirewallComplience` фиксировано. Версия автоматически берётся из
   `[project].version` в `pyproject.toml`.
 - EXE: `FirewallComplience_v<версия>.exe` внутри этой папки. Текущий пример:
-  `dist/FirewallComplience_v0.3.0/FirewallComplience_v0.3.0.exe`.
+  `dist/FirewallComplience_v0.3.1/FirewallComplience_v0.3.1.exe`.
 - Повторная сборка той же версии перезаписывает существующую папку и EXE.
   Суффиксы фич, дат, копий, `ArubaUpdate`, `ArxionCLI` и произвольные варианты
   имени запрещены. Перед перезаписью приложение нужно закрыть.

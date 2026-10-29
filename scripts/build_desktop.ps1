@@ -33,7 +33,7 @@ $previousBuildPath = $env:PATH
 try {
     # Сторонние ICU DLL из PATH не должны подменять системный ICU, используемый Qt.
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$projectRoot\.venv\Scripts"
-    $versionOutput = & $pythonPath -c 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])'
+    $versionOutput = 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])' | & $pythonPath -
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось прочитать версию проекта.' }
     $version = ([string]$versionOutput).Trim()
     if ($version -notmatch '^[0-9][A-Za-z0-9.!+_-]*$') {

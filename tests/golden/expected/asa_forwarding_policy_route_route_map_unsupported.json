@@ -1,0 +1,1137 @@
+{
+  "context": {
+    "acls": [
+      {
+        "complete": false,
+        "configuration_id": "00000000-0000-4000-8000-000000000002",
+        "location": {
+          "location": {
+            "line_end": 17,
+            "line_start": 17,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "policy_route_route_map_unsupported.cfg"
+          },
+          "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        },
+        "policy_id": "PBR_CLASS",
+        "reference": null,
+        "rules": [
+          {
+            "action": "deny",
+            "configuration_id": "00000000-0000-4000-8000-000000000002",
+            "description": null,
+            "description_status": "absent",
+            "destination_status": "known",
+            "destination_zone": null,
+            "destinations": [
+              {
+                "cidrs": [
+                  "198.51.100.20/32"
+                ],
+                "description": null,
+                "endpoint_id": "host:198.51.100.20",
+                "fqdn": null,
+                "ip_ranges": [],
+                "kind": "host",
+                "name": "198.51.100.20",
+                "resolution_status": "known",
+                "zone": null
+              }
+            ],
+            "enabled": true,
+            "logging_enabled": false,
+            "logging_status": "known",
+            "match_status": "known",
+            "name": "PBR_CLASS line 17",
+            "owner": null,
+            "policy_direction": null,
+            "policy_id": "PBR_CLASS",
+            "policy_semantics": "first_match",
+            "rule_id": "asa:3f2218464418:PBR_CLASS:17",
+            "sequence": 17,
+            "service_status": "known",
+            "services": [
+              {
+                "description": null,
+                "name": "tcp",
+                "port_ranges": [
+                  {
+                    "end": 443,
+                    "start": 443
+                  }
+                ],
+                "protocol": "tcp",
+                "resolution_status": "known",
+                "service_id": "protocol:tcp"
+              }
+            ],
+            "source_location": {
+              "line_end": null,
+              "line_start": 17,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_status": "known",
+            "source_zone": null,
+            "sources": [
+              {
+                "cidrs": [
+                  "10.77.0.11/32"
+                ],
+                "description": null,
+                "endpoint_id": "host:10.77.0.11",
+                "fqdn": null,
+                "ip_ranges": [],
+                "kind": "host",
+                "name": "10.77.0.11",
+                "resolution_status": "known",
+                "zone": null
+              }
+            ],
+            "zone_status": "unknown"
+          },
+          {
+            "action": "allow",
+            "configuration_id": "00000000-0000-4000-8000-000000000002",
+            "description": null,
+            "description_status": "absent",
+            "destination_status": "known",
+            "destination_zone": null,
+            "destinations": [
+              {
+                "cidrs": [
+                  "198.51.100.20/32"
+                ],
+                "description": null,
+                "endpoint_id": "host:198.51.100.20",
+                "fqdn": null,
+                "ip_ranges": [],
+                "kind": "host",
+                "name": "198.51.100.20",
+                "resolution_status": "known",
+                "zone": null
+              }
+            ],
+            "enabled": true,
+            "logging_enabled": false,
+            "logging_status": "known",
+            "match_status": "known",
+            "name": "PBR_CLASS line 18",
+            "owner": null,
+            "policy_direction": null,
+            "policy_id": "PBR_CLASS",
+            "policy_semantics": "first_match",
+            "rule_id": "asa:3f2218464418:PBR_CLASS:18",
+            "sequence": 18,
+            "service_status": "known",
+            "services": [
+              {
+                "description": null,
+                "name": "tcp",
+                "port_ranges": [
+                  {
+                    "end": 443,
+                    "start": 443
+                  }
+                ],
+                "protocol": "tcp",
+                "resolution_status": "known",
+                "service_id": "protocol:tcp"
+              }
+            ],
+            "source_location": {
+              "line_end": null,
+              "line_start": 18,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_status": "known",
+            "source_zone": null,
+            "sources": [
+              {
+                "cidrs": [
+                  "10.77.0.10/32"
+                ],
+                "description": null,
+                "endpoint_id": "host:10.77.0.10",
+                "fqdn": null,
+                "ip_ranges": [],
+                "kind": "host",
+                "name": "10.77.0.10",
+                "resolution_status": "known",
+                "zone": null
+              }
+            ],
+            "zone_status": "unknown"
+          }
+        ],
+        "semantics": "first_match",
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "configuration_id": "00000000-0000-4000-8000-000000000002",
+        "location": {
+          "location": {
+            "line_end": 23,
+            "line_start": 23,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "policy_route_route_map_unsupported.cfg"
+          },
+          "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        },
+        "policy_id": "INSIDE_IN",
+        "reference": null,
+        "rules": [
+          {
+            "action": "allow",
+            "configuration_id": "00000000-0000-4000-8000-000000000002",
+            "description": null,
+            "description_status": "absent",
+            "destination_status": "known",
+            "destination_zone": null,
+            "destinations": [
+              {
+                "cidrs": [
+                  "198.51.100.20/32"
+                ],
+                "description": null,
+                "endpoint_id": "host:198.51.100.20",
+                "fqdn": null,
+                "ip_ranges": [],
+                "kind": "host",
+                "name": "198.51.100.20",
+                "resolution_status": "known",
+                "zone": null
+              }
+            ],
+            "enabled": true,
+            "logging_enabled": false,
+            "logging_status": "known",
+            "match_status": "known",
+            "name": "INSIDE_IN line 23",
+            "owner": null,
+            "policy_direction": null,
+            "policy_id": "INSIDE_IN",
+            "policy_semantics": "first_match",
+            "rule_id": "asa:3f2218464418:INSIDE_IN:23",
+            "sequence": 23,
+            "service_status": "known",
+            "services": [
+              {
+                "description": null,
+                "name": "tcp",
+                "port_ranges": [
+                  {
+                    "end": 443,
+                    "start": 443
+                  }
+                ],
+                "protocol": "tcp",
+                "resolution_status": "known",
+                "service_id": "protocol:tcp"
+              }
+            ],
+            "source_location": {
+              "line_end": null,
+              "line_start": 23,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_status": "known",
+            "source_zone": null,
+            "sources": [
+              {
+                "cidrs": [
+                  "10.77.0.10/32"
+                ],
+                "description": null,
+                "endpoint_id": "host:10.77.0.10",
+                "fqdn": null,
+                "ip_ranges": [],
+                "kind": "host",
+                "name": "10.77.0.10",
+                "resolution_status": "known",
+                "zone": null
+              }
+            ],
+            "zone_status": "unknown"
+          }
+        ],
+        "semantics": "first_match",
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "configuration_id": "00000000-0000-4000-8000-000000000002",
+        "location": {
+          "location": {
+            "line_end": 24,
+            "line_start": 24,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "policy_route_route_map_unsupported.cfg"
+          },
+          "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        },
+        "policy_id": "GLOBAL_IN",
+        "reference": null,
+        "rules": [
+          {
+            "action": "allow",
+            "configuration_id": "00000000-0000-4000-8000-000000000002",
+            "description": null,
+            "description_status": "absent",
+            "destination_status": "known",
+            "destination_zone": null,
+            "destinations": [
+              {
+                "cidrs": [
+                  "198.51.100.20/32"
+                ],
+                "description": null,
+                "endpoint_id": "host:198.51.100.20",
+                "fqdn": null,
+                "ip_ranges": [],
+                "kind": "host",
+                "name": "198.51.100.20",
+                "resolution_status": "known",
+                "zone": null
+              }
+            ],
+            "enabled": true,
+            "logging_enabled": false,
+            "logging_status": "known",
+            "match_status": "known",
+            "name": "GLOBAL_IN line 24",
+            "owner": null,
+            "policy_direction": null,
+            "policy_id": "GLOBAL_IN",
+            "policy_semantics": "first_match",
+            "rule_id": "asa:3f2218464418:GLOBAL_IN:24",
+            "sequence": 24,
+            "service_status": "known",
+            "services": [
+              {
+                "description": null,
+                "name": "tcp",
+                "port_ranges": [
+                  {
+                    "end": 443,
+                    "start": 443
+                  }
+                ],
+                "protocol": "tcp",
+                "resolution_status": "known",
+                "service_id": "protocol:tcp"
+              }
+            ],
+            "source_location": {
+              "line_end": null,
+              "line_start": 24,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_status": "known",
+            "source_zone": null,
+            "sources": [
+              {
+                "cidrs": [
+                  "10.77.0.10/32"
+                ],
+                "description": null,
+                "endpoint_id": "host:10.77.0.10",
+                "fqdn": null,
+                "ip_ranges": [],
+                "kind": "host",
+                "name": "10.77.0.10",
+                "resolution_status": "known",
+                "zone": null
+              }
+            ],
+            "zone_status": "unknown"
+          }
+        ],
+        "semantics": "first_match",
+        "status": "unknown"
+      }
+    ],
+    "address_family": "ipv4",
+    "bindings": [
+      {
+        "direction": "in",
+        "interface_id": "GigabitEthernet0/0",
+        "location": {
+          "location": {
+            "line_end": 25,
+            "line_start": 25,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "policy_route_route_map_unsupported.cfg"
+          },
+          "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        },
+        "policy_id": "INSIDE_IN"
+      },
+      {
+        "direction": "global",
+        "interface_id": null,
+        "location": {
+          "location": {
+            "line_end": 26,
+            "line_start": 26,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "policy_route_route_map_unsupported.cfg"
+          },
+          "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        },
+        "policy_id": "GLOBAL_IN"
+      }
+    ],
+    "configuration_id": "00000000-0000-4000-8000-000000000002",
+    "context_mode": "single",
+    "device_context": null,
+    "device_id": "synthetic-policy_route_route_map_unsupported",
+    "firewall_mode": "routed",
+    "flow": null,
+    "imported_at": "2026-10-10T09:02:00Z",
+    "interfaces": [
+      {
+        "interface_id": "GigabitEthernet0/0",
+        "label": "inside",
+        "location": {
+          "location": {
+            "line_end": 8,
+            "line_start": 4,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "policy_route_route_map_unsupported.cfg"
+          },
+          "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        },
+        "physical_l3": true,
+        "security_level": 100,
+        "security_status": "known"
+      },
+      {
+        "interface_id": "GigabitEthernet0/1",
+        "label": "outside",
+        "location": {
+          "location": {
+            "line_end": 15,
+            "line_start": 11,
+            "object_id": null,
+            "object_path": null,
+            "source_name": "policy_route_route_map_unsupported.cfg"
+          },
+          "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        },
+        "physical_l3": true,
+        "security_level": 0,
+        "security_status": "known"
+      }
+    ],
+    "inventories": [
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "interfaces",
+        "item_count": 2,
+        "locations": [
+          {
+            "location": {
+              "line_end": 8,
+              "line_start": 4,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+          },
+          {
+            "location": {
+              "line_end": 15,
+              "line_start": 11,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+          }
+        ],
+        "reference": null,
+        "source_document_ids": [
+          "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "acl_definitions",
+        "item_count": 3,
+        "locations": [
+          {
+            "location": {
+              "line_end": 17,
+              "line_start": 17,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+          },
+          {
+            "location": {
+              "line_end": 23,
+              "line_start": 23,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+          },
+          {
+            "location": {
+              "line_end": 24,
+              "line_start": 24,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+          }
+        ],
+        "reference": null,
+        "source_document_ids": [
+          "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "acl_bindings",
+        "item_count": 2,
+        "locations": [
+          {
+            "location": {
+              "line_end": 25,
+              "line_start": 25,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+          },
+          {
+            "location": {
+              "line_end": 26,
+              "line_start": 26,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+          }
+        ],
+        "reference": null,
+        "source_document_ids": [
+          "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "same_security",
+        "item_count": 2,
+        "locations": [],
+        "reference": null,
+        "source_document_ids": [
+          "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "vpn_bypass",
+        "item_count": 1,
+        "locations": [],
+        "reference": null,
+        "source_document_ids": [
+          "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "configured_nat",
+        "item_count": 0,
+        "locations": [],
+        "reference": null,
+        "source_document_ids": [
+          "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "effective_nat",
+        "item_count": 0,
+        "locations": [],
+        "reference": null,
+        "source_document_ids": [
+          "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        ],
+        "status": "unknown"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "pbr",
+        "item_count": 4,
+        "locations": [
+          {
+            "location": {
+              "line_end": 9,
+              "line_start": 9,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+          },
+          {
+            "location": {
+              "line_end": 19,
+              "line_start": 19,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+          },
+          {
+            "location": {
+              "line_end": 20,
+              "line_start": 20,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+          },
+          {
+            "location": {
+              "line_end": 21,
+              "line_start": 21,
+              "object_id": null,
+              "object_path": null,
+              "source_name": "policy_route_route_map_unsupported.cfg"
+            },
+            "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+          }
+        ],
+        "reference": null,
+        "source_document_ids": [
+          "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        ],
+        "status": "unsupported"
+      },
+      {
+        "complete": false,
+        "diagnostics": [
+          "Полнота или семантика области не доказана."
+        ],
+        "enumeration_complete": false,
+        "feature": "exceptions",
+        "item_count": 0,
+        "locations": [],
+        "reference": null,
+        "source_document_ids": [
+          "58dc21f4-848b-57b1-b42b-8ae3af88618c"
+        ],
+        "status": "unknown"
+      }
+    ],
+    "observation_window": null,
+    "observed_at": null,
+    "profile_reference": "Условный профиль собственного сценария, не runtime evidence.",
+    "revision_id": "00000000-0000-4000-8000-000000000001",
+    "schema_version": "0.1.0",
+    "sources": [
+      {
+        "capture_success": true,
+        "captured_at": "2026-10-10T09:01:00Z",
+        "command": "show running-config",
+        "complete_scopes": [],
+        "completeness_reference": null,
+        "content_sha256": "3f22184644189a77ca83c1a8230b4922bcc703ad8d55a7e646433430a8afc8ac",
+        "declared_version": "9.16",
+        "device_context": null,
+        "device_id": "synthetic-policy_route_route_map_unsupported",
+        "encoding": "ascii",
+        "extent": "excerpt",
+        "observation": null,
+        "origin": "synthetic",
+        "origin_reference": "Собственная выдержка без клиентских данных.",
+        "purpose": "configuration",
+        "selection": "authored_excerpt",
+        "source_document_id": "58dc21f4-848b-57b1-b42b-8ae3af88618c",
+        "source_name": "policy_route_route_map_unsupported.cfg",
+        "version_provenance": "documentation",
+        "version_reference": "Синтетический manifest; аппаратная сборка не проверена."
+      }
+    ],
+    "table_id": "default",
+    "table_role": "data",
+    "toggles": [
+      {
+        "location": null,
+        "name": "inter_interface",
+        "status": "unknown",
+        "value": null
+      },
+      {
+        "location": null,
+        "name": "intra_interface",
+        "status": "unknown",
+        "value": null
+      },
+      {
+        "location": null,
+        "name": "permit_vpn",
+        "status": "unknown",
+        "value": null
+      }
+    ]
+  },
+  "coverage": {
+    "discovered_constructs": 22,
+    "recognized_constructs": 18,
+    "unsupported_constructs": 4
+  },
+  "errors": [],
+  "parser_id": "cisco-asa-forwarding-9.16",
+  "parser_version": "0.1.0",
+  "schema_version": "0.1.0",
+  "source_map": {
+    "acl-line:GLOBAL_IN:24": {
+      "line_end": 24,
+      "line_start": 24,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "acl-line:INSIDE_IN:23": {
+      "line_end": 23,
+      "line_start": 23,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "acl-line:PBR_CLASS:17": {
+      "line_end": 17,
+      "line_start": 17,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "acl-line:PBR_CLASS:18": {
+      "line_end": 18,
+      "line_start": 18,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "acl:GLOBAL_IN": {
+      "line_end": 24,
+      "line_start": 24,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "acl:INSIDE_IN": {
+      "line_end": 23,
+      "line_start": 23,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "acl:PBR_CLASS": {
+      "line_end": 17,
+      "line_start": 17,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "asa:3f2218464418:GLOBAL_IN:24": {
+      "line_end": null,
+      "line_start": 24,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "asa:3f2218464418:INSIDE_IN:23": {
+      "line_end": null,
+      "line_start": 23,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "asa:3f2218464418:PBR_CLASS:17": {
+      "line_end": null,
+      "line_start": 17,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "asa:3f2218464418:PBR_CLASS:18": {
+      "line_end": null,
+      "line_start": 18,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "binding:global:None": {
+      "line_end": 26,
+      "line_start": 26,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "binding:in:inside": {
+      "line_end": 25,
+      "line_start": 25,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "diagnostic:ASA_FORWARDING_UNSUPPORTED:19": {
+      "line_end": 19,
+      "line_start": 19,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "diagnostic:ASA_FORWARDING_UNSUPPORTED:20": {
+      "line_end": 20,
+      "line_start": 20,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "diagnostic:ASA_FORWARDING_UNSUPPORTED:21": {
+      "line_end": 21,
+      "line_start": 21,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "diagnostic:ASA_FORWARDING_UNSUPPORTED:9": {
+      "line_end": 9,
+      "line_start": 9,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "interface-property:GigabitEthernet0/0:5": {
+      "line_end": 5,
+      "line_start": 5,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "interface-property:GigabitEthernet0/0:6": {
+      "line_end": 6,
+      "line_start": 6,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "interface-property:GigabitEthernet0/0:7": {
+      "line_end": 7,
+      "line_start": 7,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "interface-property:GigabitEthernet0/1:12": {
+      "line_end": 12,
+      "line_start": 12,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "interface-property:GigabitEthernet0/1:13": {
+      "line_end": 13,
+      "line_start": 13,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "interface-property:GigabitEthernet0/1:14": {
+      "line_end": 14,
+      "line_start": 14,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "interface:GigabitEthernet0/0": {
+      "line_end": 8,
+      "line_start": 4,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "interface:GigabitEthernet0/1": {
+      "line_end": 15,
+      "line_start": 11,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "inventory:acl_bindings:0": {
+      "line_end": 25,
+      "line_start": 25,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "inventory:acl_bindings:1": {
+      "line_end": 26,
+      "line_start": 26,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "inventory:acl_definitions:0": {
+      "line_end": 17,
+      "line_start": 17,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "inventory:acl_definitions:1": {
+      "line_end": 23,
+      "line_start": 23,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "inventory:acl_definitions:2": {
+      "line_end": 24,
+      "line_start": 24,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "inventory:interfaces:0": {
+      "line_end": 8,
+      "line_start": 4,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "inventory:interfaces:1": {
+      "line_end": 15,
+      "line_start": 11,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "inventory:pbr:0": {
+      "line_end": 9,
+      "line_start": 9,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "inventory:pbr:1": {
+      "line_end": 19,
+      "line_start": 19,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "inventory:pbr:2": {
+      "line_end": 20,
+      "line_start": 20,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "inventory:pbr:3": {
+      "line_end": 21,
+      "line_start": 21,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "unsupported:1": {
+      "line_end": 9,
+      "line_start": 9,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "unsupported:2": {
+      "line_end": 19,
+      "line_start": 19,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "unsupported:3": {
+      "line_end": 20,
+      "line_start": 20,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    },
+    "unsupported:4": {
+      "line_end": 21,
+      "line_start": 21,
+      "object_id": null,
+      "object_path": null,
+      "source_name": "policy_route_route_map_unsupported.cfg"
+    }
+  },
+  "unsupported_constructs": [
+    {
+      "construct_type": "pbr",
+      "message": "PBR не поддерживается.",
+      "source_location": {
+        "line_end": 9,
+        "line_start": 9,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "policy_route_route_map_unsupported.cfg"
+      }
+    },
+    {
+      "construct_type": "pbr",
+      "message": "PBR не поддерживается.",
+      "source_location": {
+        "line_end": 19,
+        "line_start": 19,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "policy_route_route_map_unsupported.cfg"
+      }
+    },
+    {
+      "construct_type": "pbr",
+      "message": "Условие или действие PBR не поддерживается.",
+      "source_location": {
+        "line_end": 20,
+        "line_start": 20,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "policy_route_route_map_unsupported.cfg"
+      }
+    },
+    {
+      "construct_type": "pbr",
+      "message": "Условие или действие PBR не поддерживается.",
+      "source_location": {
+        "line_end": 21,
+        "line_start": 21,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "policy_route_route_map_unsupported.cfg"
+      }
+    }
+  ],
+  "warnings": [
+    {
+      "code": "ASA_FORWARDING_UNSUPPORTED",
+      "level": "warning",
+      "message": "PBR не поддерживается.",
+      "source_location": {
+        "line_end": 9,
+        "line_start": 9,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "policy_route_route_map_unsupported.cfg"
+      }
+    },
+    {
+      "code": "ASA_FORWARDING_UNSUPPORTED",
+      "level": "warning",
+      "message": "PBR не поддерживается.",
+      "source_location": {
+        "line_end": 19,
+        "line_start": 19,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "policy_route_route_map_unsupported.cfg"
+      }
+    },
+    {
+      "code": "ASA_FORWARDING_UNSUPPORTED",
+      "level": "warning",
+      "message": "Условие или действие PBR не поддерживается.",
+      "source_location": {
+        "line_end": 20,
+        "line_start": 20,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "policy_route_route_map_unsupported.cfg"
+      }
+    },
+    {
+      "code": "ASA_FORWARDING_UNSUPPORTED",
+      "level": "warning",
+      "message": "Условие или действие PBR не поддерживается.",
+      "source_location": {
+        "line_end": 21,
+        "line_start": 21,
+        "object_id": null,
+        "object_path": null,
+        "source_name": "policy_route_route_map_unsupported.cfg"
+      }
+    },
+    {
+      "code": "ASA_FORWARDING_INCOMPLETE",
+      "level": "warning",
+      "message": "Неизвестные области сохранены; effective NAT конфигурацией не доказан.",
+      "source_location": null
+    }
+  ]
+}

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from firewall_compliance.infrastructure.cloud_public import (
+from firewall_compliance.devices.cloud.cloud_ru.public_client import (
     AdvancedConfig,
     CloudCredentials,
     EvolutionConfig,

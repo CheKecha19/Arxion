@@ -18,9 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def gate_environment() -> dict[str, str]:
     """Keep child JSON and diagnostics UTF-8 even when Windows pipes use an ACP."""
     env = os.environ.copy()
-    env.setdefault("UV_CACHE_DIR", str(ROOT.parent / ".cache" / "arxion-uv"))
-    env.setdefault("XDG_CACHE_HOME", str(ROOT.parent / ".cache" / "arxion-harness"))
+    env.setdefault("UV_CACHE_DIR", str(ROOT / "_temp_files" / "cache" / "uv"))
+    env.setdefault("XDG_CACHE_HOME", str(ROOT / "_temp_files" / "cache" / "harness"))
     env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    env.setdefault("HYPOTHESIS_STORAGE_DIRECTORY", str(ROOT / "_temp_files" / "cache" / "hypothesis"))
     env["PYTHONHASHSEED"] = "0"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     # Passing a UTF-8 TextIO file as stdout does not encode the child's writes:
@@ -138,7 +139,7 @@ def main() -> int:
         elif gate == "test":
             execute(
                 "harness-tests",
-                uv + ["python", "-m", "pytest", "harness/tests", "--hypothesis-seed=0"],
+                uv + ["python", "-m", "pytest", "tests/harness", "--hypothesis-seed=0"],
             )
             execute(
                 "pytest",

@@ -1,5 +1,6 @@
 """Локальный CLI для запуска анализа экспортированных конфигураций."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -27,6 +28,74 @@ app = typer.Typer(
 app.add_typer(acl_map_app, name="acl-map")
 app.add_typer(controls_app, name="controls")
 app.add_typer(governance_app, name="governance")
+
+
+@app.command("usergate-collect")
+def usergate_collect(
+    host: Annotated[str, typer.Argument()],
+    output: Annotated[Path, typer.Argument()],
+    family: Annotated[str, typer.Option("--family")] = "7",
+    transport: Annotated[str, typer.Option("--transport")] = "tcp",
+    username: Annotated[str, typer.Option("--username")] = "Admin",
+    ca_file: Annotated[Path | None, typer.Option("--ca-file", exists=True)] = None,
+) -> None:
+    """Прочитать UserGate 6.1.5+/7 в JSON для обычного импорта и анализа."""
+    from firewall_compliance.infrastructure.usergate import UserGateError, UserGateReader
+
+    if family not in {"6", "7"} or transport not in {"tcp", "https"}:
+        raise typer.BadParameter("family: 6 или 7; transport: tcp или https")
+    if output.exists():
+        raise typer.BadParameter("Файл назначения уже существует.")
+    password = typer.prompt("Пароль UserGate", hide_input=True)
+    try:
+        reader = UserGateReader(
+            host,
+            family="6" if family == "6" else "7",
+            transport="https" if transport == "https" else "tcp",
+            ca_file=str(ca_file) if ca_file else None,
+        )
+        snapshot = reader.collect(username, password)
+        with output.open("x", encoding="utf-8") as stream:
+            json.dump(snapshot, stream, ensure_ascii=False, indent=2)
+    except (UserGateError, ValueError, OSError) as exc:
+        typer.echo(
+            str(exc) if isinstance(exc, (UserGateError, ValueError)) else "Ошибка записи файла.",
+            err=True,
+        )
+        raise typer.Exit(1) from None
+    typer.echo(f"Снимок UserGate сохранён: {output}")
+
+
+@app.command("ideco-collect")
+def ideco_collect(
+    host: Annotated[str, typer.Argument()],
+    output: Annotated[Path, typer.Argument()],
+    username: Annotated[str, typer.Option("--username")] = "admin",
+    port: Annotated[int, typer.Option("--port", min=1, max=65535)] = 8443,
+    ca_file: Annotated[Path | None, typer.Option("--ca-file", exists=True)] = None,
+) -> None:
+    """Прочитать Ideco v23 (классический VCE) в JSON для обычного импорта и анализа."""
+    from firewall_compliance.infrastructure.ideco import IdecoError, IdecoReader
+
+    if output.exists():
+        raise typer.BadParameter("Файл назначения уже существует.")
+    password = typer.prompt("Пароль Ideco", hide_input=True)
+    try:
+        reader = IdecoReader(
+            host,
+            port=port,
+            ca_file=str(ca_file) if ca_file else None,
+        )
+        snapshot = reader.collect(username, password)
+        with output.open("x", encoding="utf-8") as stream:
+            json.dump(snapshot, stream, ensure_ascii=False, indent=2)
+    except (IdecoError, ValueError, OSError) as exc:
+        typer.echo(
+            str(exc) if isinstance(exc, (IdecoError, ValueError)) else "Ошибка записи файла.",
+            err=True,
+        )
+        raise typer.Exit(1) from None
+    typer.echo(f"Снимок Ideco сохранён: {output}")
 
 
 @app.callback()

@@ -11,7 +11,7 @@ __pycache__/
 .hypothesis/
 
 # Тесты не публикуются в репозитории
-/tests/
+# tests are maintained source
 
 # Артефакты сборки и отчёты
 build/
@@ -35,3 +35,6 @@ output/
 # Среда разработки
 .vscode/
 .idea/
+
+# Disposable local outputs
+/_temp_files/

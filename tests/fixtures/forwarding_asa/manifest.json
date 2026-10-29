@@ -1,0 +1,320 @@
+{
+  "schema_version": "1.0.0",
+  "created_at": "2026-10-10",
+  "vendor": "Cisco",
+  "platform": "ASA",
+  "declared_version": "9.16",
+  "version_provenance": "Документация; заголовок 9.16(4) задан автором, конкретная сборка и аппаратное поведение не проверены",
+  "origin": "Собственные синтетические выдержки проекта; аппаратные захваты и клиентские данные не использовались",
+  "contains_customer_data": false,
+  "encoding": "ascii",
+  "newline": "LF",
+  "capture_role_status": "Предлагаемая роль; asa_forwarding_config не является зарегистрированной ролью парсера",
+  "expectations_reference": "README.md#conditional-local-scenarios",
+  "scenarios": [
+    {
+      "id": "ingress_no_match_global_permit",
+      "device_id": "synthetic-ingress_no_match_global_permit",
+      "context": "single",
+      "firewall_mode": "routed",
+      "address_family": "ipv4",
+      "table_role": "data",
+      "observed_at": null,
+      "observation_set_id": "authored-ingress_no_match_global_permit",
+      "coherence": "Вымышленная группировка; эксплуатационных наблюдений и доказательств временной согласованности нет",
+      "feature_evidence": {
+        "same_security_inter_interface": "unknown",
+        "same_security_intra_interface": "unknown",
+        "object_nat": "unknown",
+        "global_nat": "unknown",
+        "pbr": "unknown",
+        "global_acl_inventory": "unknown_incomplete_excerpt",
+        "system_nat": "unknown"
+      },
+      "sources": [
+        {
+          "path": "ingress_no_match_global_permit.cfg",
+          "sha256": "50630bf7582c2d2a6399cbe169db8cc73846e3ae65a89398c2c6ec7d9f3a885f",
+          "byte_length": 522,
+          "source_kind": "asa_forwarding_config",
+          "capture_role_status": "proposed",
+          "command": "show running-config",
+          "selection": "authored_excerpt",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null,
+          "encoding": "ascii",
+          "declared_version": "9.16",
+          "version_provenance": "Документация",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "id": "ingress_deny_before_global",
+      "device_id": "synthetic-ingress_deny_before_global",
+      "context": "single",
+      "firewall_mode": "routed",
+      "address_family": "ipv4",
+      "table_role": "data",
+      "observed_at": null,
+      "observation_set_id": "authored-ingress_deny_before_global",
+      "coherence": "Вымышленная группировка; эксплуатационных наблюдений и доказательств временной согласованности нет",
+      "feature_evidence": {
+        "same_security_inter_interface": "unknown",
+        "same_security_intra_interface": "unknown",
+        "object_nat": "unknown",
+        "global_nat": "unknown",
+        "pbr": "unknown",
+        "global_acl_inventory": "unknown_incomplete_excerpt",
+        "system_nat": "unknown"
+      },
+      "sources": [
+        {
+          "path": "ingress_deny_before_global.cfg",
+          "sha256": "cbb5d4a663de5141be8eb0a7b86cafcec28b52472957720f1f1c11c072a87e54",
+          "byte_length": 520,
+          "source_kind": "asa_forwarding_config",
+          "capture_role_status": "proposed",
+          "command": "show running-config",
+          "selection": "authored_excerpt",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null,
+          "encoding": "ascii",
+          "declared_version": "9.16",
+          "version_provenance": "Документация",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "id": "ingress_permit_outbound_deny",
+      "device_id": "synthetic-ingress_permit_outbound_deny",
+      "context": "single",
+      "firewall_mode": "routed",
+      "address_family": "ipv4",
+      "table_role": "data",
+      "observed_at": null,
+      "observation_set_id": "authored-ingress_permit_outbound_deny",
+      "coherence": "Вымышленная группировка; эксплуатационных наблюдений и доказательств временной согласованности нет",
+      "feature_evidence": {
+        "same_security_inter_interface": "unknown",
+        "same_security_intra_interface": "unknown",
+        "object_nat": "unknown",
+        "global_nat": "unknown",
+        "pbr": "unknown",
+        "global_acl_inventory": "unknown_incomplete_excerpt",
+        "system_nat": "unknown"
+      },
+      "sources": [
+        {
+          "path": "ingress_permit_outbound_deny.cfg",
+          "sha256": "8264c2841bf20d95de76bd60805455ba37fce928207c35ecb0072bc71a9d483e",
+          "byte_length": 653,
+          "source_kind": "asa_forwarding_config",
+          "capture_role_status": "proposed",
+          "command": "show running-config",
+          "selection": "authored_excerpt",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null,
+          "encoding": "ascii",
+          "declared_version": "9.16",
+          "version_provenance": "Документация",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "id": "equal_security_permission_unknown",
+      "device_id": "synthetic-equal_security_permission_unknown",
+      "context": "single",
+      "firewall_mode": "routed",
+      "address_family": "ipv4",
+      "table_role": "data",
+      "observed_at": null,
+      "observation_set_id": "authored-equal_security_permission_unknown",
+      "coherence": "Вымышленная группировка; эксплуатационных наблюдений и доказательств временной согласованности нет",
+      "feature_evidence": {
+        "same_security_inter_interface": "unknown",
+        "same_security_intra_interface": "unknown",
+        "object_nat": "unknown",
+        "global_nat": "unknown",
+        "pbr": "unknown",
+        "global_acl_inventory": "unknown_incomplete_excerpt",
+        "system_nat": "unknown"
+      },
+      "sources": [
+        {
+          "path": "equal_security_permission_unknown.cfg",
+          "sha256": "d22c7f54ff0c85dd9c06619a642ebd557828661a82bd91c0913dbb88fe7d616b",
+          "byte_length": 522,
+          "source_kind": "asa_forwarding_config",
+          "capture_role_status": "proposed",
+          "command": "show running-config",
+          "selection": "authored_excerpt",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null,
+          "encoding": "ascii",
+          "declared_version": "9.16",
+          "version_provenance": "Документация",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "id": "equal_security_explicit_inter_interface",
+      "device_id": "synthetic-equal_security_explicit_inter_interface",
+      "context": "single",
+      "firewall_mode": "routed",
+      "address_family": "ipv4",
+      "table_role": "data",
+      "observed_at": null,
+      "observation_set_id": "authored-equal_security_explicit_inter_interface",
+      "coherence": "Вымышленная группировка; эксплуатационных наблюдений и доказательств временной согласованности нет",
+      "feature_evidence": {
+        "same_security_inter_interface": "known_explicit_permit",
+        "same_security_intra_interface": "unknown",
+        "object_nat": "unknown",
+        "global_nat": "unknown",
+        "pbr": "unknown",
+        "global_acl_inventory": "unknown_incomplete_excerpt",
+        "system_nat": "unknown"
+      },
+      "sources": [
+        {
+          "path": "equal_security_explicit_inter_interface.cfg",
+          "sha256": "2f6e2c8ad238ebbbcaab052de56a49c8d9bbdff92b8da6e146641426883700e9",
+          "byte_length": 569,
+          "source_kind": "asa_forwarding_config",
+          "capture_role_status": "proposed",
+          "command": "show running-config",
+          "selection": "authored_excerpt",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null,
+          "encoding": "ascii",
+          "declared_version": "9.16",
+          "version_provenance": "Документация",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "id": "object_and_global_nat_unsupported",
+      "device_id": "synthetic-object_and_global_nat_unsupported",
+      "context": "single",
+      "firewall_mode": "routed",
+      "address_family": "ipv4",
+      "table_role": "data",
+      "observed_at": null,
+      "observation_set_id": "authored-object_and_global_nat_unsupported",
+      "coherence": "Вымышленная группировка; эксплуатационных наблюдений и доказательств временной согласованности нет",
+      "feature_evidence": {
+        "same_security_inter_interface": "unknown",
+        "same_security_intra_interface": "unknown",
+        "object_nat": "unsupported",
+        "global_nat": "unsupported",
+        "pbr": "unknown",
+        "global_acl_inventory": "unknown_incomplete_excerpt",
+        "system_nat": "unknown"
+      },
+      "sources": [
+        {
+          "path": "object_and_global_nat_unsupported.cfg",
+          "sha256": "bdf443d5b02454acb5b1b23d5b49ccecc897f9bd724cb85ff25817e1ed81e199",
+          "byte_length": 797,
+          "source_kind": "asa_forwarding_config",
+          "capture_role_status": "proposed",
+          "command": "show running-config",
+          "selection": "authored_excerpt",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null,
+          "encoding": "ascii",
+          "declared_version": "9.16",
+          "version_provenance": "Документация",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "id": "policy_route_route_map_unsupported",
+      "device_id": "synthetic-policy_route_route_map_unsupported",
+      "context": "single",
+      "firewall_mode": "routed",
+      "address_family": "ipv4",
+      "table_role": "data",
+      "observed_at": null,
+      "observation_set_id": "authored-policy_route_route_map_unsupported",
+      "coherence": "Вымышленная группировка; эксплуатационных наблюдений и доказательств временной согласованности нет",
+      "feature_evidence": {
+        "same_security_inter_interface": "unknown",
+        "same_security_intra_interface": "unknown",
+        "object_nat": "unknown",
+        "global_nat": "unknown",
+        "pbr": "unsupported",
+        "global_acl_inventory": "unknown_incomplete_excerpt",
+        "system_nat": "unknown"
+      },
+      "sources": [
+        {
+          "path": "policy_route_route_map_unsupported.cfg",
+          "sha256": "3f22184644189a77ca83c1a8230b4922bcc703ad8d55a7e646433430a8afc8ac",
+          "byte_length": 811,
+          "source_kind": "asa_forwarding_config",
+          "capture_role_status": "proposed",
+          "command": "show running-config",
+          "selection": "authored_excerpt",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null,
+          "encoding": "ascii",
+          "declared_version": "9.16",
+          "version_provenance": "Документация",
+          "contains_customer_data": false
+        }
+      ]
+    },
+    {
+      "id": "truncated_missing_global_chain",
+      "device_id": "synthetic-truncated_missing_global_chain",
+      "context": "single",
+      "firewall_mode": "routed",
+      "address_family": "ipv4",
+      "table_role": "data",
+      "observed_at": null,
+      "observation_set_id": "authored-truncated_missing_global_chain",
+      "coherence": "Вымышленная группировка; эксплуатационных наблюдений и доказательств временной согласованности нет",
+      "feature_evidence": {
+        "same_security_inter_interface": "unknown",
+        "same_security_intra_interface": "unknown",
+        "object_nat": "unknown",
+        "global_nat": "unknown",
+        "pbr": "unknown",
+        "global_acl_inventory": "unknown_missing_definition",
+        "system_nat": "unknown"
+      },
+      "sources": [
+        {
+          "path": "truncated_missing_global_chain.cfg",
+          "sha256": "ad01f18edeb8d5521de8afc8dc2623595b57327f6d1ef67ebbd06160922b61f8",
+          "byte_length": 443,
+          "source_kind": "asa_forwarding_config",
+          "capture_role_status": "proposed",
+          "command": "show running-config",
+          "selection": "authored_excerpt",
+          "extent": "truncated",
+          "complete": false,
+          "observed_at": null,
+          "encoding": "ascii",
+          "declared_version": "9.16",
+          "version_provenance": "Документация",
+          "contains_customer_data": false
+        }
+      ]
+    }
+  ]
+}

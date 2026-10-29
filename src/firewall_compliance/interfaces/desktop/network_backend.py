@@ -22,6 +22,7 @@ from firewall_compliance.application.network_import import (
     NetworkImportResult,
     import_network_documents,
 )
+from firewall_compliance.devices.ngfw.cisco.asa.forwarding import CiscoAsaForwardingParser
 from firewall_compliance.domain.forwarding import (
     FlowApplicability,
     ForwardingContext,
@@ -34,7 +35,6 @@ from firewall_compliance.domain.reachability import AnalysisReason, Reachability
 from firewall_compliance.domain.revision import DeviceRevision
 from firewall_compliance.infrastructure.source_reader import FileSourceReader
 from firewall_compliance.interfaces.desktop.map_network_facts import MapNetworkFacts
-from firewall_compliance.parsers.cisco_asa_forwarding import CiscoAsaForwardingParser
 from firewall_compliance.parsers.contracts import ParseFailure, SourceDocument
 from firewall_compliance.parsers.forwarding_contracts import (
     ForwardingParseRequest,
