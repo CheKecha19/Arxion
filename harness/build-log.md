@@ -1,5 +1,14 @@
 # Harness validation log
 
+## Unified distribution rules — 2026-10-29
+
+Baseline HEAD: 49e2bcae3f825e81f133245bf3ee0fecb81ee0dc with existing local edits.
+Source/diff review only: build_desktop.ps1, build_cli.ps1, Qt launcher, delivery
+README and specification consumers. Versioned bundle and EXE naming, same-version
+overwrite, full package submodule collection, no ZIP or separate CLI/feature build.
+No automated commands, build, EXE launch or CI dispatch run for this change.
+The preceding successful build predates these script changes and does not validate them.
+
 ## CHECKS-003 / CHECKS-005 — 2026-10-29
 
 Baseline HEAD `da964e8`; preserved the untracked Aruba controller and policy
@@ -352,3 +361,10 @@ Remaining scope: VMware NSX-T Edge Firewall only; Advanced/Evolution policy
 analysis, dynamic group membership, L7/source-port conditions and effective
 end-to-end/NAT reachability remain unsupported. INFRA-001 metadata/lifecycle and
 DASH-001 redesign are proposals for later work, not implemented by this change.
+
+## Requested EXE build only — 2026-10-29
+
+Baseline HEAD: 49e2bcae3f825e81f133245bf3ee0fecb81ee0dc, with existing local changes.
+Command: scripts/build_desktop.ps1. Exit 0; PyInstaller 6.22.3, Python 3.12.13, Windows.
+Generated dist/FirewallCompliance/FirewallCompliance.exe and dist/FirewallCompliance-windows-x64.zip.
+Per explicit user request, no tests, checks, executable launch or runtime validation performed.

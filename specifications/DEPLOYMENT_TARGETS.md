@@ -25,7 +25,10 @@
 Основной desktop использует PySide6 / Qt (TASK-012, ADR-018). Из исходников после
 `uv sync --all-groups` запускается через `Start-Desktop.cmd` или модуль desktop.
 `scripts/build_desktop.ps1` создаёт PyInstaller onedir portable:
-`dist\FirewallCompliance\FirewallCompliance.exe` с runtime/Qt в `_internal`.
+`dist\FirewallComplience_v<версия>\FirewallComplience_v<версия>.exe` с runtime/Qt в `_internal`.
+Версия берётся из `pyproject.toml`; повторная сборка перезаписывает ту же папку.
+Архивы и отдельные CLI/feature-дистрибутивы не создаются.
+Обязательные правила: [WINDOWS_DISTRIBUTION.md](WINDOWS_DISTRIBUTION.md).
 Переносить нужно всю папку. Рабочая БД располагается в
 `%LOCALAPPDATA%\FirewallCompliance\projects.sqlite3`, отчёты — в явно выбранных файлах.
 Полные конфигурации не копируются; normalized данные/выдержки могут быть чувствительными.

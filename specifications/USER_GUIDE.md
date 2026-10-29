@@ -13,9 +13,11 @@ UserGate, Ideco и PT NGFW видимы как запланированные в
 
 ## 1. Запуск
 
-Для portable-поставки распакуйте `dist\FirewallCompliance-windows-x64.zip` (примерно 54 MiB), затем откройте `FirewallCompliance.exe` в распакованной папке
-`dist\FirewallCompliance`. Переносите всю папку, включая `_internal`; Python/uv
+Для portable-поставки откройте `FirewallComplience_v<версия>.exe` в папке
+`dist\FirewallComplience_v<версия>`. Переносите всю папку, включая `_internal`; Python/uv
 для такого запуска не нужны. Рабочие данные создаются в профиле пользователя.
+Актуальные [правила сборки](WINDOWS_DISTRIBUTION.md) предусматривают полную поставку
+с перезаписью той же версии, без автоматического архива и отдельных feature-сборок.
 Испытание сборки на текущем ПК не подтверждает чистые Windows 10/11 — результаты
 проверки поставки перечислены в [CURRENT_STATE](CURRENT_STATE.md).
 

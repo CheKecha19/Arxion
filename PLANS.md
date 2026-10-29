@@ -1,5 +1,18 @@
 # Working plans
 
+## Unified Windows distribution — 2026-10-29
+
+Scope: unify Windows packaging and its specification, preserving unrelated edits.
+Baseline HEAD: 49e2bcae3f825e81f133245bf3ee0fecb81ee0dc.
+Completed: desktop script reads project.version, replaces the matching
+dist/FirewallComplience_v<version> bundle, includes all application submodules,
+and stops producing ZIPs or feature variants. Legacy CLI build delegates to it.
+Updated the authoritative delivery specification, agent instructions and entry
+documentation; old CLI specification explicitly marked historical.
+Reviewed consumers: Qt launcher, distribution README, CLI build entrypoint and
+workflow references. No application JSON, SQLite, Qt wiring or API changes.
+No builds or automated checks run for this change; future build remains unverified.
+
 ## CHECKS-003 / CHECKS-005: excessive access and ACL attachment, 2026-10-28
 
 Objective: implement two explicitly selected, replayable policy checks. CHECKS-003

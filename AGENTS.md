@@ -1,5 +1,10 @@
 # Engineering Harness
 
+Windows distribution builds must follow `specifications/WINDOWS_DISTRIBUTION.md`:
+build the entire project into `dist/FirewallComplience_v<project.version>`;
+overwrite the same version, do not create ZIP archives or separate CLI/feature
+distributions. Use `scripts/build_desktop.ps1` as the single build implementation.
+
 Start with `GOALS.md`, `PLANS.md`, `harness/context` and `harness/project-map.md`.
 Work in the existing checkout; cloud tasks are already isolated.
 Do not create worktrees unless asked.
