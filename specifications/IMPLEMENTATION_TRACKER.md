@@ -26,10 +26,14 @@ Fetched product additions, 2026-10-27, origin/release/v0.3 ba991ab:
 - [ ] CHECKS-001: expanded check passports and platform-specific evidence gates.
 - [ ] CHECKS-002: administrative service exposure; reconcile the implemented
   explicit exposure profile against the newly recorded acceptance requirements.
-- [ ] CHECKS-003: excessive services/address/port ranges and role-specific access.
+- [x] CHECKS-003: explicit address/port breadth thresholds and role-specific
+  source/service policy with exact profile evidence, exceptions, bounded replay
+  and unknown/partial semantics; POLICY_SCOPE_CHECKS.md.
 - [ ] CHECKS-004: allow/deny intersections and order dependence; reuse the existing
   partial/union engine rather than duplicate it, and verify the remaining scope.
-- [ ] CHECKS-005: unbound ACLs and required interface/direction filtering.
+- [x] CHECKS-005: unbound policies and required role/interface-direction filtering
+  over declared attachments; negative conclusions require explicitly complete
+  attachment inventory; POLICY_SCOPE_CHECKS.md.
 - [ ] CHECKS-006: violations of an explicitly approved access matrix.
 - [ ] CHECKS-007: egress and approved DNS resolver policy.
 - [ ] CHECKS-008: NAT publications with routing/policy processing context.

@@ -27,6 +27,7 @@ from firewall_compliance.domain import (
     SourceLocation,
     UnsupportedConstruct,
 )
+from firewall_compliance.domain.policy_attachment import PolicyAttachment
 from firewall_compliance.parsers.contracts import (
     DetectionResult,
     ParseFailure,
@@ -271,12 +272,27 @@ class HpArubaParser:
             ep.endpoint_id: ep for rule in rules for ep in (*rule.sources, *rule.destinations)
         }
         services = {service.service_id: service for rule in rules for service in rule.services}
+        attachments = tuple(
+            PolicyAttachment(
+                attachment_id=f"acl-binding:{acl}:{binding.location.line_start}",
+                policy_id=f"acl:{acl}@{binding.scope}:{binding.mode}",
+                subject_kind="interface",
+                subject_id=binding.scope,
+                direction="in" if binding.mode in {"in", "routed-in"} else "out",
+                scope_reference=binding.scope,
+                source_location=binding.location,
+            )
+            for acl, linked_scopes in bindings.items()
+            for binding in linked_scopes
+            if binding.mode != "control-plane"
+        )
         return ParseResult(
             configuration=config,
             management=parse_management(request.source, platform),
             rules=tuple(rules),
             endpoints=tuple(endpoints.values()),
             services=tuple(services.values()),
+            policy_attachments=attachments,
             warnings=tuple(warnings),
             unsupported_constructs=tuple(diagnostics.unsupported),
             source_map=source_map,

@@ -9,6 +9,7 @@ from firewall_compliance.domain import Device, DeviceRevision, RevisionSource, S
 from firewall_compliance.domain.assurance import FirewallAssuranceResult
 from firewall_compliance.domain.management import ManagementProfile
 from firewall_compliance.domain.policy_exposure import PolicyExposureProfile
+from firewall_compliance.domain.policy_scope import PolicyScopeProfile
 from firewall_compliance.parsers import ParseFailure, ParseRequest, ParserRegistry, SourceDocument
 
 
@@ -60,6 +61,7 @@ def analyze_source(
     management_profile: ManagementProfile | None = None,
     extended_policy_checks: bool = False,
     policy_exposure_profile: PolicyExposureProfile | None = None,
+    policy_scope_profile: PolicyScopeProfile | None = None,
 ) -> FirewallAssuranceResult | ParseFailure:
     """Построить ревизию с неизвестными сетевыми данными и выполнить policy checks."""
     revision = build_source_revision(
@@ -77,4 +79,5 @@ def analyze_source(
         management_profile=management_profile,
         extended_policy_checks=extended_policy_checks,
         policy_exposure_profile=policy_exposure_profile,
+        policy_scope_profile=policy_scope_profile,
     )

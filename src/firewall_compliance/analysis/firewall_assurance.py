@@ -21,10 +21,12 @@ from firewall_compliance.analysis.policy_exposure import (
     DangerousServicesCheck,
     UntrustedAdministrativeAccessCheck,
 )
+from firewall_compliance.analysis.policy_scope import ExcessiveAccessCheck, PolicyAttachmentCheck
 from firewall_compliance.domain import DeviceRevision
 from firewall_compliance.domain.assurance import FirewallAssuranceResult
 from firewall_compliance.domain.management import ManagementProfile
 from firewall_compliance.domain.policy_exposure import PolicyExposureProfile
+from firewall_compliance.domain.policy_scope import PolicyScopeProfile
 
 CHECK_CATALOG_VERSION = "1.0.0"
 
@@ -40,6 +42,7 @@ def analyze_firewall(
     management_profile: ManagementProfile | None = None,
     extended_policy_checks: bool = False,
     policy_exposure_profile: PolicyExposureProfile | None = None,
+    policy_scope_profile: PolicyScopeProfile | None = None,
 ) -> FirewallAssuranceResult:
     """Выполнить проверки без файлов, сети и изменения входной ревизии."""
     timestamp = analyzed_at or revision.imported_at
@@ -67,6 +70,11 @@ def analyze_firewall(
             DangerousServicesCheck(policy_exposure_profile),
             UntrustedAdministrativeAccessCheck(policy_exposure_profile),
         )
+    if checks is None and policy_scope_profile is not None:
+        catalog += (
+            ExcessiveAccessCheck(policy_scope_profile),
+            PolicyAttachmentCheck(policy_scope_profile),
+        )
     if checks is None and revision.parse_result.management is not None:
         catalog += management_checks(management_profile)
     used_profiles = [check.profile for check in catalog if isinstance(check, ManagementCheck)]
@@ -87,7 +95,9 @@ def analyze_firewall(
         device_id=revision.device.device_id,
         application_version=revision.application_version,
         parser_version=revision.parse_result.configuration.parser_version,
-        check_catalog_version="1.4.0"
+        check_catalog_version="1.5.0"
+        if any(check.check_id in {"FW-EXCESSIVE-ACCESS", "FW-ACL-ATTACHMENT"} for check in catalog)
+        else "1.4.0"
         if any(check.check_id in {"FW-RULE-GOVERNANCE", "FW-UNUSED-CANDIDATE"} for check in catalog)
         else "1.3.0"
         if any(

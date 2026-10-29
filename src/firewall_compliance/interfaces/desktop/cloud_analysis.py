@@ -9,6 +9,7 @@ from firewall_compliance.analysis.firewall_assurance import analyze_firewall
 from firewall_compliance.application.cloud_analysis import ADAPTER_VERSION, vmware_revision
 from firewall_compliance.domain.assurance import CheckStatus
 from firewall_compliance.domain.policy_exposure import PolicyExposureProfile
+from firewall_compliance.domain.policy_scope import PolicyScopeProfile
 from firewall_compliance.interfaces.desktop.backend import selected_checks
 
 
@@ -23,6 +24,9 @@ def analyze_saved_vmware(
             tuple(key for key in enabled if key.startswith("FW-")),
             policy_exposure_profile=PolicyExposureProfile.model_validate(
                 settings.get("policy_exposure_profile") or {}
+            ),
+            policy_scope_profile=PolicyScopeProfile.model_validate(
+                settings.get("policy_scope_profile") or {}
             ),
         )
         if enabled is not None

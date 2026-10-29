@@ -18,6 +18,7 @@ from firewall_compliance.application.firewall_assurance import build_source_revi
 from firewall_compliance.domain.enums import SourceDocumentKind
 from firewall_compliance.domain.management import ManagementProfile
 from firewall_compliance.domain.policy_exposure import PolicyExposureProfile
+from firewall_compliance.domain.policy_scope import PolicyScopeProfile
 from firewall_compliance.parsers import ParseFailure, ParserRegistry, SourceDocument
 
 
@@ -32,6 +33,7 @@ def analyze_source_result(
     management_profile: ManagementProfile | None = None,
     extended_policy_checks: bool = False,
     policy_exposure_profile: PolicyExposureProfile | None = None,
+    policy_scope_profile: PolicyScopeProfile | None = None,
 ) -> AnalysisResult:
     """Keep the same parsed input and conclusions together with replayable options."""
     revision = build_source_revision(
@@ -89,6 +91,7 @@ def analyze_source_result(
         management_profile=management_profile,
         extended_policy_checks=extended_policy_checks,
         policy_exposure_profile=policy_exposure_profile,
+        policy_scope_profile=policy_scope_profile,
     )
     options = PolicyAnalysisOptions(
         check_ids=tuple(check.check_id for check in report.checks),
@@ -97,6 +100,7 @@ def analyze_source_result(
         max_pair_rules=report.max_pair_rules,
         management_profile=management_profile or ManagementProfile(),
         exposure_profile=policy_exposure_profile or PolicyExposureProfile(),
+        scope_profile=policy_scope_profile,
     )
     return AnalysisResult(
         application_version=__version__,

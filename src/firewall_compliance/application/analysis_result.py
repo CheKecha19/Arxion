@@ -47,6 +47,7 @@ from firewall_compliance.analysis.policy_governance import (
     RuleGovernanceCheck,
     UnusedRuleCandidatesCheck,
 )
+from firewall_compliance.analysis.policy_scope import ExcessiveAccessCheck, PolicyAttachmentCheck
 from firewall_compliance.analysis.revision_diff import compare_device_revisions
 from firewall_compliance.analysis.route_selection import analyze_reachability, select_route
 from firewall_compliance.application.device_decision import analyze_imported_device
@@ -71,6 +72,7 @@ from firewall_compliance.domain.policy_governance import (
     PolicyGovernanceProfile,
 )
 from firewall_compliance.domain.policy_matching import ScopeKey
+from firewall_compliance.domain.policy_scope import PolicyScopeProfile
 from firewall_compliance.domain.reachability import (
     ReachabilityQuery,
     ReachabilityResult,
@@ -182,11 +184,19 @@ class PolicyAnalysisOptions(ResultModel):
     governance_profile: PolicyGovernanceProfile | None = None
     governance_inputs: PolicyGovernanceInputs | None = None
     governance_max_operations: int | None = Field(default=None, ge=1, le=10000000, strict=True)
+    scope_profile: PolicyScopeProfile | None = None
+    scope_max_operations: int | None = Field(default=None, ge=1, le=10000000, strict=True)
 
     @model_serializer(mode="wrap")
     def serialize_governance(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         payload: dict[str, Any] = handler(self)
-        for name in ("governance_profile", "governance_inputs", "governance_max_operations"):
+        for name in (
+            "governance_profile",
+            "governance_inputs",
+            "governance_max_operations",
+            "scope_profile",
+            "scope_max_operations",
+        ):
             if getattr(self, name) is None:
                 payload.pop(name, None)
         return payload
@@ -257,6 +267,12 @@ def replay_policy(
             options.governance_profile,
             options.governance_inputs,
             max_operations=options.governance_max_operations or 100000,
+        ),
+        ExcessiveAccessCheck(
+            options.scope_profile, max_operations=options.scope_max_operations or 100000
+        ),
+        PolicyAttachmentCheck(
+            options.scope_profile, max_operations=options.scope_max_operations or 100000
         ),
     )
     catalog = {check.check_id: check for check in checks}

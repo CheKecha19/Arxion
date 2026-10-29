@@ -116,6 +116,7 @@ from firewall_compliance.interfaces.desktop.object_presentation import (
 )
 from firewall_compliance.interfaces.desktop.organization_lock import WorkspaceBusyError
 from firewall_compliance.interfaces.desktop.policy_exposure_settings import PolicyExposureSettings
+from firewall_compliance.interfaces.desktop.policy_scope_settings import PolicyScopeSettings
 from firewall_compliance.interfaces.desktop.project_map import build_project_map
 from firewall_compliance.interfaces.desktop.qt_acl_map import (
     AclMapState,
@@ -123,8 +124,8 @@ from firewall_compliance.interfaces.desktop.qt_acl_map import (
     build_map_state,
 )
 from firewall_compliance.interfaces.desktop.qt_controls import ControlsPanel
-from firewall_compliance.interfaces.desktop.qt_governance import GovernancePanel
 from firewall_compliance.interfaces.desktop.qt_dashboard import ProjectDashboard
+from firewall_compliance.interfaces.desktop.qt_governance import GovernancePanel
 from firewall_compliance.interfaces.desktop.qt_infrastructure_registry import (
     InfrastructureRegistryPanel,
 )
@@ -228,8 +229,11 @@ CHECKS = {
     "FW-UNION-SHADOWED": "Покрытие несколькими правилами",
     "FW-DANGEROUS-SERVICES": "Запрещённые организацией сервисы",
     "FW-ADMIN-UNTRUSTED": "Административные сервисы из недоверенных сетей",
+    "FW-EXCESSIVE-ACCESS": "Избыточная ширина и ролевой доступ",
+    "FW-ACL-ATTACHMENT": "Привязки ACL и обязательная фильтрация",
     **{key: values[1] for key, values in MANAGEMENT_CHECKS.items()},
 }
+OPTIONAL_SCOPE_CHECKS = {"FW-EXCESSIVE-ACCESS", "FW-ACL-ATTACHMENT"}
 
 
 def _check_count(check: dict[str, Any]) -> str:
@@ -1699,11 +1703,14 @@ class MainWindow(QMainWindow):
         self.policy_exposure_settings = PolicyExposureSettings()
         layout.addWidget(self.policy_exposure_settings)
         self.policy_exposure_settings.changed.connect(self._save_analysis_settings)
+        self.policy_scope_settings = PolicyScopeSettings()
+        layout.addWidget(self.policy_scope_settings)
+        self.policy_scope_settings.changed.connect(self._save_analysis_settings)
         layout.addWidget(_label("Выполняемые проверки", muted=True))
         self.check_boxes: dict[str, QCheckBox] = {}
         for check_id, title in CHECKS.items():
             checkbox = QCheckBox(title)
-            checkbox.setChecked(True)
+            checkbox.setChecked(check_id not in OPTIONAL_SCOPE_CHECKS)
             self.check_boxes[check_id] = checkbox
             checkbox.toggled.connect(self._save_analysis_settings)
             checkbox.toggled.connect(self._refresh_staged)
@@ -1789,6 +1796,7 @@ class MainWindow(QMainWindow):
                 policy_exposure_profile = self.policy_exposure_settings.profile().model_dump(
                     mode="json"
                 )
+                policy_scope_profile = self.policy_scope_settings.profile().model_dump(mode="json")
             except ValueError:
                 return
             self.store.update_settings(
@@ -1798,6 +1806,7 @@ class MainWindow(QMainWindow):
                     "require_comments": self.comments_check.isChecked(),
                     "management_profile": management_profile,
                     "policy_exposure_profile": policy_exposure_profile,
+                    "policy_scope_profile": policy_scope_profile,
                     "enabled_check_ids": [
                         key for key, box in self.check_boxes.items() if box.isChecked()
                     ],
@@ -2712,12 +2721,15 @@ class MainWindow(QMainWindow):
             settings = project.get("settings", {})
             self.management_settings.load_profile(settings.get("management_profile"))
             self.policy_exposure_settings.load_profile(settings.get("policy_exposure_profile"))
+            self.policy_scope_settings.load_profile(settings.get("policy_scope_profile"))
             self.logging_check.setChecked(settings.get("require_logging", True))
             self.comments_check.setChecked(settings.get("require_comments", True))
             self.fragments_check.blockSignals(True)
             self.fragments_check.setChecked(settings.get("include_fragments", True))
             self.fragments_check.blockSignals(False)
-            enabled = settings.get("enabled_check_ids", list(CHECKS))
+            enabled = settings.get(
+                "enabled_check_ids", [key for key in CHECKS if key not in OPTIONAL_SCOPE_CHECKS]
+            )
             for check_id, checkbox in self.check_boxes.items():
                 checkbox.setChecked(check_id in enabled)
             runs = self.store.list_runs(self.project_id)
@@ -2878,6 +2890,7 @@ class MainWindow(QMainWindow):
         try:
             management_profile = self.management_settings.profile()
             policy_exposure_profile = self.policy_exposure_settings.profile()
+            policy_scope_profile = self.policy_scope_settings.profile()
         except ValueError:
             self._open_check_settings()
             return
@@ -2886,6 +2899,7 @@ class MainWindow(QMainWindow):
         settings: dict[str, Any] = {
             "management_profile": management_profile.model_dump(mode="json"),
             "policy_exposure_profile": policy_exposure_profile.model_dump(mode="json"),
+            "policy_scope_profile": policy_scope_profile.model_dump(mode="json"),
             "require_logging": self.logging_check.isChecked(),
             "require_comments": self.comments_check.isChecked(),
             "enabled_check_ids": enabled,
@@ -2912,6 +2926,7 @@ class MainWindow(QMainWindow):
                     enabled_check_ids=enabled,
                     management_profile=management_profile,
                     policy_exposure_profile=policy_exposure_profile,
+                    policy_scope_profile=policy_scope_profile,
                     configuration_complete=configuration_complete,
                 ),
                 partial(self._analyzed, item),
@@ -4288,6 +4303,7 @@ class MainWindow(QMainWindow):
         try:
             management_profile = self.management_settings.profile()
             policy_exposure_profile = self.policy_exposure_settings.profile()
+            policy_scope_profile = self.policy_scope_settings.profile()
         except ValueError:
             self._open_check_settings()
             return
@@ -4302,6 +4318,7 @@ class MainWindow(QMainWindow):
                 "require_comments": require_comments,
                 "management_profile": management_profile.model_dump(mode="json"),
                 "policy_exposure_profile": policy_exposure_profile.model_dump(mode="json"),
+                "policy_scope_profile": policy_scope_profile.model_dump(mode="json"),
                 "enabled_check_ids": enabled_check_ids,
             },
         )
@@ -4332,6 +4349,7 @@ class MainWindow(QMainWindow):
                 enabled_check_ids=enabled_check_ids,
                 management_profile=management_profile,
                 policy_exposure_profile=policy_exposure_profile,
+                policy_scope_profile=policy_scope_profile,
             ),
             done,
         )
