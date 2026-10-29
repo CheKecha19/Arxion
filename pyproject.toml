@@ -36,7 +36,7 @@ storage = [
 [dependency-groups]
 dev = [
   "hypothesis>=6.120,<7",
-  "mypy>=1.14,<2",
+  "mypy>=1.14,<3",
   "pytest>=9.0.3,<10",
   "pytest-cov>=6.0,<7",
   "ruff>=0.9,<1",
