@@ -163,6 +163,29 @@
 матрица platform/version evidence и паспорта остальных checks остаются задачей
 CHECKS-001. Подробнее: [POLICY_UNION_SHADOWING.md](POLICY_UNION_SHADOWING.md).
 
+## CHECKS-003: FW-EXCESSIVE-ACCESS, версия 1.0.0
+
+Проверяемое утверждение: известное активное ALLOW превышает явный адресный/портовый
+порог либо его условие не входит целиком в утверждённые источники и сервисы роли,
+сеть назначения которой оно пересекает. Вход — полностью разрешимое правило и
+`PolicyScopeProfile`; роли и пороги не угадываются. Explicit exception использует
+точный rule ID. Finding содержит правило, нарушенные пределы или точное ролевое
+требование, источник, профиль и fingerprint. Unknown condition, parse и budget
+дают partial. Рекомендация требует ручной сверки; сервис, маршрут, NAT и
+достижимость не подтверждаются. Synthetic boundary/replay evidence приведены в
+`test_policy_scope_checks.py`, полный контракт — в `POLICY_SCOPE_CHECKS.md`.
+
+## CHECKS-005: FW-ACL-ATTACHMENT, версия 1.0.0
+
+Проверяемое утверждение: при явно полном инвентаре policy ID не имеет объявленной
+привязки либо отсутствует обязательная привязка к роли/интерфейсу и направлению.
+Источник — типизированные `PolicyAttachment` с точной source location и профиль
+обязательных слотов. Unknown/incomplete inventory запрещает отрицательный вывод и
+даёт partial; empty requirements и disabled scope различаются. Finding сохраняет
+policy или requirement ID и основание полноты. Привязка не доказывает effective
+packet processing. Контракт, совместимость и тесты описаны в
+`POLICY_SCOPE_CHECKS.md`.
+
 ## Совместимость результатов
 
 Все четыре конструктора принимают `evidence_version="1.0.0"` для точного

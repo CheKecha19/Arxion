@@ -1,5 +1,41 @@
 # Harness validation log
 
+## CHECKS-003 / CHECKS-005 — 2026-10-29
+
+Baseline HEAD `da964e8`; preserved the untracked Aruba controller and policy
+revision-diff work. Added explicit, opt-in `FW-EXCESSIVE-ACCESS` and
+`FW-ACL-ATTACHMENT` checks. The former evaluates configured address/port breadth
+and role source/service requirements; the latter evaluates unbound policy IDs and
+required role/interface-direction attachments only when inventory completeness is
+explicitly true. Unknown, incomplete parse and bounded-work outcomes remain
+partial. Profiles, exceptions, exact sources and fingerprints are replayable.
+
+Impact/context: `20261028T163157Z-2b3b16a9` and
+`20261028T163157Z-63ac194c`. Focused plus analysis-result/adapter/cloud/extended
+regressions:109 passed. Final focused policy/UI contract:11 passed. Strict mypy
+on12 changed source modules and scoped Ruff passed.
+
+Required full gate: `artifacts/harness/20261029T050155Z-38dcdd93/results.json`.
+Architecture, diff check, lint, full source mypy,830 harness tests, legacy CLI
+7-check/14-finding contract, Qt smoke, wheel/sdist and dependency audit passed.
+Historical tests:1812 passed and the same nine application-version golden
+differences failed; goldens were not changed. Format failed only on the existing
+quote style in `harness/tests/test_cloud_xml_parser.py`. Bandit completed with
+115 LOW /3 MEDIUM /0 HIGH; the MEDIUM findings are the existing dynamic SQL table
+name and two wildcard-address parser reports. Dependency audit found no known
+vulnerabilities. Overall gate therefore remains nonzero.
+
+At the user's explicit delivery request, ran only
+`scripts/build_desktop.ps1` after the final source changes. PyInstaller6.22.3 on
+Python3.12.13/Windows10 completed with exit0 and replaced the main portable
+artifacts. EXE:8492149 bytes, SHA256
+`139666814BA4C6141E305A99D81573AC35FCA2E9B95D520D5D45143C737A631A`.
+ZIP:57971731 bytes, SHA256
+`09A6C439A07C73C0DA2009252FC2478132FE323C8DC055D089F15ED3C58567DC`.
+Only file metadata and hashes were inspected. Per user instruction, no additional
+tests, EXE launch, self-test or archive execution was performed. Visible native
+GUI, clean OS and live device/cloud validation remain outstanding.
+
 ## Post-build continuation, 2026-10-28
 
 Delivered EXE remains untested as requested; subsequent source work is separate.

@@ -11,6 +11,7 @@ from firewall_compliance import __version__
 from firewall_compliance.application.firewall_assurance import analyze_source
 from firewall_compliance.domain.management import ManagementProfile
 from firewall_compliance.domain.policy_exposure import PolicyExposureProfile
+from firewall_compliance.domain.policy_scope import PolicyScopeProfile
 from firewall_compliance.infrastructure.source_reader import FileSourceReader
 from firewall_compliance.interfaces.cli.acl_map_commands import app as acl_map_app
 from firewall_compliance.interfaces.cli.control_commands import app as controls_app
@@ -65,6 +66,9 @@ def analyze(
     policy_exposure_profile: Annotated[
         Path | None, typer.Option("--policy-exposure-profile", exists=True, dir_okay=False)
     ] = None,
+    policy_scope_profile: Annotated[
+        Path | None, typer.Option("--policy-scope-profile", exists=True, dir_okay=False)
+    ] = None,
 ) -> None:
     """Проверить локальную конфигурацию и вывести результат Firewall Assurance в JSON."""
     try:
@@ -86,6 +90,13 @@ def analyze(
             if policy_exposure_profile
             else None
         )
+        scope = (
+            PolicyScopeProfile.model_validate_json(
+                policy_scope_profile.read_text(encoding="utf-8-sig")
+            )
+            if policy_scope_profile
+            else None
+        )
     except OSError:
         typer.echo("Не удалось прочитать входной файл.", err=True)
         raise typer.Exit(2) from None
@@ -101,8 +112,9 @@ def analyze(
         require_logging=require_logging,
         require_comments=require_comments,
         management_profile=profile,
-        extended_policy_checks=extended_policy_checks or exposure is not None,
+        extended_policy_checks=extended_policy_checks or exposure is not None or scope is not None,
         policy_exposure_profile=exposure,
+        policy_scope_profile=scope,
     )
     typer.echo(result.model_dump_json(indent=2))
     if isinstance(result, ParseFailure):
@@ -139,6 +151,9 @@ def analyze_bundle(
     policy_exposure_profile: Annotated[
         Path | None, typer.Option("--policy-exposure-profile", exists=True, dir_okay=False)
     ] = None,
+    policy_scope_profile: Annotated[
+        Path | None, typer.Option("--policy-scope-profile", exists=True, dir_okay=False)
+    ] = None,
     complete_config: Annotated[bool, typer.Option("--complete-config")] = False,
     require_logging: Annotated[bool, typer.Option("--require-logging/--no-require-logging")] = True,
     require_comments: Annotated[
@@ -150,7 +165,9 @@ def analyze_bundle(
     from firewall_compliance.application.analysis_workflow import analyze_source_result
 
     try:
-        _require_separate_output(output, path, management_profile, policy_exposure_profile)
+        _require_separate_output(
+            output, path, management_profile, policy_exposure_profile, policy_scope_profile
+        )
         source = FileSourceReader().read(path)
         source = SourceDocument.model_validate(
             {**source.model_dump(), "configuration_complete": complete_config}
@@ -165,6 +182,11 @@ def analyze_bundle(
             if policy_exposure_profile
             else None
         )
+        scope = (
+            PolicyScopeProfile.model_validate_json(_analysis_input(policy_scope_profile))
+            if policy_scope_profile
+            else None
+        )
         result = analyze_source_result(
             source,
             create_default_registry(),
@@ -172,8 +194,11 @@ def analyze_bundle(
             require_logging=require_logging,
             require_comments=require_comments,
             management_profile=management,
-            extended_policy_checks=extended_policy_checks or exposure is not None,
+            extended_policy_checks=extended_policy_checks
+            or exposure is not None
+            or scope is not None,
             policy_exposure_profile=exposure,
+            policy_scope_profile=scope,
         )
         output.write_text(export_analysis_json(result), encoding="utf-8")
     except (OSError, ValueError, UnicodeError):

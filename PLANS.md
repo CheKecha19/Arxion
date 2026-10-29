@@ -1,5 +1,50 @@
 # Working plans
 
+## CHECKS-003 / CHECKS-005: excessive access and ACL attachment, 2026-10-28
+
+Objective: implement two explicitly selected, replayable policy checks. CHECKS-003
+detects address/service breadth above organization thresholds and role-specific
+access outside an explicit profile. CHECKS-005 detects policy definitions without
+declared attachments and missing required subject/direction filtering, but only
+when attachment inventory completeness is explicitly asserted. Neither check
+claims runtime service availability, effective reachability, NAT behavior or an
+implicit platform binding.
+
+Baseline: `da964e8`; preserve the untracked Aruba controller and policy revision
+diff work. Prospective paths: new domain/analysis policy-scope modules, additive
+PolicyAttachment direction support, analysis replay/catalogue and desktop/CLI
+selection wiring, focused synthetic tests, backlog/passport/status documents and
+this validation record. Impact report:
+`artifacts/harness/20261028T163157Z-2b3b16a9/impact.json`; static candidates are a
+lower bound because replay, stored settings, Qt checkboxes, cloud analysis and
+reports consume check IDs dynamically.
+
+Compatibility: new profile fields are omitted from old AnalysisResult options;
+legacy seven/default catalogues and old PolicyAttachment JSON remain readable.
+No SQLite migration. Negative attachment conclusions require an explicit complete
+inventory; unknown/incomplete inputs produce limitations. Thresholds, role
+networks/services, exceptions and required bindings remain organization inputs.
+Use bounded interval operations, exact source locations and deterministic finding
+IDs. Verify focused contracts/replay/UI settings, architecture, quality, tests,
+smoke and the full gate; record actual counts and pre-existing failures without
+refreshing goldens.
+
+Completion evidence: implemented `FW-EXCESSIVE-ACCESS` and
+`FW-ACL-ATTACHMENT` with PolicyScopeProfile, bounded deterministic evidence,
+replay, CLI profile input, desktop settings/persistence, cloud selection and
+backward-compatible role attachment JSON. New desktop checks are opt-in. Focused
+and adjacent suites:109 passed; final UI contract plus focused suite:11 passed.
+Final full report `20261029T050155Z-38dcdd93`: architecture/diff/lint/mypy,
+830 harness tests, CLI contract, Qt smoke, wheel/sdist and dependency audit pass.
+Historical suite returned to its baseline1812 passed / nine version-golden
+failures. Overall gate remains failed because an unrelated cloud XML test is not
+Ruff-formatted, those nine goldens were not refreshed, and Bandit retains three
+pre-existing MEDIUM findings. No new Bandit MEDIUM/HIGH finding belongs to the
+new modules. After explicit delivery authorization, the native Windows EXE and
+ZIP were rebuilt from this source with `scripts/build_desktop.ps1` (exit0).
+Per user instruction, the artifact was not launched and no additional tests were
+run; visible/clean-OS validation remains outstanding.
+
 ## Git delivery cadence requested by user, 2026-10-28
 
 User explicitly requests pushing the current completed checkpoint now and then

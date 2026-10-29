@@ -37,6 +37,7 @@ from firewall_compliance.domain.policy_decision import (
     SingleDeviceDecisionResult,
 )
 from firewall_compliance.domain.policy_exposure import PolicyExposureProfile
+from firewall_compliance.domain.policy_scope import PolicyScopeProfile
 from firewall_compliance.domain.reachability import (
     AnalysisReason,
     ReachabilityResult,
@@ -155,6 +156,14 @@ def analysis_from_run(store: RunStore, project_id: str, run_id: str) -> Analysis
             exposure_profile=PolicyExposureProfile.model_validate(
                 settings.get("policy_exposure_profile") or {}
             ),
+            scope_profile=PolicyScopeProfile.model_validate(
+                settings.get("policy_scope_profile") or {}
+            )
+            if any(
+                check.check_id in {"FW-EXCESSIVE-ACCESS", "FW-ACL-ATTACHMENT"}
+                for check in report.checks
+            )
+            else None,
         )
         components.append(
             PolicyComponent(
