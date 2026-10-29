@@ -1,0 +1,141 @@
+{
+  "schema_version": "1.0.0",
+  "created_at": "2026-10-10",
+  "vendor": "Cisco",
+  "platform": "ASA",
+  "declared_version": "9.16",
+  "version_provenance": "Документация, не захват конкретной сборки.",
+  "origin": "Собственные синтетические примеры проекта.",
+  "contains_customer_data": false,
+  "encoding": "ascii",
+  "newline": "LF",
+  "scenarios": [
+    {
+      "id": "connected_static_default",
+      "device_id": "synthetic-connected_static_default",
+      "context": "single",
+      "firewall_mode": "routed",
+      "address_family": "ipv4",
+      "table_role": "data",
+      "observed_at": null,
+      "observation_set_id": "authored-connected_static_default",
+      "coherence": "Вымышленная группировка; не доказательство общего наблюдения.",
+      "sources": [
+        {
+          "path": "connected_static_default/interfaces.cfg",
+          "sha256": "c16bc6176f52a90d533de4e751c1a6cf6f3e69bf0212fbbf28a99c9804564880",
+          "byte_length": 203,
+          "source_kind": "asa_running_config_interfaces",
+          "command": "show running-config interface",
+          "selection": "authored_excerpt",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null
+        },
+        {
+          "path": "connected_static_default/show_route.txt",
+          "sha256": "dca7e36e3c559af2f44d58f5dfae1088914a6ecbb150fe882e6f1f2fb3aab632",
+          "byte_length": 286,
+          "source_kind": "asa_ipv4_rib",
+          "command": "show route",
+          "selection": "authored_excerpt",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null
+        },
+        {
+          "path": "connected_static_default/static_routes.cfg",
+          "sha256": "d21c44bead940e3167b0b98c0f155c2449a5b10e569528f615a4fd6d6b71b40c",
+          "byte_length": 95,
+          "source_kind": "asa_running_config_static_routes",
+          "command": "show running-config route",
+          "selection": "authored_excerpt",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null
+        }
+      ]
+    },
+    {
+      "id": "narrower_null0",
+      "device_id": "synthetic-narrower_null0",
+      "context": "single",
+      "firewall_mode": "routed",
+      "address_family": "ipv4",
+      "table_role": "data",
+      "observed_at": null,
+      "observation_set_id": "authored-narrower_null0",
+      "coherence": "Вымышленная группировка; не доказательство общего наблюдения.",
+      "sources": [
+        {
+          "path": "narrower_null0/interfaces.cfg",
+          "sha256": "e3071cf2f979954af45703aff4c53bb2f7181e3e57644d52ed6ea9627487192c",
+          "byte_length": 203,
+          "source_kind": "asa_running_config_interfaces",
+          "command": "show running-config interface",
+          "selection": "authored_excerpt",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null
+        },
+        {
+          "path": "narrower_null0/static_routes.cfg",
+          "sha256": "fb9c3fe4febdee30056b34a09230022ae868e7b3a690e99dd73d9d4fde8041a6",
+          "byte_length": 190,
+          "source_kind": "asa_running_config_static_routes",
+          "command": "show running-config route",
+          "selection": "authored_excerpt",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null
+        }
+      ]
+    },
+    {
+      "id": "partial_unsupported",
+      "device_id": "synthetic-partial_unsupported",
+      "context": "single",
+      "firewall_mode": "routed",
+      "address_family": "ipv4",
+      "table_role": "data",
+      "observed_at": null,
+      "observation_set_id": "authored-partial_unsupported",
+      "coherence": "Вымышленная группировка; не доказательство общего наблюдения.",
+      "sources": [
+        {
+          "path": "partial_unsupported/interfaces.cfg",
+          "sha256": "067efdb8b876ea39d1e82472374bad1e7965b5a1aa7d241c35f30808a7907ac3",
+          "byte_length": 82,
+          "source_kind": "asa_running_config_interfaces",
+          "command": "show running-config interface",
+          "selection": "partial",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null
+        },
+        {
+          "path": "partial_unsupported/show_route.txt",
+          "sha256": "81dd96e6583059b2e8aea7ffb36e88cca24112056adf107218f98cad79957306",
+          "byte_length": 146,
+          "source_kind": "asa_ipv4_rib",
+          "command": "show route",
+          "selection": "partial",
+          "extent": "truncated",
+          "complete": false,
+          "observed_at": null
+        },
+        {
+          "path": "partial_unsupported/static_routes.cfg",
+          "sha256": "d1f2d51b0554a6a55ad2f59f481544de5ec932275c9f390f2c61775a8c0ed98e",
+          "byte_length": 61,
+          "source_kind": "asa_running_config_static_routes",
+          "command": "show running-config route",
+          "selection": "partial",
+          "extent": "excerpt",
+          "complete": false,
+          "observed_at": null
+        }
+      ]
+    }
+  ]
+}

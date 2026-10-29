@@ -1,9 +1,5 @@
 """Адаптеры и контракты парсинга конфигураций производителей."""
 
-from firewall_compliance.parsers.cisco_asa import CiscoAsaParser
-from firewall_compliance.parsers.cisco_asa_forwarding import CiscoAsaForwardingParser
-from firewall_compliance.parsers.cisco_asa_network import CiscoAsaNetworkParser
-from firewall_compliance.parsers.comware import ComwareParser
 from firewall_compliance.parsers.contracts import (
     ConfigurationParser,
     DetectionResult,
@@ -19,7 +15,6 @@ from firewall_compliance.parsers.forwarding_contracts import (
     ForwardingParseRequest,
     ForwardingParseResult,
 )
-from firewall_compliance.parsers.hp_aruba import HpArubaParser
 from firewall_compliance.parsers.network_contracts import (
     NetworkDocumentMetadata,
     NetworkFactsParser,
@@ -61,3 +56,29 @@ __all__ = [
     "NetworkParseRequest",
     "NetworkParseResult",
 ]
+
+
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from firewall_compliance.devices.network.hpe_aruba.policy import HpArubaParser
+    from firewall_compliance.devices.network.hpe_h3c.comware.policy import ComwareParser
+    from firewall_compliance.devices.ngfw.cisco.asa.forwarding import CiscoAsaForwardingParser
+    from firewall_compliance.devices.ngfw.cisco.asa.network import CiscoAsaNetworkParser
+    from firewall_compliance.devices.ngfw.cisco.asa.policy import CiscoAsaParser
+
+
+_PARSERS = {
+    "HpArubaParser": "firewall_compliance.devices.network.hpe_aruba.policy",
+    "ComwareParser": "firewall_compliance.devices.network.hpe_h3c.comware.policy",
+    "CiscoAsaForwardingParser": "firewall_compliance.devices.ngfw.cisco.asa.forwarding",
+    "CiscoAsaNetworkParser": "firewall_compliance.devices.ngfw.cisco.asa.network",
+    "CiscoAsaParser": "firewall_compliance.devices.ngfw.cisco.asa.policy",
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _PARSERS:
+        raise AttributeError(name)
+    return getattr(import_module(_PARSERS[name]), name)

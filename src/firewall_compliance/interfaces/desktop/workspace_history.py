@@ -107,6 +107,7 @@ class WorkspaceHistory:
         elif not location["run"]:
             view.run_id, view.run = None, None
             view._refresh_all()
+        view.navigate(location["page"], remember=False)
         for name, value in location["combos"].items():
             combo = getattr(view, name)
             combo.setCurrentIndex(max(0, combo.findData(value)))
@@ -136,5 +137,4 @@ class WorkspaceHistory:
             "integrations" if settings_index == 0 else "rules", settings_index
         )
         view.integration_pages.setCurrentIndex(location["integration"])
-        view.navigate(location["page"], remember=False)
         view.back_button.setEnabled(bool(self.locations))

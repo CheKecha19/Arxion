@@ -2,8 +2,13 @@
 
 from datetime import datetime
 
-from firewall_compliance.analysis.management_checks import ManagementCheck, management_checks
-from firewall_compliance.analysis.policy_checks import (
+from firewall_compliance.checks.access.exposure import (
+    DangerousServicesCheck,
+    UntrustedAdministrativeAccessCheck,
+)
+from firewall_compliance.checks.access.scope import ExcessiveAccessCheck, PolicyAttachmentCheck
+from firewall_compliance.checks.management.rules import ManagementCheck, management_checks
+from firewall_compliance.checks.policy_quality.rules import (
     AnyAnyCheck,
     CommentsCheck,
     DisabledRulesCheck,
@@ -17,11 +22,6 @@ from firewall_compliance.analysis.policy_checks import (
     UnionShadowedRulesCheck,
     check_version,
 )
-from firewall_compliance.analysis.policy_exposure import (
-    DangerousServicesCheck,
-    UntrustedAdministrativeAccessCheck,
-)
-from firewall_compliance.analysis.policy_scope import ExcessiveAccessCheck, PolicyAttachmentCheck
 from firewall_compliance.domain import DeviceRevision
 from firewall_compliance.domain.assurance import FirewallAssuranceResult
 from firewall_compliance.domain.management import ManagementProfile

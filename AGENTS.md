@@ -1,65 +1,92 @@
-# Engineering Harness
+# Development priority until v1.0
 
-Start with `GOALS.md`, `PLANS.md`, `harness/context` and `harness/project-map.md`.
-Work in the existing checkout; cloud tasks are already isolated.
-Do not create worktrees unless asked.
-Use `.agents/skills/` for task-specific procedures. Preserve the specialist
-instructions below.
+Prioritize application code and requested functionality.
+Do not create new tests, test cases, fixtures, smoke scripts or test-only
+infrastructure unless the user explicitly requests them. Do not proactively
+expand, reorganize or delete the existing test suite. Defer the comprehensive
+testing and code-reorganization strategy until the user starts v1.0 preparation.
+Run all automated checks through GitHub Actions by default. Do not run local
+tests, lint, format checks, type checks, harness gates, smoke checks, builds or
+security checks unless the user explicitly requests local execution.
+Local source inspection and diff review are allowed. Report what was reviewed,
+the available CI results and what remains unverified.
+These rules take precedence over conflicting test/full-gate instructions in
+project skills, plans and historical documents until the user changes them.
 
-Before editing, inspect Git status and relevant contracts. For substantial work,
-record a scoped plan in PLANS.md and update it with evidence as work proceeds.
-Run `python harness/build impact <prospective-paths>` before substantial edits;
-review downstream callers, JSON/schema and SQLite compatibility, Qt wiring and
-candidate tests. Use `python harness/build context` for the current import map.
-Static impact is incomplete; inspect runtime consumers and run the full gate.
-Keep application behavior, fixtures and golden outputs unchanged in harness-only
-tasks. Never refresh goldens merely to make a test pass. Use synthetic data only.
-Do not commit, push, delete files, publish, or access live cloud accounts unless
-the user authorizes that action. Never log credentials or customer configurations.
+# Working procedure
 
-Install: `python harness/build setup`. Required checks: `python harness/build all`.
-Separate commands: `architecture`, `quality`, `test`, `smoke`, `package`, `security`.
-Each invocation writes a unique report under ignored `artifacts/harness/` and
-returns nonzero if any required command fails. Inspect the report and actual test
-counts; an unrun, skipped or zero-test suite is not a passing validation.
-Record baseline failures without fixing application code outside the task scope.
-Linux offscreen results do not validate a native Windows release.
-Update `harness/build-log.md` with the baseline SHA, commands, results and limits.
+For small tasks: inspect Git status and relevant files, make the requested change,
+review the edited diff and report the result briefly. No mandatory planning
+document, full context inventory or build-log update for small tasks.
 
-# Codex Agents Library
+For substantial changes affecting multiple components, architecture or persisted
+contracts: read relevant sections of GOALS.md, PLANS.md, harness/context and
+harness/project-map.md. Record a scoped plan and progress in PLANS.md.
+Inspect downstream consumers, JSON/schema and SQLite compatibility, Qt wiring
+and runtime imports directly. Run automated impact/context analysis in GitHub
+Actions; local harness execution requires an explicit user request.
+Static impact is incomplete; inspect relevant runtime consumers directly.
+Impact analysis does not require a full test run.
 
-The project uses the 36 specialist definitions in `.codex/agents/*.toml` from
-`proflead/codex-agents-library`, upstream commit
-`ab1fbbbf45a578b736b83bcd45dbb82bf6b06aaf`.
+Work in the existing checkout. Do not create worktrees unless asked.
+Use relevant procedures from `.agents/skills/` within the current user scope.
+Preserve existing unrelated edits and avoid unrelated fixes.
+Keep application behavior unchanged in harness-only tasks.
+Never refresh golden outputs merely to make a test pass.
+Use synthetic data for development checks; never log credentials or customer
+configurations. Do not commit, push, delete files, publish or access live cloud
+accounts unless the user authorizes that action.
 
-When the user requests a named specialist or authorizes a multi-agent workflow:
+# Tools and validation
 
-1. Read the matching `.codex/agents/<name>.toml` before delegating.
-2. If the runtime supports native custom roles, select that role by name.
-3. If the available spawn tool has no custom-role argument, include the role's
-   `developer_instructions` in the delegated task, or explicitly instruct the
-   child to read that file and adopt its instructions before doing any work.
-   Merely naming a task after the role does not load its instructions.
-4. Keep the delegated work within the user's request. Parent instructions,
-   permissions, and repository constraints take precedence over library examples.
-   Honor each role's `sandbox_mode`; read-only roles must not edit files.
-5. Wait for the delegated result and verify it before reporting completion.
+Windows distribution builds must follow `specifications/WINDOWS_DISTRIBUTION.md`:
+build the entire project into `dist/FirewallComplience_v<project.version>`;
+overwrite the same version, do not create ZIP archives or separate CLI/feature
+distributions. Use `scripts/build_desktop.ps1` as the single build implementation.
 
-Agents inherit the current session's model because the upstream GPT-5.4 model
-names are absent from this installation's model catalog. Do not force a different
-model unless the user requests it.
+Use the existing Python/PySide6 toolchain: uv for dependencies, Ruff for
+formatting/lint and mypy for typing. Use pytest/Hypothesis only within the testing
+policy above. Install locked tooling with `python harness/build setup` in CI;
+local setup requires an explicit user request.
+Available harness commands: context, impact, architecture, quality, test, smoke,
+package, security and all. Their availability does not make them mandatory.
 
-For this Python/PySide6 project, use its existing tools: Ruff for formatting and
-lint, mypy for typing, pytest and Hypothesis for tests, and uv for dependencies.
-Prefer those over generic tools suggested in the library examples.
+The workflow `.github/workflows/harness.yml` runs the harness on Linux and Windows
+for pull requests, pushes to main and manual dispatches. Keep harness and test
+sources versioned in this repository. After authorized publication, use CI logs
+and artifacts to diagnose failures, make fixes locally and publish them only
+within the user's commit/push authorization. This CI policy does not itself
+authorize commits or pushes. Do not reproduce CI failures locally unless asked.
 
-Installation alone does not authorize code changes, external messages, or an
-unrequested audit. Spawn specialists when the user requests or authorizes them.
+When reviewing harness checks, inspect their reports and actual results.
+An unrun, skipped or zero-test suite is not a passing validation.
+For substantial work, requested builds or broad validation, record the baseline
+SHA, commands, results and limits in harness/build-log.md. Keep summaries concise.
+Linux offscreen checks do not validate a native Windows release.
 
-## Security scan scope
+# Delegation
 
-Before starting a security scan, read the root `SECURITY.md` and use its exclusions
-when configuring the authorized scan scope. Do not assume that the scanner applies
-these exclusions automatically; state any unsupported filtering and record the
-actual reviewed scope. Preserve the scope of an already-running scan unless the
-user authorizes a supported change.
+The user authorizes autonomous delegation when it helps complete the task.
+Use specialists for suitable independent subtasks or focused investigations;
+no additional user confirmation is needed. Avoid duplicate exploration and
+unnecessary agents. Delegation must stay within the authorized task and the
+same testing, data-access and external-action limits as the parent task.
+
+When using a specialist from `.codex/agents/<name>.toml`:
+1. Read the matching role definition before delegating.
+2. Select the matching native role when available; otherwise give the child its
+   developer instructions or direct it to read and adopt the role definition.
+3. Honor the role sandbox; read-only roles must not edit files.
+4. Assign clear file/responsibility ownership. Tell workers to preserve others'
+   edits and accommodate concurrent changes.
+5. Wait for the result and verify it before reporting completion.
+
+Agents inherit the current session model unless the user requests another model.
+Library examples do not authorize unrelated changes, external messages or audits.
+
+# Security scan scope
+
+Before an authorized security scan, read root SECURITY.md and apply its exclusions
+to the actual reviewed scope. Do not assume automatic filtering. Report unsupported
+filtering. Preserve an already-running scan's scope unless the user authorizes a
+supported change.

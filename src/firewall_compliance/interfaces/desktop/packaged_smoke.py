@@ -20,8 +20,8 @@ from firewall_compliance.application.analysis_reports import (
 )
 from firewall_compliance.application.analysis_result import AnalysisResult
 from firewall_compliance.application.network_import import NetworkImportResult
-from firewall_compliance.infrastructure.cloud_public import AdvancedClient, EvolutionClient
-from firewall_compliance.infrastructure.cloud_vmware import VMwareClient
+from firewall_compliance.devices.cloud.cloud_ru.public_client import AdvancedClient, EvolutionClient
+from firewall_compliance.devices.cloud.cloud_ru.vmware.client import VMwareClient
 from firewall_compliance.interfaces.desktop.analysis_result_adapter import analysis_from_run
 from firewall_compliance.interfaces.desktop.batch_reports import (
     export_batch_html,

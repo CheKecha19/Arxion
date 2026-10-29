@@ -25,8 +25,23 @@ from firewall_compliance.analysis.device_decision import (
 )
 from firewall_compliance.analysis.firewall_assurance import analyze_firewall
 from firewall_compliance.analysis.forwarding_policy import evaluate_forwarding_policy
-from firewall_compliance.analysis.management_checks import management_checks
-from firewall_compliance.analysis.policy_checks import (
+from firewall_compliance.analysis.policy_decision import evaluate_policy
+from firewall_compliance.analysis.revision_diff import compare_device_revisions
+from firewall_compliance.analysis.route_selection import analyze_reachability, select_route
+from firewall_compliance.application.device_decision import analyze_imported_device
+from firewall_compliance.application.forwarding_binding import ForwardingBindingResult
+from firewall_compliance.application.network_import import NetworkImportResult
+from firewall_compliance.checks.access.exposure import (
+    DangerousServicesCheck,
+    UntrustedAdministrativeAccessCheck,
+)
+from firewall_compliance.checks.access.scope import ExcessiveAccessCheck, PolicyAttachmentCheck
+from firewall_compliance.checks.governance.rules import (
+    RuleGovernanceCheck,
+    UnusedRuleCandidatesCheck,
+)
+from firewall_compliance.checks.management.rules import management_checks
+from firewall_compliance.checks.policy_quality.rules import (
     AnyAnyCheck,
     CommentsCheck,
     DisabledRulesCheck,
@@ -38,21 +53,6 @@ from firewall_compliance.analysis.policy_checks import (
     ShadowedRulesCheck,
     UnionShadowedRulesCheck,
 )
-from firewall_compliance.analysis.policy_decision import evaluate_policy
-from firewall_compliance.analysis.policy_exposure import (
-    DangerousServicesCheck,
-    UntrustedAdministrativeAccessCheck,
-)
-from firewall_compliance.analysis.policy_governance import (
-    RuleGovernanceCheck,
-    UnusedRuleCandidatesCheck,
-)
-from firewall_compliance.analysis.policy_scope import ExcessiveAccessCheck, PolicyAttachmentCheck
-from firewall_compliance.analysis.revision_diff import compare_device_revisions
-from firewall_compliance.analysis.route_selection import analyze_reachability, select_route
-from firewall_compliance.application.device_decision import analyze_imported_device
-from firewall_compliance.application.forwarding_binding import ForwardingBindingResult
-from firewall_compliance.application.network_import import NetworkImportResult
 from firewall_compliance.domain.assurance import FirewallAssuranceResult
 from firewall_compliance.domain.base import DomainModel
 from firewall_compliance.domain.enums import FindingStatus, SourceDocumentKind

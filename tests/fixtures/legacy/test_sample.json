@@ -1,0 +1,43 @@
+{
+  "firewall": {
+    "rules": [
+      {
+        "id": 1,
+        "name": "Allow LAN to DMZ",
+        "action": "accept",
+        "src": [{"id": "LAN"}],
+        "dst": [{"id": "DMZ"}],
+        "service": [{"id": "HTTP"}],
+        "enabled": true
+      },
+      {
+        "id": 2,
+        "name": "Allow DMZ to Internet",
+        "action": "accept",
+        "src": [{"id": "DMZ"}],
+        "dst": [{"id": "Internet"}],
+        "service": [{"id": "HTTPS"}],
+        "enabled": true
+      },
+      {
+        "id": 3,
+        "name": "Deny All (test)",
+        "action": "drop",
+        "src": [{"id": "LAN"}],
+        "dst": [{"id": "Internet"}],
+        "enabled": true
+      }
+    ]
+  },
+  "zones": [
+    {"id": "LAN", "name": "Local Network"},
+    {"id": "DMZ", "name": "Demilitarized Zone"},
+    {"id": "Internet", "name": "Internet"}
+  ],
+  "objects": {
+    "services": [
+      {"id": "HTTP", "name": "HTTP", "protocol": "tcp", "ports": [80]},
+      {"id": "HTTPS", "name": "HTTPS", "protocol": "tcp", "ports": [443]}
+    ]
+  }
+}

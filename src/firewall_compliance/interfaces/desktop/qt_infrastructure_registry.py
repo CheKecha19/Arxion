@@ -532,12 +532,18 @@ class InfrastructureRegistryPanel(QWidget):
         self.link_button.setEnabled(False)
         self._selection_changed()
 
-    def set_project(self, project_id: str | None) -> None:
+    def set_project(self, project_id: str | None, *, refresh: bool = True) -> None:
         if self.project_id != project_id:
             self.clear_filters()
+            self.show_archived.blockSignals(True)
             self.show_archived.setChecked(False)
+            self.show_archived.blockSignals(False)
         self.project_id = project_id
-        self.refresh()
+        if refresh:
+            self.refresh()
+        else:
+            self.model.replace([])
+            self._selection_changed()
 
     def refresh(self, *_: Any) -> None:
         selected = self.selected()

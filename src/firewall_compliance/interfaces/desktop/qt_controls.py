@@ -218,11 +218,12 @@ class ControlsPanel(QWidget):
         )
         self._update_actions()
 
-    def set_project_context(self, project_id: str | None) -> None:
+    def set_project_context(self, project_id: str | None, *, refresh: bool = True) -> None:
         if self._closed:
             return
         if self.project_id == project_id:
-            self.refresh_results()
+            if refresh:
+                self.refresh_results()
             return
         self.cancel_current()
         self.project_id = project_id
@@ -242,8 +243,10 @@ class ControlsPanel(QWidget):
         )
         self._update_catalogue_label()
         self._update_actions()
-        if project_id:
+        if project_id and refresh:
             self.refresh_results()
+        elif project_id:
+            self.status_label.setText("Сохранённые оценки ещё не загружены.")
         else:
             self.status_label.setText("Выберите проект.")
 

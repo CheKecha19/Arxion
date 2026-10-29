@@ -59,7 +59,7 @@ uv run firewall-compliance-desktop
 
 ### Portable-сборка
 
-Если у вас есть собранный архив `FirewallCompliance-windows-x64.zip`, распакуйте его и запустите `FirewallCompliance.exe` из папки `FirewallCompliance`. Переносите всю папку, включая `_internal`; Python и `uv` для запуска не требуются.
+Откройте `FirewallComplience_v<версия>.exe` из папки `dist/FirewallComplience_v<версия>`. Переносите всю папку, включая `_internal`; Python и `uv` для запуска не требуются.
 
 Для сборки из подготовленного окружения на Windows:
 
@@ -67,7 +67,7 @@ uv run firewall-compliance-desktop
 powershell -ExecutionPolicy Bypass -File scripts/build_desktop.ps1
 ```
 
-Результат появится в `dist/FirewallCompliance`, архив — в `dist/FirewallCompliance-windows-x64.zip`.
+Результат появится в `dist/FirewallComplience_v<версия>`, где версия берётся из `pyproject.toml`. Повторная сборка перезаписывает эту папку. Архив автоматически не создаётся; отдельные CLI/feature-сборки не выпускаются. См. [правила сборки](specifications/WINDOWS_DISTRIBUTION.md).
 
 ## CLI
 
