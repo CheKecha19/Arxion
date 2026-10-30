@@ -1,5 +1,19 @@
 # Harness validation log
 
+## Requested Windows v0.3.2 build — 2026-10-30
+
+Baseline HEAD: ab9e7dcb6c374e79d4f6f012d2c658453c55365a; existing qt_app.py
+integration settings changes preserved and included in the requested build.
+Updated pyproject.toml, package __version__, root uv.lock and distribution path
+example to 0.3.2. Command: scripts/build_desktop.ps1; exit 0, PyInstaller 6.22.3,
+Python 3.12.13, Windows 10. Full output:
+dist/FirewallComplience_v0.3.2/FirewallComplience_v0.3.2.exe with _internal.
+No archive generated. Build emitted the optional tzdata hidden-import warning.
+Reviewed version/source diff and existing integration handlers. No tests, local
+gates, smoke, EXE launch or runtime validation performed. CI result not established
+for this revision. User authorized committing and pushing source after the build;
+dist remains an ignored local artifact, with no GitHub release or tag requested.
+
 ## Requested Windows v0.3.1 build — 2026-10-30
 
 Baseline HEAD: 0893237147fd00aed1bae8d54c93192863adafd1 with existing local edits.
