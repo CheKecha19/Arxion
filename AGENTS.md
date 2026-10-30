@@ -39,6 +39,11 @@ accounts unless the user authorizes that action.
 
 # Tools and validation
 
+Follow `specifications/GIT_RELEASE_POLICY.md` for future commit/PR titles,
+version increments, tags and GitHub Release names. Read it before preparing
+a commit or release. This naming policy does not authorize commit, push,
+tag creation or publication; existing user-authorization limits still apply.
+
 Windows distribution builds must follow `specifications/WINDOWS_DISTRIBUTION.md`:
 build the entire project into `dist/FirewallComplience_v<project.version>`;
 overwrite the same version, do not create ZIP archives or separate CLI/feature
