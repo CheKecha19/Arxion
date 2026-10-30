@@ -1676,7 +1676,7 @@ class MainWindow(QMainWindow):
             ("Серверное оборудование", (("aruba", "Aruba", False),)),
             (
                 "NGFW",
-                (("usergate", "UserGate", True), ("pt", "PT NGFW", True), ("ideco", "Ideco", True)),
+                (("usergate", "UserGate", False), ("pt", "PT NGFW", True), ("ideco", "Ideco", False)),
             ),
             ("Платформы виртуализации", (("cloud_ru", "Cloud.ru", False),)),
         )
@@ -1722,11 +1722,13 @@ class MainWindow(QMainWindow):
             (
                 "usergate",
                 "UserGate",
-                "Запланировано. Подключение по API и импорт конфигураций UserGate "
-                "ещё не реализованы. Проверки политик, карта и расчёт доступности "
-                "для этого производителя пока недоступны. "
-                "Следующий этап — подтвердить версии и формат экспорта на образцах; "
-                "готовность адаптера будет указана отдельно от готовности сетевого анализа.",
+                "Чтение конфигурации по API: UserGate 6.1.5+ и 7.x через TCP/HTTP, "
+                "UserGate 7.3.3+ через HTTPS с проверкой сертификата. "
+                "Укажите адрес устройства и учётные данные в форме подключения. "
+                "Изменение конфигурации NGFW через приложение запрещено. "
+                "Снимок сохраняется в JSON для импорта и анализа правил. "
+                "NAT и неподдержанные условия сохраняются с ограничениями анализа; "
+                "карта и расчёт сетевой доступности для UserGate пока недоступны.",
             ),
             (
                 "pt",
@@ -1740,11 +1742,13 @@ class MainWindow(QMainWindow):
             (
                 "ideco",
                 "Ideco",
-                "Запланировано. Импорт конфигураций и подключение по API не реализованы. "
-                "Проверки политик, карта и расчёт доступности недоступны. "
-                "Поддержка будет определена отдельно для конкретных версий и форматов; "
-                "экспорт таблицы правил не подтверждает полноту объектов и сетевых данных. "
-                "Карточка описывает план и не выполняет подключение.",
+                "Чтение конфигурации Ideco NGFW v23, классический VCE, по HTTPS "
+                "с проверкой сертификата, порт 8443. "
+                "Укажите адрес устройства, учётные данные и при необходимости файл CA "
+                "в форме подключения. Снимок правил, объектов, зон и настроек firewall "
+                "сохраняется в JSON для импорта и анализа. "
+                "NAT сохраняется без расчёта трансляций; полнота эффективной политики "
+                "не подтверждена. Поддержка VPP/BPF и переключение VCE недоступны.",
             ),
             (
                 "cloud_ru",
@@ -1763,6 +1767,28 @@ class MainWindow(QMainWindow):
             detail_layout.addWidget(_label(description, muted=True))
             if key == "cloud_ru":
                 detail_layout.addWidget(self.cloud_panel.settings_widget)
+            if key == "usergate":
+                detail_layout.addWidget(
+                    _button(
+                        "Настроить подключение и прочитать конфигурацию",
+                        self.choose_usergate,
+                        primary=True,
+                    )
+                )
+                detail_layout.addWidget(
+                    _button("Импортировать сохранённый снимок", self._import_integration_files)
+                )
+            if key == "ideco":
+                detail_layout.addWidget(
+                    _button(
+                        "Настроить подключение и прочитать конфигурацию",
+                        self.choose_ideco,
+                        primary=True,
+                    )
+                )
+                detail_layout.addWidget(
+                    _button("Импортировать сохранённый снимок", self._import_integration_files)
+                )
             if key == "aruba":
                 detail_layout.addWidget(
                     _button(
