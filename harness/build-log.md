@@ -474,3 +474,13 @@ bundle dist/FirewallComplience_v0.3.0; EXE, _internal and README.txt present.
 Build warning: hidden import tzdata not found. No source fixes, tests, lint,
 types, harness gates, smoke, EXE launch, CI run or ZIP creation performed.
 Application runtime remains unverified.
+
+## Requested Windows rebuild and Git push — 2026-10-30
+
+Baseline: 2a19895a9aa15953115e91ff3a19d6ddde4f58da, branch release/v0.3.
+Command: powershell -ExecutionPolicy Bypass -File scripts/build_desktop.ps1.
+Result: exit 0, PyInstaller 6.22.3 / Python 3.12.13. Entire project rebuilt into
+ dist/FirewallComplience_v0.3.2 with EXE, _internal and README.txt; no ZIP.
+UserGate settings entry is present in source. No local tests, lint, type checks,
+smoke or application launch. Runtime compatibility remains unverified.
+Unrelated pending GIT_RELEASE_POLICY.md edits excluded from this delivery commit.
