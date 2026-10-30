@@ -1,5 +1,18 @@
 # Harness validation log
 
+## Purpose-based CI jobs — 2026-10-30
+
+Baseline: 3c0499d4e804c511528e30f62d8ed92e2721d209. Source/diff review only:
+workflow matrix now selects quality/test/smoke/package/security on Windows;
+Windows maps job also runs architecture; impact base selection uses PowerShell.
+All six CI checks use windows-latest. Existing runner commands, setup, exit-code
+propagation, upload-on-failure and scoped security targets remain unchanged.
+Each category has its own check and artifact. No tests added, local automated
+checks run. User subsequently authorized commit/push. Baseline supplied CI artifacts show maps,
+architecture, harness tests, package and dependency audit passing; overall checks
+failed on missing fixtures, quality/types, security alerts and Linux Qt libraries.
+Those results do not validate the new workflow; its CI execution is pending.
+
 ## Mermaid map integration — 2026-10-30
 
 Baseline HEAD: 843fe6227bb36d4b80f8f23e677547addad060ee.

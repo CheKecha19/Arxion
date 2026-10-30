@@ -24,8 +24,9 @@ its dependencies. It is also included in `all`.
 In GitHub Actions, open **Engineering Harness**, select a run, download the
 **project-maps** artifact, then open `<run>/maps/README.md` in a Mermaid-capable
 Markdown viewer or open individual `.mmd` sources in a Mermaid editor. Artifacts
-contain source diagrams, not pre-rendered SVG/PNG. A separate Linux job generates
-maps, context and change-impact reports even if the verification job fails.
+contain source diagrams, not pre-rendered SVG/PNG. A separate Windows job generates
+maps, context, change-impact reports and architecture boundaries independently
+of the Windows checks.
 Existing workflow triggers remain PRs, pushes to main and manual dispatches.
 PR impact uses the PR base; push impact uses the previous commit; manual runs
 use HEAD. If the event base is unavailable, impact falls back to the checked-out
@@ -42,6 +43,31 @@ type-checking imports; they do not imply calls or data flow. The existing resolv
 uses the longest known module prefix, without tracing re-exports. Dynamic imports,
 Qt signals, SQL and changes in business meaning require manual scenario review.
 Generation is not Mermaid rendering validation or application validation.
+
+## CI checks by purpose
+
+Engineering Harness reports six independent checks. Failures in one check do not
+cancel the others; artifacts are uploaded even after a failed gate.
+
+| Check | Runner | Harness commands | Artifact |
+| --- | --- | --- | --- |
+| Project maps and architecture | Windows | maps, architecture, context, impact | project-maps |
+| Code quality | Windows | quality | harness-quality |
+| Automated tests | Windows | test | harness-test |
+| CLI and Qt smoke | Windows, offscreen | smoke | harness-smoke |
+| Python packaging | Windows | package | harness-package |
+| Static security and dependencies | Windows | security | harness-security |
+
+Each Windows check installs the locked environments using the existing setup
+command, then runs only its own gate. Artifacts contain setup and gate manifests
+and logs in separate run directories. Test results include pytest.xml when pytest
+produces it. Python packaging creates wheel/sdist, not the Windows EXE bundle.
+All six checks use Windows runners. The maps job only parses source and Git metadata.
+The test gate retains the existing suite and harness tests unchanged. These jobs
+do not replace native interactive Windows acceptance or distribution validation.
+The `all` command remains available; CI invokes its component gates independently.
+Branch protection referring to old `verify (ubuntu-latest)` / `verify
+(windows-latest)` checks needs to select the new check names in GitHub settings.
 
 | Area | Responsibility | Regression route |
 | --- | --- | --- |

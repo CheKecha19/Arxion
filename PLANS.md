@@ -1,5 +1,20 @@
 # Working plans
 
+## Harness checks by purpose — 2026-10-30
+
+Baseline: 3c0499d4e804c511528e30f62d8ed92e2721d209; clean checkout.
+Scope: workflow and harness documentation only. Replace the OS matrix/full-all
+jobs with independently reported quality, test, smoke, package and security gates
+on Windows. Run maps/context/impact and architecture in a separate Windows job.
+All six checks use Windows; no Linux runner is part of this workflow.
+Use existing gate commands, independent failures and per-purpose artifacts.
+No application, SQLite/JSON contracts, Qt wiring, test sources or security scope
+changes. Source review covers runner gate dispatch, setup requirements, failure
+propagation and artifact upload. Existing all/local command behavior stays intact.
+Implemented workflow and documentation; reviewed scoped diff. No new tests or
+local checks. Previous CI artifacts describe the baseline, not this workflow.
+User authorized commit/push after review. New CI execution remains pending.
+
 ## Automatic Mermaid maps — 2026-10-30
 
 Baseline: 843fe6227bb36d4b80f8f23e677547addad060ee. Preserve unrelated
