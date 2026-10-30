@@ -1,5 +1,17 @@
 # Harness validation log
 
+## Requested full Windows rebuild — 2026-10-30
+
+Baseline HEAD: 93dc8969f9c0d64c3c7194bf941ff29634d470df.
+Read GIT_RELEASE_POLICY.md and WINDOWS_DISTRIBUTION.md; retained version 0.3.2
+for a rebuild without a new feature release. Command: scripts/build_desktop.ps1,
+exit 0, PyInstaller 6.22.3 / Python 3.12.13 / Windows 10.
+Replaced dist/FirewallComplience_v0.3.2 with the full application, EXE, _internal
+and README; no archive generated. Source/diff review only; no automated checks,
+EXE launch or runtime validation. No CI result established for this commit.
+Existing release-policy documentation changes preserved. User requested a Git
+commit; no tag or GitHub Release publication performed. Binary stays local in dist.
+
 ## Requested Windows v0.3.2 build — 2026-10-30
 
 Baseline HEAD: ab9e7dcb6c374e79d4f6f012d2c658453c55365a; existing qt_app.py
