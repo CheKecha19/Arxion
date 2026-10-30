@@ -1,5 +1,38 @@
 # Working plans
 
+## Harness checks by purpose — 2026-10-30
+
+Baseline: 3c0499d4e804c511528e30f62d8ed92e2721d209; clean checkout.
+Scope: workflow and harness documentation only. Replace the OS matrix/full-all
+jobs with independently reported quality, test, smoke, package and security gates
+on Windows. Run maps/context/impact and architecture in a separate Windows job.
+All six checks use Windows; no Linux runner is part of this workflow.
+Use existing gate commands, independent failures and per-purpose artifacts.
+No application, SQLite/JSON contracts, Qt wiring, test sources or security scope
+changes. Source review covers runner gate dispatch, setup requirements, failure
+propagation and artifact upload. Existing all/local command behavior stays intact.
+Implemented workflow and documentation; reviewed scoped diff. No new tests or
+local checks. Previous CI artifacts describe the baseline, not this workflow.
+User authorized commit/push after review. New CI execution remains pending.
+
+## Automatic Mermaid maps — 2026-10-30
+
+Baseline: 843fe6227bb36d4b80f8f23e677547addad060ee. Preserve unrelated
+specifications/GIT_RELEASE_POLICY.md edits. Scope: harness map renderer, inventory
+entrypoint, runner, CI and documentation. Generate source-only package structure,
+package dependencies and per-package module imports from the existing AST inventory.
+Keep existing context/impact JSON contracts; add a maps command and separate artifacts.
+No application imports, Qt wiring, SQLite/schema or runtime behavior changes.
+Plan: implement deterministic diagrams and provenance/limits, wire independent CI
+generation, review source/diff. No tests added or local checks run under AGENTS.md.
+CI execution awaits authorized publication; static imports cannot prove data flow.
+Implemented: source-only maps mode, Mermaid/Markdown bundle with provenance,
+runner integration and independent CI maps/context/impact job with retained artifacts.
+Reviewed runner subprocess entrypoint, existing runpy consumers, inventory defaults,
+artifact isolation, package discovery and workflow base selection. Existing
+context/impact/architecture report shape remains unchanged. No application paths
+edited. Source/diff review only; generation, rendering and CI remain unverified.
+
 ## Desktop startup and deferred project views — 2026-10-30
 
 Baseline HEAD: 0893237147fd00aed1bae8d54c93192863adafd1, with existing unrelated edits.

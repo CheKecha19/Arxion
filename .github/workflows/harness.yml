@@ -7,12 +7,60 @@ on:
 permissions:
   contents: read
 jobs:
-  verify:
+  maps:
+    name: Project maps and architecture
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Generate Mermaid maps
+        run: python harness/build maps
+      - name: Check architecture boundaries
+        if: always()
+        run: python harness/build architecture
+      - name: Collect static context
+        if: always()
+        run: python harness/build context
+      - name: Collect change impact
+        if: always()
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+        shell: pwsh
+        run: |
+          git cat-file -e "$($env:BASE_SHA)^{commit}" 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            $env:BASE_SHA = $env:GITHUB_SHA
+          }
+          python harness/build impact --base $env:BASE_SHA
+      - name: Retain project maps and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-maps
+          path: artifacts/harness/
+          if-no-files-found: error
+  checks:
+    name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - gate: quality
+            name: Code quality
+          - gate: test
+            name: Automated tests
+          - gate: smoke
+            name: CLI and Qt smoke
+          - gate: package
+            name: Python packaging
+          - gate: security
+            name: Static security and dependencies
+    runs-on: windows-latest
     timeout-minutes: 30
     env:
       QT_QPA_PLATFORM: offscreen
@@ -25,12 +73,12 @@ jobs:
         run: python -m pip install uv==0.12.23
       - name: Install locked environments
         run: python harness/build setup
-      - name: Run required gates
-        run: python harness/build all
+      - name: Run ${{ matrix.gate }} checks
+        run: python harness/build ${{ matrix.gate }}
       - name: Retain logs even on failure
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: harness-${{ matrix.os }}
+          name: harness-${{ matrix.gate }}
           path: artifacts/harness/
           if-no-files-found: warn

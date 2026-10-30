@@ -1,5 +1,40 @@
 # Harness validation log
 
+## Purpose-based CI jobs — 2026-10-30
+
+Baseline: 3c0499d4e804c511528e30f62d8ed92e2721d209. Source/diff review only:
+workflow matrix now selects quality/test/smoke/package/security on Windows;
+Windows maps job also runs architecture; impact base selection uses PowerShell.
+All six CI checks use windows-latest. Existing runner commands, setup, exit-code
+propagation, upload-on-failure and scoped security targets remain unchanged.
+Each category has its own check and artifact. No tests added, local automated
+checks run. User subsequently authorized commit/push. Baseline supplied CI artifacts show maps,
+architecture, harness tests, package and dependency audit passing; overall checks
+failed on missing fixtures, quality/types, security alerts and Linux Qt libraries.
+Those results do not validate the new workflow; its CI execution is pending.
+
+## Mermaid map integration — 2026-10-30
+
+Baseline HEAD: 843fe6227bb36d4b80f8f23e677547addad060ee.
+Reviewed source and git diff: inventory, runner, runpy consumers, Mermaid renderer,
+CI workflow and documentation. Preserved unrelated GIT_RELEASE_POLICY.md edits.
+Configured CI commands: python harness/build maps, context, impact --base <event-base>;
+maps also included in all. No local automated commands, tests or builds executed.
+No new tests, commit, push or workflow dispatch. No CI result for these unpublished
+changes; generation, Mermaid rendering and automated compatibility remain unverified.
+
+## Requested full Windows rebuild — 2026-10-30
+
+Baseline HEAD: 93dc8969f9c0d64c3c7194bf941ff29634d470df.
+Read GIT_RELEASE_POLICY.md and WINDOWS_DISTRIBUTION.md; retained version 0.3.2
+for a rebuild without a new feature release. Command: scripts/build_desktop.ps1,
+exit 0, PyInstaller 6.22.3 / Python 3.12.13 / Windows 10.
+Replaced dist/FirewallComplience_v0.3.2 with the full application, EXE, _internal
+and README; no archive generated. Source/diff review only; no automated checks,
+EXE launch or runtime validation. No CI result established for this commit.
+Existing release-policy documentation changes preserved. User requested a Git
+commit; no tag or GitHub Release publication performed. Binary stays local in dist.
+
 ## Requested Windows v0.3.2 build — 2026-10-30
 
 Baseline HEAD: ab9e7dcb6c374e79d4f6f012d2c658453c55365a; existing qt_app.py
