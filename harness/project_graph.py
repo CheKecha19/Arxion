@@ -21,9 +21,10 @@ def module_name(path: str) -> str:
     return ".".join(parts)
 
 
-def inventory() -> dict:
+def inventory(*, source_only: bool = False) -> dict:
     modules = {}
-    for folder in (ROOT / "src", ROOT / "tests"):
+    folders = (ROOT / "src" / PREFIX,) if source_only else (ROOT / "src", ROOT / "tests")
+    for folder in folders:
         for path in sorted(folder.rglob("*.py")):
             relative = path.relative_to(ROOT).as_posix()
             name = module_name(relative)
@@ -65,12 +66,12 @@ def inventory() -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("context", "impact", "architecture"))
+    parser.add_argument("mode", choices=("context", "impact", "architecture", "maps"))
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--base", default="HEAD")
     parser.add_argument("paths", nargs="*")
     args = parser.parse_args()
-    modules = inventory()
+    modules = inventory(source_only=args.mode == "maps")
     violations = []
     # Only enforce boundaries explicitly documented in ARCHITECTURE.md.
     allowed = {
@@ -126,6 +127,16 @@ def main() -> int:
             "Candidate tests are a lower bound, never permission to omit the full required gate.",
         ],
     }
+    if args.mode == "maps":
+        from mermaid_maps import write_maps
+
+        dirty = bool(
+            subprocess.check_output(
+                ["git", "status", "--porcelain", "--untracked-files=normal"], cwd=ROOT, text=True
+            ).strip()
+        )
+        report["working_tree_dirty"] = dirty
+        report["map_files"] = write_maps(modules, args.output.parent / "maps", report["head"], dirty)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(
         f"{len(modules)} modules; {len(violations)} boundary violations; "

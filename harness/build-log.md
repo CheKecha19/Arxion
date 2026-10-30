@@ -1,5 +1,15 @@
 # Harness validation log
 
+## Mermaid map integration — 2026-10-30
+
+Baseline HEAD: 843fe6227bb36d4b80f8f23e677547addad060ee.
+Reviewed source and git diff: inventory, runner, runpy consumers, Mermaid renderer,
+CI workflow and documentation. Preserved unrelated GIT_RELEASE_POLICY.md edits.
+Configured CI commands: python harness/build maps, context, impact --base <event-base>;
+maps also included in all. No local automated commands, tests or builds executed.
+No new tests, commit, push or workflow dispatch. No CI result for these unpublished
+changes; generation, Mermaid rendering and automated compatibility remain unverified.
+
 ## Requested full Windows rebuild — 2026-10-30
 
 Baseline HEAD: 93dc8969f9c0d64c3c7194bf941ff29634d470df.

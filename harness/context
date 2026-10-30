@@ -28,6 +28,7 @@ statuses there distinguish requirement collection from approved implementation.
 Commands from any directory (use an absolute path to harness/build if needed):
 python harness/build setup      # uv sync --locked, root and security tools
 python harness/build context    # current static imports and public definitions
+python harness/build maps       # Mermaid package structure/imports, Markdown index
 python harness/build impact src/firewall_compliance/domain/source.py
 python harness/build architecture # domain/analysis/parser boundaries
 python harness/build quality    # Ruff formatting/lint and strict mypy

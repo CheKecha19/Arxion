@@ -38,6 +38,7 @@ def main() -> int:
         choices=(
             "setup",
             "context",
+            "maps",
             "impact",
             "architecture",
             "quality",
@@ -90,7 +91,7 @@ def main() -> int:
     uv = ["uv", "run", "--locked", "--no-sync"]
     tools = ["uv", "run", "--locked", "--no-sync", "--project", str(ROOT / "harness/tools")]
     gates = (
-        ("architecture", "quality", "test", "smoke", "package", "security")
+        ("maps", "architecture", "quality", "test", "smoke", "package", "security")
         if args.gate == "all"
         else (args.gate,)
     )
@@ -101,7 +102,7 @@ def main() -> int:
                 "sync-security",
                 ["uv", "sync", "--locked", "--project", str(ROOT / "harness/tools")],
             )
-        elif gate in {"context", "impact", "architecture"}:
+        elif gate in {"context", "impact", "architecture", "maps"}:
             execute(
                 gate,
                 [

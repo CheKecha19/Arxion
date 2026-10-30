@@ -7,6 +7,38 @@ on:
 permissions:
   contents: read
 jobs:
+  maps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Generate Mermaid maps
+        run: python harness/build maps
+      - name: Collect static context
+        if: always()
+        run: python harness/build context
+      - name: Collect change impact
+        if: always()
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+        shell: bash
+        run: |
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            BASE_SHA="$GITHUB_SHA"
+          fi
+          python harness/build impact --base "$BASE_SHA"
+      - name: Retain project maps and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-maps
+          path: artifacts/harness/
+          if-no-files-found: error
   verify:
     strategy:
       fail-fast: false

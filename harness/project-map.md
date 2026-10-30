@@ -5,6 +5,44 @@ specifications/DECISIONS.md. Generate the current static import and public
 definition inventory with `python harness/build context`; do not load the whole
 ROADMAP_V2_FULL.md on every task. Use SPECIFICATION_INDEX.md to select documents.
 
+## Automatically generated Mermaid maps
+
+`python harness/build maps` writes a fresh bundle to
+`artifacts/harness/<run>/maps/`, alongside `maps.json`, `maps.log` and `results.json`.
+Local execution requires an explicit user request under AGENTS.md; CI is the default.
+The command needs only Python and Git, without importing the application or installing
+its dependencies. It is also included in `all`.
+
+- `README.md`: commit, working-tree state, legend, overview diagrams and detail index.
+- `structure.mmd`: package containment inferred from current source paths.
+- `dependencies.mmd`: imports aggregated by the containing package.
+- `package-*.md` / `package-*.mmd`: direct module members and outgoing imports for each
+  package, with external-to-package targets retained and source paths listed.
+- `maps.json`: source-only inventory, static dependencies and generated filenames
+  (relative to the sibling `maps/` directory).
+
+In GitHub Actions, open **Engineering Harness**, select a run, download the
+**project-maps** artifact, then open `<run>/maps/README.md` in a Mermaid-capable
+Markdown viewer or open individual `.mmd` sources in a Mermaid editor. Artifacts
+contain source diagrams, not pre-rendered SVG/PNG. A separate Linux job generates
+maps, context and change-impact reports even if the verification job fails.
+Existing workflow triggers remain PRs, pushes to main and manual dispatches.
+PR impact uses the PR base; push impact uses the previous commit; manual runs
+use HEAD. If the event base is unavailable, impact falls back to the checked-out
+commit, which is recorded in the report (no historical change coverage then).
+
+Each generation discovers packages and modules afresh: added, moved and deleted
+files need no hand-maintained module list. Ordering and node IDs are deterministic
+for a given inventory. Runs use separate directories, so old files cannot leak
+into a new bundle. No source documentation is overwritten or auto-committed.
+
+Only `src/firewall_compliance` Python sources are mapped. Tests and third-party
+libraries are omitted. Edges mean static imports, including conditional and
+type-checking imports; they do not imply calls or data flow. The existing resolver
+uses the longest known module prefix, without tracing re-exports. Dynamic imports,
+Qt signals, SQL and changes in business meaning require manual scenario review.
+Generation is not Mermaid rendering validation or application validation.
+
 | Area | Responsibility | Regression route |
 | --- | --- | --- |
 | domain | Pydantic contracts, snapshots, revisions, completeness | unit, contract, golden; SCHEMA_MIGRATIONS.md |

@@ -1,5 +1,23 @@
 # Working plans
 
+## Automatic Mermaid maps — 2026-10-30
+
+Baseline: 843fe6227bb36d4b80f8f23e677547addad060ee. Preserve unrelated
+specifications/GIT_RELEASE_POLICY.md edits. Scope: harness map renderer, inventory
+entrypoint, runner, CI and documentation. Generate source-only package structure,
+package dependencies and per-package module imports from the existing AST inventory.
+Keep existing context/impact JSON contracts; add a maps command and separate artifacts.
+No application imports, Qt wiring, SQLite/schema or runtime behavior changes.
+Plan: implement deterministic diagrams and provenance/limits, wire independent CI
+generation, review source/diff. No tests added or local checks run under AGENTS.md.
+CI execution awaits authorized publication; static imports cannot prove data flow.
+Implemented: source-only maps mode, Mermaid/Markdown bundle with provenance,
+runner integration and independent CI maps/context/impact job with retained artifacts.
+Reviewed runner subprocess entrypoint, existing runpy consumers, inventory defaults,
+artifact isolation, package discovery and workflow base selection. Existing
+context/impact/architecture report shape remains unchanged. No application paths
+edited. Source/diff review only; generation, rendering and CI remain unverified.
+
 ## Desktop startup and deferred project views — 2026-10-30
 
 Baseline HEAD: 0893237147fd00aed1bae8d54c93192863adafd1, with existing unrelated edits.
