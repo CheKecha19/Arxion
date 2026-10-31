@@ -20,8 +20,7 @@ review the edited diff and report the result briefly. No mandatory planning
 document, full context inventory or build-log update for small tasks.
 
 For substantial changes affecting multiple components, architecture or persisted
-contracts: read relevant sections of GOALS.md, PLANS.md, harness/context and
-harness/project-map.md. Record a scoped plan and progress in PLANS.md.
+contracts: read relevant sections of DOCUMENTATION.md, DEVELOPMENT.md and PROJECT_STATUS.md. Record a scoped plan and progress in PROJECT_STATUS.md.
 Inspect downstream consumers, JSON/schema and SQLite compatibility, Qt wiring
 and runtime imports directly. Run automated impact/context analysis in GitHub
 Actions; local harness execution requires an explicit user request.
@@ -39,12 +38,12 @@ accounts unless the user authorizes that action.
 
 # Tools and validation
 
-Follow `specifications/GIT_RELEASE_POLICY.md` for future commit/PR titles,
+Follow `DEVELOPMENT.md` (Git and release policy) for future commit/PR titles,
 version increments, tags and GitHub Release names. Read it before preparing
 a commit or release. This naming policy does not authorize commit, push,
 tag creation or publication; existing user-authorization limits still apply.
 
-Windows distribution builds must follow `specifications/WINDOWS_DISTRIBUTION.md`:
+Windows distribution builds must follow `DEVELOPMENT.md` (Windows distribution):
 build the entire project into `dist/FirewallComplience_v<project.version>`;
 overwrite the same version, do not create ZIP archives or separate CLI/feature
 distributions. Use `scripts/build_desktop.ps1` as the single build implementation.
@@ -56,7 +55,7 @@ local setup requires an explicit user request.
 Available harness commands: context, impact, architecture, quality, test, smoke,
 package, security and all. Their availability does not make them mandatory.
 
-The workflow `.github/workflows/harness.yml` runs the harness on Linux and Windows
+The workflow `.github/workflows/harness.yml` runs independent harness jobs on Windows
 for pull requests, pushes to main and manual dispatches. Keep harness and test
 sources versioned in this repository. After authorized publication, use CI logs
 and artifacts to diagnose failures, make fixes locally and publish them only
@@ -66,7 +65,7 @@ authorize commits or pushes. Do not reproduce CI failures locally unless asked.
 When reviewing harness checks, inspect their reports and actual results.
 An unrun, skipped or zero-test suite is not a passing validation.
 For substantial work, requested builds or broad validation, record the baseline
-SHA, commands, results and limits in harness/build-log.md. Keep summaries concise.
+SHA, commands, results and limits in PROJECT_STATUS.md. Keep summaries concise.
 Linux offscreen checks do not validate a native Windows release.
 
 # Delegation
@@ -95,3 +94,21 @@ Before an authorized security scan, read root SECURITY.md and apply its exclusio
 to the actual reviewed scope. Do not assume automatic filtering. Report unsupported
 filtering. Preserve an already-running scan's scope unless the user authorizes a
 supported change.
+
+# Documentation layout
+
+Keep working Markdown consolidated: AGENTS.md/DEVELOPMENT.md/SECURITY.md for
+instructions, README.md/DOCUMENTATION.md for application functionality and
+PROJECT_STATUS.md for the single status, roadmap, backlog, plan and work log.
+Do not create separate task/roadmap/status documents unless explicitly requested.
+Historical sources live in the ignored flat root архив directory. Do not use them
+as current instructions or scan their contents without a task-specific reason.
+
+# Specifications
+
+The root спецификации/ directory contains maintained requirements, architecture,
+platform limits and data/check contracts restored from the archive. Read its
+README.md and the sections relevant to a substantial change. Do not treat these
+contracts as disposable historical notes. Keep them aligned with code changes;
+PROJECT_STATUS.md remains the single status/roadmap/backlog. Current user and
+AGENTS instructions override old test/local-execution prescriptions in specs.

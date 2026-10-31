@@ -1,5 +1,5 @@
 # Совместимый вход: собирается только полный дистрибутив.
-# Правила: specifications/WINDOWS_DISTRIBUTION.md.
+# Правила: DEVELOPMENT.md (Windows distribution).
 [CmdletBinding()]
 param()
 $ErrorActionPreference = 'Stop'
