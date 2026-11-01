@@ -133,7 +133,7 @@ class GovernancePanel(QWidget):
             inputs_row.addWidget(button)
         layout.addLayout(inputs_row)
         self.profile_label = _label(
-            "Профиль не выбран. Формат: specifications/POLICY_GOVERNANCE.md."
+            "Профиль не выбран. Формат: DOCUMENTATION.md."
         )
         self.inputs_label = _label("Данные правил не заданы: метаданные и статистика неизвестны.")
         layout.addWidget(self.profile_label)
@@ -262,7 +262,7 @@ class GovernancePanel(QWidget):
         self.component_selector.clear()
         self.browser.clear()
         self.profile_label.setText(
-            "Профиль не выбран. Формат: specifications/POLICY_GOVERNANCE.md."
+            "Профиль не выбран. Формат: DOCUMENTATION.md."
         )
         self.inputs_label.setText("Данные правил не заданы: метаданные и статистика неизвестны.")
         self.summary_label.setText("Сохранённый результат не выбран.")

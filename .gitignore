@@ -38,3 +38,6 @@ output/
 
 # Disposable local outputs
 /_temp_files/
+
+# Local flat archive of superseded documentation
+/архив/

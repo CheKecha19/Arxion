@@ -12,6 +12,7 @@ from hashlib import sha256
 from ipaddress import ip_address, ip_interface, ip_network
 from typing import Any
 
+from firewall_compliance.application.asset_catalog import CatalogObservation, SnapshotAddressIndex
 from firewall_compliance.application.cloud_analysis import vmware_revision
 from firewall_compliance.domain.enums import DataStatus, EndpointKind
 from firewall_compliance.domain.network import Endpoint
@@ -139,6 +140,19 @@ def resource_addresses(record: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(sorted(found))
 
 
+def resource_aliases(record: Mapping[str, Any]) -> tuple[str, ...]:
+    """Retain explicitly supplied names without deriving identity from them."""
+    aliases: list[str] = []
+    inventory = record.get("inventory", {})
+    for value in (record.get("name"), inventory.get("name"), inventory.get("hostname")):
+        if isinstance(value, str) and value.strip():
+            aliases.append(value)
+    supplied = record.get("aliases", ())
+    if isinstance(supplied, (tuple, list)):
+        aliases.extend(value for value in supplied if isinstance(value, str) and value.strip())
+    return tuple(dict.fromkeys(aliases))
+
+
 def build_project_map(
     project_id: str,
     devices: Sequence[dict[str, Any]],
@@ -152,7 +166,8 @@ def build_project_map(
     areas = {CONTOUR: "Внутренний контур", EXTERNAL: "Внешние адреса и условия ACL"}
     warnings: list[str] = []
     parsed: list[tuple[DeviceRevision, str, str]] = []
-    address_index: dict[str, list[str]] = defaultdict(list)
+    address_index = SnapshotAddressIndex()
+    observations: dict[str, str] = {}
     scope_areas: dict[str, str] = {}
 
     def integration(config: dict[str, Any]) -> str:
@@ -209,7 +224,10 @@ def build_project_map(
             continue
         device = revision.device
         key = "device:" + device.device_id
-        scope = device.context or "default"
+        # Device context strings (including "default") are device-local names,
+        # not evidence of one shared address space across imported devices.
+        scope = "local:" + identity(project_id, device.device_id, device.context)
+        observations[key] = str(revision.revision_id)
         addresses = set()
         if device.management_ip:
             addresses.add(device.management_ip)
@@ -229,13 +247,19 @@ def build_project_map(
                 f"Устройство: {device.device_id}",
                 f"Источник: {item.get('source_name', '')}",
                 f"Ревизия: {revision.revision_id}",
-                f"Контекст: {scope}",
+                f"Контекст устройства: {device.context or 'не указан'}",
+                "Общая адресная область с другими устройствами не подтверждена.",
                 f"Правил ACL: {len(revision.parse_result.rules)}",
             ),
             scope,
         )
         for address in values:
-            address_index[address].append(key)
+            address_index.add(
+                CatalogObservation(key, label, evidence_refs=(str(revision.revision_id),)),
+                context=scope,
+                snapshot_id=observations[key],
+                address=address,
+            )
         parsed.append((revision, key, label))
     cloud_records: list[tuple[dict[str, Any], str, str]] = []
     for item in clouds:
@@ -273,8 +297,22 @@ def build_project_map(
             area + ":vdc:" + (match[0].lower() if match else str(vdc or record.get("id") or key))
         )
         if item.get("platform", "vmware") != "vmware":
-            scope = area
+            # A provider project can contain isolated networks with overlapping
+            # addresses. Only an explicit network reference establishes sharing.
+            network_ref = next(
+                (
+                    (field_name, inventory[field_name])
+                    for field_name in ("network_id", "subnet_id", "vpc_id")
+                    if isinstance(inventory.get(field_name), str) and inventory[field_name]
+                ),
+                None,
+            )
+            scope = (
+                area + ":network:" + identity(network_ref)
+                if network_ref else area + ":resource:" + identity(key)
+            )
         scope_areas[scope] = area
+        observations[key] = str(item["scan"]["id"])
         nodes[key] = ProjectMapNode(
             key,
             str(record.get("name") or record.get("id") or "Ресурс"),
@@ -287,11 +325,27 @@ def build_project_map(
                 f"Тип: {record.get('type', '')}",
                 f"Сбор: {item['scan']['id']}",
                 f"Наблюдение: {record.get('collected_at', '')}",
+                f"Имена источника: {', '.join(resource_aliases(record)) or 'не указаны'}",
             ),
             scope,
         )
         for address in values:
-            address_index[address].append(key)
+            # Prefix inventory belongs on the map, but is not a host binding.
+            try:
+                canonical = str(ip_address(address))
+            except ValueError:
+                continue
+            address_index.add(
+                CatalogObservation(
+                    key,
+                    nodes[key].label,
+                    aliases=resource_aliases(record),
+                    evidence_refs=(f"{item['scan']['id']}/{record.get('id', key)}",),
+                ),
+                context=scope,
+                snapshot_id=observations[key],
+                address=canonical,
+            )
         cloud_records.append((record, area, key))
         if (
             item.get("platform", "vmware") == "vmware"
@@ -340,13 +394,14 @@ def build_project_map(
             except ValueError:
                 pass
             if network_value is not None and endpoint.resolution_status == DataStatus.KNOWN:
-                candidates = address_index.get(address or network_value, [])
-                if scope.startswith("cloud:"):
-                    candidates = [key for key in candidates if nodes[key].scope == scope]
-                if len(candidates) == 1 and (
-                    nodes[candidates[0]].scope == scope or scope == "default" or not _private(value)
-                ):
-                    result.append(candidates[0])
+                candidates = (
+                    address_index.resolve(
+                        context=scope, snapshot_id=observations[owner], address=address
+                    )
+                    if address else ()
+                )
+                if len(candidates) == 1:
+                    result.append(candidates[0].resource_key)
                     continue
                 if not candidates:
                     pass
@@ -357,7 +412,9 @@ def build_project_map(
             if endpoint.kind == EndpointKind.ANY:
                 kind = "globe"
             discriminator = "" if endpoint.resolution_status == DataStatus.KNOWN else owner
-            key = "endpoint:" + identity(scope, value, endpoint.resolution_status, discriminator)
+            key = "endpoint:" + identity(
+                scope, observations[owner], value, endpoint.resolution_status, discriminator
+            )
             display = address or value
             nodes.setdefault(
                 key,
@@ -381,11 +438,7 @@ def build_project_map(
         return tuple(dict.fromkeys(result))
 
     for revision, owner, label in parsed:
-        scope = (
-            nodes[owner].scope
-            if owner.startswith("cloud:")
-            else revision.device.context or "default"
-        )
+        scope = nodes[owner].scope
         for rule in revision.parse_result.rules:
             sources = tuple(
                 dict.fromkeys(
@@ -492,7 +545,7 @@ def build_project_map(
                     continue
                 remote = rule_data.get("remote_ip_prefix") or rule_data.get("remote_cidr")
                 direction = rule_data.get("direction")
-                peers = cloud_endpoints([remote], area, owner) if remote else ()
+                peers = cloud_endpoints([remote], nodes[owner].scope, owner) if remote else ()
                 if not peers or direction not in {"ingress", "egress"}:
                     warnings.append(f"{nodes[owner].label}: правило SG без явного CIDR/направления")
                     continue

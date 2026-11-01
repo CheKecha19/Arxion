@@ -3,7 +3,7 @@
 import json
 import os
 import sqlite3
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import cached_property
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from firewall_compliance.application.analysis_result import AnalysisResult
     from firewall_compliance.domain.acl_map import AclMap
     from firewall_compliance.interfaces.desktop.resource_registry import ResourceRegistry
+    from firewall_compliance.interfaces.desktop.workspace_store import WorkspaceMetadataStore
 
 
 class SourceMismatchError(ValueError):
@@ -179,6 +180,13 @@ class ProjectStore:
         from firewall_compliance.interfaces.desktop.resource_registry import ResourceRegistry
 
         return ResourceRegistry(self.path)
+
+    @cached_property
+    def workspace_metadata(self) -> "WorkspaceMetadataStore":
+        """Access optional site metadata without implicitly migrating the database."""
+        from firewall_compliance.interfaces.desktop.workspace_store import WorkspaceMetadataStore
+
+        return WorkspaceMetadataStore(self)
 
     def project_history(self, project_id: str) -> list[dict[str, Any]]:
         """Read full saved run snapshots once for cumulative registry/dashboard projections."""
@@ -516,10 +524,28 @@ class ProjectStore:
         """Public inventory of configured connections; never load protected credentials."""
         with self._connect() as db:
             rows = db.execute(
-                "SELECT provider,config FROM integrations WHERE project_id=? ORDER BY provider",
+                "SELECT provider,config FROM integrations WHERE project_id=? "
+                "AND provider IN ('cloud_ru_vmware','cloud_ru_advanced','cloud_ru_evolution') "
+                "ORDER BY provider",
                 (project_id,),
             ).fetchall()
         return [{"provider": row["provider"], "config": json.loads(row["config"])} for row in rows]
+
+    def list_source_connections(self, project_id: str) -> list[dict[str, Any]]:
+        """Public source metadata; one malformed connection does not hide the rest."""
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT provider,config FROM integrations WHERE project_id=? ORDER BY provider",
+                (project_id,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            try:
+                config = json.loads(row["config"])
+            except (ValueError, TypeError):
+                config = None
+            result.append({"provider": row["provider"], "config": config})
+        return result
 
     def get_vmware_token(self, project_id: str) -> str:
         with self._connect() as db:
@@ -635,14 +661,23 @@ class ProjectStore:
             p.get("cloud_origin", {}).get("scan_id") != scan_id for p in payloads
         ):
             raise ValueError("Результат проверки не соответствует исходному сбору.")
+        from firewall_compliance.interfaces.desktop.profile_history import LegacyProfileHistory
+
         run_id = str(uuid4())
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             scan = db.execute(
                 "SELECT project_id FROM cloud_scans WHERE id=?", (scan_id,)
             ).fetchone()
             if scan is None:
                 raise ValueError("Исходный облачный сбор не найден.")
             snapshot = {**settings, "cloud_scan_id": scan_id, "analysis_source": "cloud_ru_vmware"}
+            if LegacyProfileHistory.is_initialized(db):
+                profile = LegacyProfileHistory.record_on_connection(db, scan["project_id"], snapshot)
+                snapshot.update({
+                    "workspace_profile_version": profile.version,
+                    "workspace_profile_fingerprint": profile.fingerprint,
+                })
             db.execute(
                 "INSERT INTO runs VALUES (?,?,?,?,?,?)",
                 (run_id, scan["project_id"], _now(), _now(), "completed", _json(snapshot)),
@@ -683,11 +718,38 @@ class ProjectStore:
         with self._connect() as db:
             db.execute("UPDATE projects SET settings=? WHERE id=?", (_json(merged), project_id))
 
-    def create_run(self, project_id: str) -> str:
-        """Начать новый запуск без переноса статусов предыдущего запуска."""
-        project = self.get_project(project_id)
+    def create_run(
+        self, project_id: str, *, settings: Mapping[str, Any] | None = None
+    ) -> str:
+        """Зафиксировать параметры запуска и профиль одной транзакцией.
+
+        Явные параметры перекрывают сохранённые только в снимке запуска:
+        настройки проекта и решения предыдущих запусков не изменяются.
+        """
+        from firewall_compliance.interfaces.desktop.profile_history import LegacyProfileHistory
+
+        if settings is not None and not isinstance(settings, Mapping):
+            raise TypeError("Параметры запуска должны быть отображением")
+        overrides = (
+            json.loads(json.dumps(dict(settings), ensure_ascii=False, allow_nan=False))
+            if settings is not None else {}
+        )
         run_id = str(uuid4())
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            project = db.execute("SELECT settings FROM projects WHERE id=?", (project_id,)).fetchone()
+            if project is None:
+                raise KeyError("Проект не найден")
+            snapshot_settings = {**json.loads(project["settings"]), **overrides}
+            if LegacyProfileHistory.is_initialized(db):
+                profile = LegacyProfileHistory.record_on_connection(
+                    db, project_id, snapshot_settings
+                )
+                snapshot_settings = {
+                    **snapshot_settings,
+                    "workspace_profile_version": profile.version,
+                    "workspace_profile_fingerprint": profile.fingerprint,
+                }
             db.execute(
                 "INSERT INTO runs VALUES (?,?,?,?,?,?)",
                 (
@@ -696,7 +758,7 @@ class ProjectStore:
                     _now(),
                     None,
                     "running",
-                    _json(project["settings"]),
+                    _json(snapshot_settings),
                 ),
             )
         return run_id

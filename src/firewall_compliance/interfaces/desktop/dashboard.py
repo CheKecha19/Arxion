@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from firewall_compliance.application.workspace_profile import analysis_settings
 from firewall_compliance.interfaces.desktop.check_presentation import check_execution_status
 
 SEVERITIES = ("critical", "high", "medium", "low", "info")
@@ -56,6 +57,17 @@ class OperationSummary:
 
 
 @dataclass(frozen=True)
+class FindingTrendPoint:
+    """Observed count, with explicit evidence required for a connecting segment."""
+
+    run_id: str
+    timestamp: str | None
+    findings: int | None
+    comparable_to_previous: bool
+    limitations: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class DashboardSnapshot:
     categories: tuple[CategorySummary, ...]
     active_resources: int
@@ -74,6 +86,11 @@ class DashboardSnapshot:
     recent_operations: tuple[OperationSummary, ...]
     unmatched_report_devices: int = 0
     warnings: tuple[str, ...] = ()
+    error_items: int = 0
+    unsupported_items: int = 0
+    collection_errors: int = 0
+    finding_trend: tuple[FindingTrendPoint, ...] = ()
+    source_health: tuple[Mapping[str, Any], ...] = ()
 
     @property
     def findings(self) -> int:
@@ -94,6 +111,127 @@ class _Report:
     partial: int
     not_executed: int
     timestamp: datetime | None
+
+
+def finding_trend(runs: Sequence[Mapping[str, Any]]) -> tuple[FindingTrendPoint, ...]:
+    """Compare recorded run coverage, never infer fixed findings from missing data."""
+    ordered = sorted(
+        (
+            run for run in runs
+            if run.get("finished_at") or run.get("state") in {"completed", "cancelled", "interrupted"}
+        ),
+        key=lambda run: _time(run.get("finished_at")) or datetime.min.replace(tzinfo=UTC),
+    )
+    points = []
+    previous_signature: str | None = None
+    previous_time: datetime | None = None
+    for run in ordered:
+        limitations = []
+        if run.get("state") != "completed":
+            limitations.append("Запуск отменён, прерван или завершён с ошибками")
+        observed = _time(run.get("finished_at"))
+        if observed is None:
+            limitations.append("Нет достоверного времени завершения")
+        items = run.get("items", [])
+        reports = [item.get("report") for item in items if isinstance(item, dict)]
+        if not items or len(reports) != len(items) or any(not report for report in reports):
+            limitations.append("Не все входы имеют результаты")
+        known_reports = [report for report in reports if isinstance(report, dict) and report]
+        signatures = []
+        device_ids = []
+        for item in items:
+            report = _mapping(item.get("report")) if isinstance(item, dict) else {}
+            if not report:
+                continue
+            device_id = report.get("device_id")
+            if isinstance(device_id, str) and device_id:
+                device_ids.append(device_id)
+            else:
+                limitations.append("Неизвестен идентификатор устройства")
+            checks = report.get("checks", [])
+            if not isinstance(checks, (list, tuple)):
+                checks = []
+            if not device_id or not checks:
+                limitations.append("Неизвестен состав устройств или проверок")
+            coverage = _mapping(report.get("parse_coverage"))
+            if (
+                item.get("status") != "complete" or report.get("parse_errors")
+                or report.get("unsupported_constructs")
+                or type(coverage.get("discovered_constructs")) is not int
+                or type(coverage.get("recognized_constructs")) is not int
+                or coverage.get("discovered_constructs", -1) < 0
+                or coverage.get("recognized_constructs") != coverage.get("discovered_constructs")
+            ):
+                limitations.append("Неполный разбор или результат")
+            versions = {
+                key: report.get(key)
+                for key in ("application_version", "parser_version", "check_catalog_version")
+            }
+            if any(not value for value in versions.values()):
+                limitations.append("Неизвестны версии анализа")
+            if any(key not in report for key in ("require_logging", "require_comments", "max_pair_rules")):
+                limitations.append("Неизвестны эффективные параметры проверки")
+            check_signature = []
+            for check in checks:
+                if not isinstance(check, dict):
+                    limitations.append("Неизвестен формат результата проверки")
+                    continue
+                status = check_execution_status(check)
+                if status not in {"complete", "not_applicable"}:
+                    limitations.append("Есть неполные или невыполненные проверки")
+                if not check.get("check_version") or not check.get("check_id"):
+                    limitations.append("Неизвестны версии или идентификаторы проверок")
+                check_signature.append((check.get("check_id"), check.get("check_version"), status))
+            signatures.append(
+                {
+                    "device": device_id,
+                    "versions": versions,
+                    "checks": sorted(check_signature, key=lambda value: str(value[0])),
+                    "parameters": {
+                        key: report.get(key)
+                        for key in (
+                            "require_logging", "require_comments", "max_pair_rules",
+                            "management_profile", "policy_exposure_profile", "policy_scope_profile",
+                        )
+                    },
+                }
+            )
+        if len(set(device_ids)) != len(device_ids):
+            limitations.append("Несколько снимков одного устройства в запуске")
+        settings = run.get("settings")
+        if not isinstance(settings, dict):
+            limitations.append("Нет сохранённых параметров запуска")
+        settings = analysis_settings(settings) if isinstance(settings, dict) else {}
+        if isinstance(settings.get("enabled_check_ids"), list):
+            if all(isinstance(value, str) for value in settings["enabled_check_ids"]):
+                settings["enabled_check_ids"] = sorted(settings["enabled_check_ids"])
+            else:
+                limitations.append("Неизвестен набор включённых проверок")
+        signature = None
+        if not limitations:
+            try:
+                signature = json.dumps(
+                    {
+                        "settings": settings,
+                        "devices": sorted(signatures, key=lambda value: str(value["device"])),
+                    },
+                    sort_keys=True, ensure_ascii=False, allow_nan=False,
+                )
+            except (TypeError, ValueError):
+                limitations.append("Параметры анализа не поддаются сравнению")
+        comparable = (
+            signature is not None and previous_signature == signature
+            and previous_time is not None and observed is not None and observed > previous_time
+        )
+        if points and not comparable and not limitations:
+            limitations.append("Изменились параметры, состав/версии проверок или предыдущий запуск неполон")
+        count = sum(len(_findings(report)) for report in known_reports) if known_reports else None
+        points.append(FindingTrendPoint(
+            str(run.get("id", "")), _iso(observed), count, comparable,
+            tuple(dict.fromkeys(limitations)),
+        ))
+        previous_signature, previous_time = signature, observed
+    return tuple(points)
 
 
 def _time(value: object) -> datetime | None:
@@ -264,6 +402,7 @@ def build_dashboard(
     runs: Sequence[Mapping[str, Any]],
     scans: Sequence[Mapping[str, Any]],
     integrations: Sequence[Mapping[str, Any]],
+    source_health: Sequence[Mapping[str, Any]] = (),
 ) -> DashboardSnapshot:
     """Project-scoped snapshot; no reads, writes, network calls, name matching or guessed dates.
 
@@ -411,4 +550,24 @@ def build_dashboard(
         tuple(operations[:5]),
         unmatched,
         tuple(warnings),
+        sum(
+            item.get("status") == "error"
+            for run in unique_runs
+            for item in run.get("items", [])
+            if isinstance(item, dict)
+        ),
+        sum(
+            item.get("status") == "unsupported"
+            for run in unique_runs
+            for item in run.get("items", [])
+            if isinstance(item, dict)
+        ),
+        sum(
+            len(_mapping(scan.get("result")).get("errors", []))
+            for scan in {
+                str(scan.get("id") or index): scan for index, scan in enumerate(scans)
+            }.values()
+        ),
+        finding_trend(unique_runs),
+        tuple(source_health),
     )
