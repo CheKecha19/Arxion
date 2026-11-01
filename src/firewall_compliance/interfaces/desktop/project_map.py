@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -14,9 +13,15 @@ from typing import Any
 
 from firewall_compliance.application.asset_catalog import CatalogObservation, SnapshotAddressIndex
 from firewall_compliance.application.cloud_analysis import vmware_revision
+from firewall_compliance.domain.configuration import Rule
 from firewall_compliance.domain.enums import DataStatus, EndpointKind
 from firewall_compliance.domain.network import Endpoint
-from firewall_compliance.domain.revision import DeviceRevision
+from firewall_compliance.domain.revision import DeviceRevision, Interface
+from firewall_compliance.interfaces.desktop.cloud_map_references import (
+    canonical_cloud_reference,
+    cloud_references,
+    vdc_reference,
+)
 
 CONTOUR = "contour"
 EXTERNAL = "external"
@@ -27,12 +32,12 @@ def identity(*parts: object) -> str:
 
 
 def cloud_area(config: Mapping[str, Any]) -> str:
-    return "cloud:" + identity(
-        {
-            key: config.get(key, "vmware" if key == "platform" else None)
-            for key in ("platform", "site", "tenant", "project_id", "region")
-        }
-    )
+    fields = {
+        key: config.get(key, "vmware" if key == "platform" else None)
+        for key in ("platform", "site", "tenant", "project_id", "region")
+    }
+    fields.update({key: config[key] for key in ("ecs_endpoint", "vpc_endpoint") if config.get(key)})
+    return "cloud:" + identity(fields)
 
 
 def subnet_zone(address: str) -> str:
@@ -86,6 +91,7 @@ class RuleEvidence:
     location: str
     owner_id: str = ""
     direction: str = ""
+    details: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -107,6 +113,7 @@ class ProjectMap:
     edges: tuple[ProjectMapEdge, ...] = ()
     areas: Mapping[str, str] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
+    rule_inputs: Mapping[tuple[str, str], Rule] = field(default_factory=dict)
 
 
 def resource_addresses(record: Mapping[str, Any]) -> tuple[str, ...]:
@@ -163,6 +170,8 @@ def build_project_map(
 ) -> ProjectMap:
     """Combine latest device snapshots and cloud inventory without invented links."""
     nodes: dict[str, ProjectMapNode] = {}
+    structural_edges: list[ProjectMapEdge] = []
+    rule_inputs: dict[tuple[str, str], Rule] = {}
     areas = {CONTOUR: "Внутренний контур", EXTERNAL: "Внешние адреса и условия ACL"}
     warnings: list[str] = []
     parsed: list[tuple[DeviceRevision, str, str]] = []
@@ -262,6 +271,7 @@ def build_project_map(
             )
         parsed.append((revision, key, label))
     cloud_records: list[tuple[dict[str, Any], str, str]] = []
+    cloud_platforms: dict[str, str] = {}
     for item in clouds:
         record = item["record"]
         area = integration(item["scan"]["config"])
@@ -284,17 +294,11 @@ def build_project_map(
             "interfaces": "network",
         }.get(record.get("type"), "server")
         key = str(item["id"])
+        cloud_platforms[key] = str(item.get("platform", "vmware"))
         inventory = record.get("inventory", {})
-        vdc = inventory.get("vdc")
-        for field_name in ("orgVdc", "ownerRef"):
-            reference = inventory.get(field_name)
-            if not vdc:
-                vdc = reference.get("id") if isinstance(reference, dict) else reference
-        match = re.search(
-            r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$", str(vdc or "").rstrip("/")
-        )
+        vdc = vdc_reference(inventory)
         scope = (
-            area + ":vdc:" + (match[0].lower() if match else str(vdc or record.get("id") or key))
+            area + ":vdc:" + vdc[0] if vdc is not None else area + ":resource:" + identity(key)
         )
         if item.get("platform", "vmware") != "vmware":
             # A provider project can contain isolated networks with overlapping
@@ -329,6 +333,17 @@ def build_project_map(
             ),
             scope,
         )
+        if item.get("platform", "vmware") == "vmware" and vdc is not None:
+            container = "vdc:" + identity(area, observations[key], vdc[0])
+            nodes.setdefault(container, ProjectMapNode(
+                container, "VDC · " + vdc[1], "network", area, "VDC",
+                details=(f"Явная область VDC: {vdc[0]}", f"Сбор: {observations[key]}"),
+                scope=scope,
+            ))
+            structural_edges.append(ProjectMapEdge(
+                container, key, "membership",
+                details=("Принадлежность VDC по ссылке API; не физическое соединение.", f"Сбор: {observations[key]}"),
+            ))
         for address in values:
             # Prefix inventory belongs on the map, but is not a host binding.
             try:
@@ -361,10 +376,10 @@ def build_project_map(
                         if value.get("id") == record.get("id") and value.get("type") == "edges"
                     )
                 parsed.append((vmware_revision(item["scan"], index), key, nodes[key].label))
-            except (ValueError, KeyError, StopIteration):
+            except (ValueError, TypeError, KeyError, IndexError, StopIteration):
                 warnings.append(
                     f"{nodes[key].label}: правила Firewall не нормализованы; "
-                    "проверьте ошибки сбора."
+                    "в карте нет разобранных правил этого Edge. Откройте диагностику сбора и анализа."
                 )
 
     aggregated: dict[tuple[str, str, str, bool, str], list[RuleEvidence]] = defaultdict(list)
@@ -439,7 +454,51 @@ def build_project_map(
 
     for revision, owner, label in parsed:
         scope = nodes[owner].scope
+        endpoint_keys: dict[str, str] = {}
+        for fact in (*revision.interfaces, *revision.network_segments):
+            is_interface = isinstance(fact, Interface)
+            fact_id = fact.interface_id if isinstance(fact, Interface) else fact.segment_id
+            key = ("interface:" if is_interface else "segment:") + identity(owner, fact_id)
+            endpoint_keys[fact_id] = key
+            addresses = fact.addresses if isinstance(fact, Interface) else fact.cidrs
+            location = fact.source_location
+            details = (
+                f"Владелец: {label} · {revision.device.device_id}",
+                f"Ревизия: {revision.revision_id}",
+                f"ID: {fact_id} · полнота: {fact.data_status.value}",
+                f"Источник: {location.source_name}:{location.object_path or location.line_start}"
+                if location else f"Ручной факт: {fact.manual_reason}",
+                "Принадлежность устройству не означает физическую или доступную сквозную связь.",
+            )
+            nodes[key] = ProjectMapNode(
+                key, fact.name, "network", nodes[owner].area,
+                fact.zone or ("Интерфейсы" if is_interface else "Настроенные сегменты"),
+                tuple(addresses), details, scope,
+            )
+            structural_edges.append(ProjectMapEdge(
+                owner, key, "membership", status=fact.data_status.value,
+                details=("Принадлежность устройству", *details),
+            ))
+        for link in revision.topology_links:
+            left = endpoint_keys.get(link.left_endpoint_id)
+            right = endpoint_keys.get(link.right_endpoint_id)
+            if left is not None and right is not None:
+                location = link.source_location
+                structural_edges.append(ProjectMapEdge(
+                    left, right, "topology", status=link.data_status.value,
+                    details=(
+                        f"Явный факт топологии: {link.link_id}",
+                        f"Ревизия: {revision.revision_id}",
+                        f"Источник: {location.source_name}:{location.object_path or location.line_start}"
+                        if location else f"Ручной факт: {link.manual_reason}",
+                        "Связь внутри одной ревизии; сквозная доступность не вычисляется.",
+                    ),
+                ))
+
+    for revision, owner, label in parsed:
+        scope = nodes[owner].scope
         for rule in revision.parse_result.rules:
+            rule_inputs[owner, rule.rule_id] = rule
             sources = tuple(
                 dict.fromkeys(
                     key
@@ -485,6 +544,13 @@ def build_project_map(
                 f"{rule.source_location.object_path or rule.source_location.line_start}",
                 owner,
                 rule.policy_direction or "unknown",
+                (
+                    f"Политика: {rule.policy_id or 'не указана'}; порядок: {rule.sequence}",
+                    f"Зоны: {rule.source_zone or 'не указана'} → {rule.destination_zone or 'не указана'}",
+                    f"Снимок: {revision.parse_result.configuration.captured_at.isoformat()}",
+                    f"SHA-256: {revision.parse_result.configuration.content_sha256}",
+                    "Условия пользователя/AD и расписания не раскрываются в адреса без исходных данных.",
+                ),
             )
             if not sources or not destinations:
                 warnings.append(f"{label} / {rule.name}: неполные адресные условия")
@@ -534,6 +600,11 @@ def build_project_map(
             keys.extend(endpoint_nodes(endpoint, area, owner))
         return tuple(dict.fromkeys(keys))
 
+    security_groups: dict[tuple[str, str, str], list[str]] = defaultdict(list)
+    for record, area, key in cloud_records:
+        if record.get("type") == "security_groups":
+            security_groups[area, observations[key], canonical_cloud_reference(str(record.get("id", "")), "security_groups")].append(key)
+
     for record, area, owner in cloud_records:
         data = record.get("data", {})
         rules = data.get("security_rules", [])
@@ -545,14 +616,33 @@ def build_project_map(
                     continue
                 remote = rule_data.get("remote_ip_prefix") or rule_data.get("remote_cidr")
                 direction = rule_data.get("direction")
+                if not isinstance(direction, str):
+                    direction = None
                 peers = cloud_endpoints([remote], nodes[owner].scope, owner) if remote else ()
-                if not peers or direction not in {"ingress", "egress"}:
-                    warnings.append(f"{nodes[owner].label}: правило SG без явного CIDR/направления")
-                    continue
+                if not peers and isinstance(rule_data.get("remote_group_id"), str):
+                    reference = canonical_cloud_reference(rule_data["remote_group_id"], "security_groups")
+                    matches = security_groups.get((area, observations[owner], reference), [])
+                    if len(matches) == 1:
+                        peers = (matches[0],)
+                remote_known = bool(peers)
+                if not peers:
+                    peers = endpoint_nodes(Endpoint(
+                        endpoint_id=f"sg:{rule_data.get('id', index)}:remote",
+                        name=str(rule_data.get("remote_group_id") or remote or "Удалённая сторона не указана API"),
+                        kind=EndpointKind.OBJECT, resolution_status=DataStatus.UNKNOWN,
+                    ), nodes[owner].scope, owner)
+                protocol = rule_data.get("protocol")
+                status = (
+                    "known" if remote_known and direction in {"ingress", "egress"}
+                    and type(protocol) in {str, int}
+                    and protocol in {"tcp", "udp", "icmp", "6", "17", "1", 6, 17, 1}
+                    else "unknown"
+                )
+                if status != "known":
+                    warnings.append(f"{nodes[owner].label}: правило SG показано с неразрешёнными условиями")
                 services = (
-                    f"{rule_data.get('protocol', 'any')} "
-                    f"{rule_data.get('port_range_min', '')}–"
-                    f"{rule_data.get('port_range_max', '')}",
+                    f"Протокол API: {protocol if protocol is not None else 'не указан'}; "
+                    f"порты API: {rule_data.get('port_range_min')}–{rule_data.get('port_range_max')}",
                 )
                 evidence = RuleEvidence(
                     nodes[owner].label,
@@ -561,71 +651,106 @@ def build_project_map(
                     "allow",
                     True,
                     services,
-                    str(remote) if direction == "ingress" else nodes[owner].label,
-                    nodes[owner].label if direction == "ingress" else str(remote),
-                    "known",
+                    str(remote or rule_data.get("remote_group_id") or "неизвестно")
+                    if direction == "ingress" else nodes[owner].label,
+                    nodes[owner].label if direction == "ingress"
+                    else str(remote or rule_data.get("remote_group_id") or "неизвестно"),
+                    status,
                     "Облачный сбор / security_rules",
                     owner,
+                    str(direction or "unknown"),
+                    (
+                        f"Сбор: {observations[owner]}; наблюдение: {record.get('collected_at', 'не указано')}",
+                        "Правило SG показано по данным API; нормализованный анализ SG не выполнялся.",
+                    ),
                 )
                 for peer in peers:
+                    if direction not in {"ingress", "egress"}:
+                        structural_edges.append(ProjectMapEdge(
+                            owner, peer, "condition", "unknown", True, "unknown", (evidence,),
+                            ("Направление правила API неизвестно; линия не задаёт направление доступа.",),
+                        ))
+                        continue
                     source, target = (peer, owner) if direction == "ingress" else (owner, peer)
-                    aggregated[source, target, "allow", True, "known"].append(evidence)
-    edges = [
+                    aggregated[source, target, "allow", True, status].append(evidence)
+    edges = [*structural_edges, *(
         ProjectMapEdge(source, target, "acl", action, enabled, status, tuple(rules))
         for (source, target, action, enabled, status), rules in aggregated.items()
-    ]
-    # Cloud links are explicit references within one connection, never name/IP guesses.
-    cloud_ids: dict[tuple[str, str], list[str]] = defaultdict(list)
+    )]
+    # Ссылки одного сбора не связываются с устаревшими наблюдениями другого.
+    cloud_ids: dict[tuple[str, str, str, str], set[str]] = defaultdict(set)
     for record, area, key in cloud_records:
-        cloud_ids[area, str(record.get("id", ""))].append(key)
-    reference_fields = {
-        "network_id",
-        "subnet_id",
-        "vpc_id",
-        "server_id",
-        "vm_id",
-        "security_group_id",
-    }
+        inventory = record.get("inventory", {})
+        for raw_id in (record.get("id"), inventory.get("id"), inventory.get("href")):
+            if isinstance(raw_id, str) and raw_id:
+                kind = str(record.get("type", ""))
+                cloud_ids[area, observations[key], kind, canonical_cloud_reference(raw_id, kind)].add(key)
 
-    def references(value: object) -> set[str]:
-        result: set[str] = set()
-        if isinstance(value, dict):
-            for name, child in value.items():
-                if name in reference_fields and isinstance(child, str):
-                    result.add(child)
-                elif name == "security_group_ids" and isinstance(child, list):
-                    result.update(item for item in child if isinstance(item, str))
-                elif name == "security_groups" and isinstance(child, list):
-                    result.update(
-                        str(item["id"])
-                        for item in child
-                        if isinstance(item, dict) and item.get("id")
-                    )
-                elif isinstance(child, (dict, list)):
-                    result.update(references(child))
-        elif isinstance(value, list):
-            for child in value:
-                result.update(references(child))
-        return result
-
-    seen_links = set()
     for record, area, key in cloud_records:
-        resource_refs = references(record.get("inventory", {}))
-        resource_refs.update(references(record.get("data", {}).get("vm_networks", {})))
-        for value in sorted(resource_refs):
-            matches = cloud_ids.get((area, value), [])
-            if len(matches) == 1 and matches[0] != key:
-                pair = tuple(sorted((key, matches[0])))
-                if pair not in seen_links:
-                    seen_links.add(pair)
-                    edges.append(
-                        ProjectMapEdge(
-                            key,
-                            matches[0],
-                            "attachment",
-                            details=(f"Явная ссылка облачного ресурса: {value}",),
-                        )
-                    )
+        vm_networks = record.get("data", {}).get("vm_networks", ())
+        resource_refs = (*cloud_references(record.get("inventory", {})), *cloud_references(vm_networks, "data.vm_networks"))
+        for ref in resource_refs:
+            matches = cloud_ids.get((area, observations[key], ref.kind, ref.identifier), set())
+            if matches == {key}:
+                continue
+            details = (
+                f"Явная ссылка API: {ref.kind} / {ref.identifier}",
+                f"Поле: {ref.path}; сбор: {observations[key]}",
+                "Принадлежность/подключение не подтверждает физический или разрешённый сквозной путь.",
+            )
+            if len(matches) == 1:
+                target = next(iter(matches))
+                status = "known"
+            else:
+                target = "cloud-reference:" + identity(area, observations[key], ref.kind, ref.identifier)
+                status = "unknown"
+                reason = "Объект не получен в этом сборе" if not matches else "Ссылка имеет несколько кандидатов"
+                nodes.setdefault(target, ProjectMapNode(
+                    target, ref.kind + " · " + ref.identifier, "network", area, "Неразрешённые ссылки API",
+                    details=(reason, *details, *(nodes[value].label for value in sorted(matches))),
+                    scope=area + ":reference:" + identity(observations[key], ref.kind, ref.identifier),
+                ))
+                warnings.append(f"{nodes[key].label}: {reason.lower()} ({ref.path})")
+            edges.append(ProjectMapEdge(key, target, "attachment", status=status, details=details))
+        if cloud_platforms[key] == "vmware" and record.get("type") == "vms" and isinstance(vm_networks, list):
+            for index, connection in enumerate(vm_networks):
+                if not isinstance(connection, dict) or not isinstance(connection.get("network"), str):
+                    continue
+                name = connection["network"].strip()
+                if not name:
+                    continue
+                target = "vm-network:" + identity(key, connection.get("NetworkConnectionIndex", index), name)
+                nodes[target] = ProjectMapNode(
+                    target, name + " · сеть подключения ВМ", "network", area, "Сетевые подключения ВМ",
+                    details=(
+                        f"Владелец: {nodes[key].label}; сбор: {observations[key]}",
+                        f"Поле: data.vm_networks[{index}].network",
+                        "API передал локальное имя сети. Соответствие сети Org VDC по одному имени не установлено.",
+                    ),
+                    scope=nodes[key].scope,
+                )
+                edges.append(ProjectMapEdge(
+                    key, target, "attachment", status="unknown",
+                    details=nodes[target].details,
+                ))
+    if cloud_records:
+        missing_networks = sum(
+            record.get("type") == "vms" and "vm_networks" not in record.get("data", {})
+            for record, _, _ in cloud_records
+        )
+        missing_firewalls = sum(
+            record.get("type") == "edges" and not isinstance(record.get("data", {}).get("firewall"), dict)
+            for record, _, _ in cloud_records
+        )
+        if missing_networks or missing_firewalls:
+            warnings.append(
+                f"Не собраны сетевые подключения ВМ: {missing_networks}; "
+                f"Firewall Edge: {missing_firewalls}. Связи по этим данным восстановить невозможно."
+            )
+        warnings.append(
+            "Облачные линии: принадлежность VDC, явные ссылки API и условия правил — разные виды связей. "
+            "Локальные имена сетей ВМ не объединяются с Org VDC без стабильной ссылки."
+        )
     return ProjectMap(
-        project_id, tuple(nodes.values()), tuple(edges), areas, tuple(dict.fromkeys(warnings))
+        project_id, tuple(nodes.values()), tuple(edges), areas, tuple(dict.fromkeys(warnings)), rule_inputs,
     )

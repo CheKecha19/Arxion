@@ -123,6 +123,7 @@ from firewall_compliance.interfaces.desktop.object_presentation import (
     rule_service_summary,
 )
 from firewall_compliance.interfaces.desktop.organization_lock import WorkspaceBusyError
+from firewall_compliance.interfaces.desktop.qt_rule_query import RuleQueryWidget
 from firewall_compliance.interfaces.desktop.policy_exposure_settings import PolicyExposureSettings
 from firewall_compliance.interfaces.desktop.policy_scope_settings import PolicyScopeSettings
 from firewall_compliance.interfaces.desktop.project_map import build_project_map
@@ -808,6 +809,7 @@ class MainWindow(QMainWindow):
         self.topology_map_widget = TopologyMapWidget(self)
         self.project_map_widget = ProjectMapWidget(self)
         self.project_map_widget.labels_changed.connect(self._save_map_zone_labels)
+        self.project_map_widget.view_settings_changed.connect(self._save_map_view_settings)
         self.project_map_widget.rules_requested.connect(self._open_project_map_rules)
         self.map_mode_stack = _MapModeStack(self)
         self.map_mode_stack.currentChanged.connect(self.map_mode_stack.updateGeometry)
@@ -842,6 +844,10 @@ class MainWindow(QMainWindow):
     def _save_map_zone_labels(self, labels: dict[str, str]) -> None:
         if self.project_id:
             self.store.update_settings(self.project_id, {"map_zone_labels": labels})
+
+    def _save_map_view_settings(self, settings: dict[str, object]) -> None:
+        if self.project_id:
+            self.store.update_settings(self.project_id, {"map_view_settings": settings})
 
     def _open_project_map_rules(self, rule_ids: object) -> None:
         if not isinstance(rule_ids, (list, tuple)):
@@ -920,12 +926,10 @@ class MainWindow(QMainWindow):
             self.store.list_map_integrations(project_id) if project_id else (),
             revisions=revisions,
         )
-        labels = (
-            self.store.get_project(project_id)["settings"].get("map_zone_labels", {})
-            if project_id
-            else {}
+        settings = self.store.get_project(project_id)["settings"] if project_id else {}
+        self.project_map_widget.set_graph(
+            graph, settings.get("map_zone_labels", {}), settings.get("map_view_settings", {}),
         )
-        self.project_map_widget.set_graph(graph, labels)
 
     def _refresh_map_items(self, preferred_item: dict[str, Any] | None = None) -> None:
         """Use saved payloads or exact live item IDs, never reread a source."""
@@ -2072,7 +2076,7 @@ class MainWindow(QMainWindow):
         filters = QHBoxLayout()
         self.finding_search = QLineEdit()
         self.finding_search.setObjectName("findingSearch")
-        self.finding_search.setPlaceholderText("Поиск по устройству, проверке, названию…")
+        self.finding_search.setPlaceholderText("Устройство, IP, объект, сервис или ID правила…")
         self.finding_search.textChanged.connect(self.refresh_findings)
         filters.addWidget(self.finding_search, 1)
         self.severity_filter = QComboBox()
@@ -2088,13 +2092,16 @@ class MainWindow(QMainWindow):
         self.status_filter.currentIndexChanged.connect(self.refresh_findings)
         filters.addWidget(self.status_filter)
         layout.addLayout(filters)
+        self.finding_conditions = RuleQueryWidget(self)
+        self.finding_conditions.changed.connect(self.refresh_findings)
+        layout.addWidget(self.finding_conditions)
         split = QSplitter(Qt.Orientation.Horizontal)
         self.finding_table, self.finding_model, self.finding_proxy = self._table(
-            ("Приоритет", "Устройство", "Проверка", "Находка", "Статус"),
+            ("Приоритет", "Устройство", "Проверка", "Находка", "Статус", "Полнота / фильтр"),
             "findingsTable",
         )
         self.finding_table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
-        for column, width in enumerate((125, 135, 150, 280, 145)):
+        for column, width in enumerate((125, 135, 150, 280, 145, 175)):
             self.finding_table.setColumnWidth(column, width)
         split.addWidget(self.finding_table)
         detail = self.finding_detail_tabs = QTabWidget()
@@ -2291,6 +2298,9 @@ class MainWindow(QMainWindow):
         search = self.rule_search = QLineEdit()
         search.setPlaceholderText("Поиск по устройству, правилу, адресу или сервису")
         layout.addWidget(search)
+        self.rule_conditions = RuleQueryWidget(self)
+        self.rule_conditions.changed.connect(self._refresh_rules)
+        layout.addWidget(self.rule_conditions)
         self.rules_table, self.rules_model, self.rules_proxy = self._table(
             (
                 "Устройство",
@@ -4075,6 +4085,12 @@ class MainWindow(QMainWindow):
         search = self.finding_search.text().casefold()
         for item in items:
             report = item.get("report") or {}
+            rule_index = {
+                rule["rule_id"]: rule for rule in (item.get("parse_result") or {}).get("rules", [])
+            }
+            rule_matches = {
+                key: self.finding_conditions.match(rule) for key, rule in rule_index.items()
+            } if self.finding_conditions.query.active else {}
             if device and report.get("device_id") != device:
                 continue
             for check in report.get("checks", []):
@@ -4090,15 +4106,32 @@ class MainWindow(QMainWindow):
                         continue
                     if self.status_filter.currentData() not in ("", status):
                         continue
+                    related_ids = set(finding.get("affected_rule_ids", ())) | set(
+                        finding.get("evidence", {}).get("related_rule_ids", ())
+                    )
+                    condition_match: bool | None = True
+                    if self.finding_conditions.query.active:
+                        matches = [rule_matches.get(rule_id) for rule_id in related_ids]
+                        condition_match = (
+                            True if True in matches else None if not matches or None in matches else False
+                        )
+                        if not self.finding_conditions.accepts(condition_match):
+                            continue
                     row = (
                         SEVERITIES.get(finding["severity"], finding["severity"]),
                         report["device_id"],
                         CHECKS.get(check["check_id"], check["check_id"]),
                         finding["title"],
                         STATUSES.get(status, status),
+                        check_status_label(check) + (" · фильтр неизвестен" if condition_match is None else ""),
                     )
-                    if search and search not in " ".join(row).casefold():
-                        continue
+                    if search:
+                        search_text = " ".join(row) + _json(finding.get("evidence", {}))
+                        search_text += " ".join(
+                            _json(rule_index[rule_id]) for rule_id in related_ids if rule_id in rule_index
+                        )
+                        if search not in search_text.casefold():
+                            continue
                     rows.append(row)
                     payloads.append(
                         {"finding": finding, "check": check, "item": item, "mark": mark}
@@ -4135,6 +4168,11 @@ class MainWindow(QMainWindow):
         finding, check, item = payload["finding"], payload["check"], payload["item"]
         self._refresh_map_items(item)
         evidence = finding["evidence"]
+        related_ids = set(finding.get("affected_rule_ids", ())) | set(evidence.get("related_rule_ids", ()))
+        related_rules = [
+            rule for rule in (item.get("parse_result") or {}).get("rules", [])
+            if rule.get("rule_id") in related_ids
+        ]
         locations = evidence.get("source_locations", [])
         fragments = [
             excerpt
@@ -4165,6 +4203,30 @@ class MainWindow(QMainWindow):
             f"<h3>Доказательства</h3><p>{html.escape(evidence.get('summary', ''))}</p>",
         ]
         selection = finding_limitations(item, check, finding)
+        if related_ids:
+            pieces.append("<h3>Затронутые правила и условия</h3>")
+            facts = evidence.get("facts", {})
+            covering = set(facts.get("covering_rule_ids", ()))
+            target = facts.get("target_rule_id")
+            for rule in sorted(related_rules, key=lambda value: (value.get("sequence", 0), value["rule_id"])):
+                role = (
+                    "Перекрываемое правило" if rule["rule_id"] == target
+                    else "Перекрывающее правило" if rule["rule_id"] in covering
+                    else "Связанное правило"
+                )
+                pieces.append(f"<h4>{role}: {html.escape(rule['name'])}</h4>")
+                pieces.append(_fields_html((
+                    ("ID / порядок", f"{rule['rule_id']} / {rule.get('sequence', '—')}"),
+                    ("Политика / направление", f"{rule.get('policy_id') or 'не указана'} / {rule.get('policy_direction') or 'не указано'}"),
+                    ("Источник", rule_endpoint_summary(rule, "sources")),
+                    ("Назначение", rule_endpoint_summary(rule, "destinations")),
+                    ("Сервисы", rule_service_summary(rule)),
+                    ("Действие / включено", f"{rule.get('action', 'unknown')} / {rule.get('enabled', 'неизвестно')}"),
+                    ("Полнота условий", str(rule.get("match_status", "unknown"))),
+                )))
+            missing = related_ids - {rule["rule_id"] for rule in related_rules}
+            if missing:
+                pieces.append("<p>Условия отсутствуют в этом сохранённом снимке: " + html.escape(", ".join(sorted(missing))) + ".</p>")
         if selection.local:
             pieces.append("<h3>Ограничения выбранного вывода</h3><ul>")
             pieces.extend(
@@ -4727,6 +4789,9 @@ class MainWindow(QMainWindow):
             parsed = item.get("parse_result") or {}
             device = (item.get("report") or {}).get("device_id", "")
             for rule in parsed.get("rules", []):
+                condition_match = self.rule_conditions.match(rule)
+                if not self.rule_conditions.accepts(condition_match):
+                    continue
                 if item.get("cloud_origin"):
                     cloud_count += 1
                 rows.append(
@@ -4737,7 +4802,7 @@ class MainWindow(QMainWindow):
                         dict(rule_details(rule)).get("Действие", rule["action"]),
                         rule_endpoint_summary(rule, "sources"),
                         rule_endpoint_summary(rule, "destinations"),
-                        rule_service_summary(rule),
+                        rule_service_summary(rule) + (" · фильтр неизвестен" if condition_match is None else ""),
                     )
                 )
                 payloads.append(
@@ -4748,6 +4813,8 @@ class MainWindow(QMainWindow):
                     }
                 )
             for group in ("endpoints", "services"):
+                if self.rule_conditions.query.active:
+                    continue
                 for value in parsed.get(group, []):
                     rows.append(
                         (
@@ -4771,11 +4838,16 @@ class MainWindow(QMainWindow):
             for item in cloud_resources(self._cloud_scans()):
                 device = item["record"].get("name") or item["record"].get("id", "Cloud.ru")
                 for value in cloud_rule_values(item["record"]):
+                    if self.rule_conditions.query.active and not self.rule_conditions.include_unknown:
+                        continue
                     if (item["scan"]["id"], item["record"].get("id")) in analyzed and value[
                         "group"
                     ] != "nat":
                         continue
-                    rows.append((device, *cloud_rule_columns(value)))
+                    columns = list(cloud_rule_columns(value))
+                    if self.rule_conditions.query.active:
+                        columns[-1] = str(columns[-1]) + " · фильтр неизвестен"
+                    rows.append((device, *columns))
                     payloads.append(
                         {
                             "item": item,

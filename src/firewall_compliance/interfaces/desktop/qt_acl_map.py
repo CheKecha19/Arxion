@@ -18,6 +18,7 @@ from PySide6.QtCore import (
     QPointF,
     QRectF,
     QSaveFile,
+    QTimer,
     Qt,
     Signal,
 )
@@ -554,7 +555,10 @@ class AclMapScene(QGraphicsScene):
         item.setTextWidth(960.0)
         self.setSceneRect(self.itemsBoundingRect().adjusted(-32.0, -32.0, 32.0, 32.0))
 
-    def set_map_state(self, state: AclMapState, *, filters: AclMapFilter | None = None) -> None:
+    def set_map_state(
+        self, state: AclMapState, *, filters: AclMapFilter | None = None,
+        relation_ids: frozenset[str] | None = None,
+    ) -> None:
         """Replace the entire presentation; never retain an earlier graph."""
         if not isinstance(state, AclMapState):
             raise TypeError("ACL map scene requires an AclMapState")
@@ -582,6 +586,10 @@ class AclMapScene(QGraphicsScene):
         selected_relations = (
             filter_acl_relations(graph, filters) if filters is not None else graph.relations
         )
+        if relation_ids is not None:
+            selected_relations = tuple(
+                relation for relation in selected_relations if relation.relation_id in relation_ids
+            )
         referenced_ids = {
             node_id
             for relation in selected_relations
@@ -593,7 +601,7 @@ class AclMapScene(QGraphicsScene):
         }
         selected_nodes = (
             tuple(node for node in graph.nodes if node.node_id in referenced_ids)
-            if filters is not None
+            if filters is not None or relation_ids is not None
             else graph.nodes
         )
         segment_count = sum(
@@ -643,6 +651,8 @@ class AclMapScene(QGraphicsScene):
                     f"Источник: {graph.revision.parse_result.configuration.source_name}; "
                     f"SHA-256: {graph.revision.parse_result.configuration.content_sha256}",
                     f"Выбрано правил: {len(selected_relations)} из {len(graph.relations)}",
+                    "Фокус на части правил; полный набор доступен в списке и HTML."
+                    if relation_ids is not None else "Полный вид с учётом фильтров.",
                     *(
                         ("Фильтры: " + filters.model_dump_json(exclude_none=True),)
                         if filters is not None
@@ -785,7 +795,11 @@ class AclMapView(QGraphicsView):
         # Qt permits setScene(None), although its scene() stub omits nullability.
         if scene is None:
             return
-        bounds = scene.itemsBoundingRect().adjusted(-32.0, -32.0, 32.0, 32.0)
+        bounds = QRectF()
+        for item in scene.items():
+            if item.isVisible():
+                bounds = bounds.united(item.sceneBoundingRect())
+        bounds = bounds.adjusted(-32.0, -32.0, 32.0, 32.0)
         if bounds.isEmpty():
             return
         self.resetTransform()
@@ -883,6 +897,12 @@ class AclMapWidget(QWidget):
         self._node_references: dict[str, list[tuple[AclMapRelation, str]]] = {}
         self._updating = False
         self.filters: AclMapFilter | None = None
+        self._focused_relations: frozenset[str] | None = None
+        self._focus_history: list[frozenset[str] | None] = []
+        self._pending_focus: frozenset[str] | None = None
+        self._focus_timer = QTimer(self)
+        self._focus_timer.setSingleShot(True)
+        self._focus_timer.timeout.connect(self._apply_pending_focus)
         layout = QVBoxLayout(self)
         self.mode_label = QLabel("Связи по правилам", self)
         self.mode_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -960,6 +980,12 @@ class AclMapWidget(QWidget):
         toolbar.addWidget(self.zoom_in_button)
         toolbar.addWidget(self.zoom_out_button)
         toolbar.addWidget(self.fit_button)
+        self.back_focus_button = QPushButton("Назад", self)
+        self.back_focus_button.clicked.connect(self._back_focus)
+        self.all_rules_button = QPushButton("Все правила", self)
+        self.all_rules_button.clicked.connect(self._clear_focus)
+        toolbar.addWidget(self.back_focus_button)
+        toolbar.addWidget(self.all_rules_button)
         gesture_hint = QLabel("Колесо: масштаб · средняя кнопка: перемещение · + / − / 0", self)
         gesture_hint.setTextFormat(Qt.TextFormat.PlainText)
         gesture_hint.setWordWrap(True)
@@ -970,6 +996,8 @@ class AclMapWidget(QWidget):
         self.details.setAccessibleName("Подробности выбранного условия или правила ACL")
         self.details.setMinimumWidth(300)
         self.relation_selector = QComboBox(self)
+        self.relation_selector.setEditable(True)
+        self.relation_selector.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.relation_selector.setAccessibleName("Все правила карты, включая не отрисованные")
         selector_label = QLabel("Правило из полного набора:", self)
         selector_label.setBuddy(self.relation_selector)
@@ -996,6 +1024,11 @@ class AclMapWidget(QWidget):
         previous_block = self.relation_selector.blockSignals(True)
         try:
             self.state = state
+            self._focus_timer.stop()
+            self._pending_focus = None
+            self._focused_relations = None
+            self._focus_history.clear()
+            self.back_focus_button.setEnabled(False)
             self._graph = None
             self._nodes.clear()
             self._relations.clear()
@@ -1363,6 +1396,13 @@ class AclMapWidget(QWidget):
             self.relation_selector.setCurrentIndex(0)
             self.relation_selector.blockSignals(previous_block)
             self._show_node(item.node)
+            related = frozenset(
+                relation.relation_id for relation, _ in self._node_references.get(item.node.node_id, ())
+            )
+            if self._focused_relations is not None:
+                related = related.intersection(self._focused_relations)
+            if related:
+                self._queue_focus(related)
         elif isinstance(item, (AclMapEdgeItem, AclMapRelationJunctionItem)):
             previous_block = self.relation_selector.blockSignals(True)
             self.relation_selector.setCurrentIndex(
@@ -1371,12 +1411,53 @@ class AclMapWidget(QWidget):
             self.relation_selector.blockSignals(previous_block)
             dimension = item.data(int(Qt.ItemDataRole.UserRole) + 5)
             self._show_relation(item.relation, dimension if isinstance(dimension, str) else None)
+            self._queue_focus(frozenset((item.relation_id,)))
+
+    def _queue_focus(self, relation_ids: frozenset[str]) -> None:
+        self._pending_focus = relation_ids
+        self._focus_timer.start(0)
+
+    def _apply_pending_focus(self) -> None:
+        if self._pending_focus is not None:
+            pending, self._pending_focus = self._pending_focus, None
+            self._focus_relations(pending)
+
+    def _focus_relations(self, relation_ids: frozenset[str] | None, *, remember: bool = True) -> None:
+        if self.state is None or relation_ids == self._focused_relations:
+            return
+        if remember:
+            self._focus_history.append(self._focused_relations)
+        self._focused_relations = relation_ids
+        self._updating = True
+        try:
+            self.scene.set_map_state(self.state, filters=self.filters, relation_ids=relation_ids)
+        finally:
+            self._updating = False
+        self.back_focus_button.setEnabled(bool(self._focus_history))
+        self.png_export_button.setEnabled(
+            self._graph is not None and self.scene.render_status != "limited"
+        )
+        self.status_label.setText(
+            f"{self.state.label}\n"
+            + (f"Фокус: {len(relation_ids)} правил из {len(self._relations)}. " if relation_ids is not None else "Все выбранные правила. ")
+            + self.scene.diagnostic
+        )
+        self.view.fit_map()
+
+    def _clear_focus(self) -> None:
+        self._focus_relations(None)
+
+    def _back_focus(self) -> None:
+        if self._focus_history:
+            self._focus_relations(self._focus_history.pop(), remember=False)
 
     def _relation_selected(self, index: int) -> None:
         if self._updating:
             return
         relation_id = self.relation_selector.itemData(index)
         relation = self._relations.get(relation_id) if isinstance(relation_id, str) else None
+        if relation is not None:
+            self._focus_relations(frozenset((relation.relation_id,)))
         self._updating = True
         try:
             self.scene.clearSelection()
