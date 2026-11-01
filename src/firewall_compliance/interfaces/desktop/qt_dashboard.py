@@ -312,7 +312,7 @@ class ProjectDashboard(QWidget):
         layout.addWidget(self.trend_note)
         layout.addWidget(_label("Источники: последняя попытка и успешный сбор", "heading"))
         self.source_table = _table(
-            ("Источник", "Сбор", "Анализ", "Последняя попытка", "Успешный сбор", "Ошибок"),
+            ("Источник", "Сбор", "Анализ", "Последняя попытка", "Успешный сбор", "Ошибок", "Предупр."),
             "dashboardSources",
         )
         layout.addWidget(self.source_table)
@@ -400,7 +400,7 @@ class ProjectDashboard(QWidget):
         _fill(self.source_table, [
             (str(source["label"]), states.get(source["state"], source["state"]),
              states.get(source["analysis_state"], source["analysis_state"]),
-             _date(source["last_attempt"]), _date(source["last_success"]), str(source["errors"]))
+             _date(source["last_attempt"]), _date(source["last_success"]), str(source["errors"]), str(source.get("warnings", 0)))
             for source in snapshot.source_health
         ])
         self.source_table.setToolTip(

@@ -26,6 +26,7 @@ from firewall_compliance.application.workspace_profile import (
     ProfileVersion,
     analysis_settings,
 )
+from firewall_compliance.application.collection_integrity import count_drop_warning
 from firewall_compliance.domain.management import ManagementProfile
 from firewall_compliance.domain.policy_exposure import PolicyExposureProfile
 from firewall_compliance.domain.policy_scope import PolicyScopeProfile
@@ -44,9 +45,12 @@ class FileCycleInput:
     path: Path
     device_id: str | None = None
     expected_sha256: str | None = None
+    site_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", Path(self.path))
+        if self.site_id is not None and (not isinstance(self.site_id, str) or not self.site_id.strip()):
+            raise ValueError("site_id must be nonempty when supplied")
         if self.device_id is not None and (
             not isinstance(self.device_id, str) or not self.device_id.strip()
         ):
@@ -64,6 +68,7 @@ class FileCycleResult:
     run_id: str
     outcome: CycleOutcome[AnalysisSession | ParseFailure]
     sessions: tuple[tuple[str, AnalysisSession], ...]
+    warnings: tuple[str, ...] = ()
 
 
 def saved_file_inputs(run: Mapping[str, Any]) -> tuple[FileCycleInput, ...]:
@@ -102,6 +107,7 @@ def run_file_cycle(
     cancel: Cancellation | None = None,
     source_reference: str | None = None,
     source_fingerprint: str | None = None,
+    source_sites: tuple[str, ...] = (),
     started: Callable[[str], None] | None = None,
 ) -> FileCycleResult:
     """Collect, analyze and save a file batch in a worker, preserving every failure.
@@ -115,6 +121,23 @@ def run_file_cycle(
     if not inputs:
         raise ValueError("Select at least one input")
     manifest = tuple(inputs)
+    previous_counts: dict[tuple[str, str, str], tuple[int, str]] = {}
+    for previous_run in store.project_history(project_id):
+        if source_reference is not None and (
+            previous_run.get("settings", {}).get("source_id") != source_reference
+            or previous_run.get("settings", {}).get("source_config_fingerprint") != source_fingerprint
+        ):
+            continue
+        for previous_item in reversed(previous_run["items"]):
+            report = previous_item.get("report") or {}
+            parsed = previous_item.get("parse_result") or {}
+            rules = parsed.get("rules")
+            if previous_item.get("status") == "complete" and report and isinstance(rules, list):
+                key = (
+                    str(report["device_id"]), str(report["parser_version"]),
+                    str(parsed.get("configuration", {}).get("platform")),
+                )
+                previous_counts.setdefault(key, (len(rules), previous_item["id"]))
     if any(not isinstance(item, FileCycleInput) for item in manifest):
         raise TypeError("inputs must contain FileCycleInput values")
     captured = CycleSettings.capture(settings)
@@ -143,16 +166,27 @@ def run_file_cycle(
     if "include_fragments" in values and type(values["include_fragments"]) is not bool:
         raise ValueError("include_fragments must be boolean")
     run_settings = dict(values)
+    if any(item.site_id is not None for item in manifest):
+        run_settings["workspace_input_sites"] = {
+            str(item.path): item.site_id for item in manifest if item.site_id is not None
+        }
     if source_reference is not None:
         run_settings["source_id"] = source_reference
         run_settings["source_config_fingerprint"] = source_fingerprint
         run_settings["source_collection_state"] = "completed"
+        run_settings["source_site_ids"] = list(source_sites)
     LegacyProfileHistory(store.path).initialize()
+    if any(item.site_id is not None for item in manifest):
+        store.workspace_metadata.initialize()
+        available_sites = {site["id"] for site in store.workspace_metadata.list_sites()}
+        if any(item.site_id is not None and item.site_id not in available_sites for item in manifest):
+            raise ValueError("Площадка подготовленных данных больше не существует")
     run_id = store.create_run(project_id, settings=run_settings)
     cancellation = cancel if cancel is not None else Event()
     collected_hashes: dict[str, str] = {}
     input_by_id = {str(index): item for index, item in enumerate(manifest)}
     sessions: list[tuple[str, AnalysisSession]] = []
+    warnings: list[str] = []
 
     def collect(identifier: str) -> tuple[CycleInput[FileCycleInput], ...]:
         item = input_by_id[identifier]
@@ -208,7 +242,22 @@ def run_file_cycle(
     def persist_item(outcome: ItemOutcome[AnalysisSession | ParseFailure]) -> None:
         item = input_by_id[outcome.input_id]
         if isinstance(outcome.value, AnalysisSession):
-            item_id = store.record_session(run_id, outcome.value)
+            device_id = outcome.value.report.device_id
+            if item.site_id is not None and device_id not in store.workspace_metadata.device_sites(project_id):
+                store.workspace_metadata.assign_device(project_id, device_id, item.site_id)
+            report = outcome.value.report
+            platform = outcome.value.parse_result.configuration.platform
+            previous = previous_counts.get((
+                str(report.device_id), report.parser_version, str(getattr(platform, "value", platform))
+            ))
+            warning = count_drop_warning(
+                previous[0], len(outcome.value.parse_result.rules),
+                threshold_percent=options.get("rule_count_drop_percent", 30),
+                before_reference=previous[1], unit="правила",
+            ) if previous else None
+            messages = (warning.message,) if warning is not None else ()
+            warnings.extend(messages)
+            item_id = store.record_session(run_id, outcome.value, collection_warnings=messages)
             sessions.append((item_id, outcome.value))
         elif isinstance(outcome.value, ParseFailure):
             store.record_failure(run_id, item.path, outcome.value)
@@ -237,4 +286,4 @@ def run_file_cycle(
         else "interrupted"
     )
     store.finish_run(run_id, state)
-    return FileCycleResult(run_id, outcome, tuple(sessions))
+    return FileCycleResult(run_id, outcome, tuple(sessions), tuple(warnings))

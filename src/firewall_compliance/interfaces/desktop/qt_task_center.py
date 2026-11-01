@@ -37,6 +37,7 @@ STATES = {
 class TaskCenterDialog(QDialog):
     open_run = Signal(str)
     open_scan = Signal(str)
+    retry_requested = Signal(str, str)
 
     def __init__(
         self,
@@ -74,6 +75,9 @@ class TaskCenterDialog(QDialog):
         self.open_button = QPushButton("Открыть результат")
         self.open_button.clicked.connect(self._open)
         buttons.addButton(self.open_button, QDialogButtonBox.ButtonRole.ActionRole)
+        retry = QPushButton("Повторить неуспешные элементы")
+        retry.clicked.connect(self._retry)
+        buttons.addButton(retry, QDialogButtonBox.ButtonRole.ActionRole)
         refresh = QPushButton("Обновить")
         refresh.clicked.connect(self._reload)
         buttons.addButton(refresh, QDialogButtonBox.ButtonRole.ActionRole)
@@ -117,7 +121,10 @@ class TaskCenterDialog(QDialog):
                     "errors": sum(
                         item.get("status") in {"error", "failed", "unsupported"} for item in items
                     ),
-                    "limitations": f"Частичных: {sum(item.get('status') == 'partial' for item in items)}",
+                    "limitations": (
+                        f"Частичных: {sum(item.get('status') == 'partial' for item in items)}; "
+                        f"предупреждений о составе: {sum(len(item.get('collection_warnings', ())) for item in items)}"
+                    ),
                 })
             for scan in self._store.list_cloud_scans(self._project_id):
                 result = scan.get("result") or {}
@@ -126,7 +133,10 @@ class TaskCenterDialog(QDialog):
                     "created_at": scan["created_at"], "finished_at": scan.get("finished_at"),
                     "count": len(result.get("records", ())),
                     "errors": len(result.get("errors", ())),
-                    "limitations": "Сбор инвентаря не подтверждает проверку правил",
+                    "limitations": (
+                        "Сбор инвентаря не подтверждает проверку правил; "
+                        f"предупреждений о составе: {len(result.get('integrity_warnings', ()))}"
+                    ),
                 })
             return sorted(rows, key=lambda row: row["created_at"], reverse=True)
 
@@ -187,3 +197,14 @@ class TaskCenterDialog(QDialog):
             return
         self.accept()
         (self.open_run if row["kind"] == "run" else self.open_scan).emit(row["id"])
+
+    def _retry(self) -> None:
+        index = self.table.currentRow()
+        if not 0 <= index < len(self._rows) or not self._valid():
+            return
+        row = self._rows[index]
+        if not row.get("id") or row["state"] in {"running", "queued"} or row["kind"] not in {"run", "scan"}:
+            self.status.setText("Выберите завершённую операцию с ошибками или ограничениями.")
+            return
+        self.accept()
+        self.retry_requested.emit(row["kind"], row["id"])

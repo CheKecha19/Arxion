@@ -1863,6 +1863,21 @@ class MainWindow(QMainWindow):
         self.policy_scope_settings = PolicyScopeSettings()
         layout.addWidget(self.policy_scope_settings)
         self.policy_scope_settings.changed.connect(self._save_analysis_settings)
+        self.rule_drop_threshold = QSpinBox()
+        self.inventory_drop_threshold = QSpinBox()
+        for title, widget in (
+            ("Предупреждать при сокращении правил, %", self.rule_drop_threshold),
+            ("Предупреждать при сокращении ресурсов, %", self.inventory_drop_threshold),
+        ):
+            row = QHBoxLayout()
+            row.addWidget(_label(title))
+            widget.setRange(1, 100)
+            widget.setValue(30)
+            widget.setSuffix(" %")
+            widget.setAccessibleName(title)
+            widget.valueChanged.connect(self._save_analysis_settings)
+            row.addWidget(widget)
+            layout.addLayout(row)
         layout.addWidget(_label("Выполняемые проверки", muted=True))
         self.check_boxes: dict[str, QCheckBox] = {}
         for check_id, title in CHECKS.items():
@@ -1933,7 +1948,8 @@ class MainWindow(QMainWindow):
             "Фильтр: устройства, находки, правила, история проверок и их карта. "
             "Ошибки без устройства, облачный инвентарь, источники и сборы остаются по проекту. "
             "Реестр, расширенные инструменты, сохранённые карты и отчёты — "
-            "весь проект / выбранный полный запуск. Запуск проверки использует все подготовленные файлы."
+            "весь проект / выбранный полный запуск. Для сбора выбираются назначенные источники и файлы площадки; "
+            "общий источник нескольких площадок обновляется целиком."
             if active
             else "Все площадки выбранного проекта. Назначения не меняют исходные результаты."
         )
@@ -1990,6 +2006,8 @@ class MainWindow(QMainWindow):
                 {
                     "require_logging": self.logging_check.isChecked(),
                     "require_comments": self.comments_check.isChecked(),
+                    "rule_count_drop_percent": self.rule_drop_threshold.value(),
+                    "inventory_count_drop_percent": self.inventory_drop_threshold.value(),
                     "management_profile": management_profile,
                     "policy_exposure_profile": policy_exposure_profile,
                     "policy_scope_profile": policy_scope_profile,
@@ -2850,7 +2868,41 @@ class MainWindow(QMainWindow):
 
         dialog.open_run.connect(open_run)
         dialog.open_scan.connect(open_scan)
+        dialog.retry_requested.connect(self._retry_task_operation)
         dialog.exec()
+
+    def _retry_task_operation(self, kind: str, task_id: str) -> None:
+        if self._batch_active or self._restore_busy or not self.project_id or self.cloud_panel.busy:
+            self.progress_label.setText("Дождитесь текущей операции перед повтором.")
+            return
+        from firewall_compliance.interfaces.desktop.source_cycle import retry_task_inputs
+
+        project_id = self.project_id
+        self._restore_busy = True
+        self._set_controls_busy(True)
+
+        def done(value: object) -> None:
+            if self._closed or self.project_id != project_id:
+                return
+            self._restore_busy = False
+            self._set_controls_busy(False)
+            self._refresh_staged()
+            if isinstance(value, JobError):
+                self.progress_label.setText(
+                    "Повтор не подготовлен. Проверьте наличие ошибок, исходных файлов и сохранённого подключения."
+                )
+                return
+            sources, files = value
+            answer = QMessageBox.question(
+                self, "Повтор неуспешных элементов",
+                f"Источников: {len(sources)}, файлов: {len(files)}. "
+                "Повторить с текущим профилем? Будет создан новый запуск по данным выбранной задачи; "
+                "исходная история сохранится. Ограничение текущей площадки не заменяет область этой задачи.",
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._start_source_cycle(sources, file_inputs=files)
+
+        self.runner.submit(lambda: retry_task_inputs(self.store, project_id, kind, task_id), done)
 
     def _run_context(self) -> str:
         if not self.run:
@@ -3072,6 +3124,8 @@ class MainWindow(QMainWindow):
             self.policy_scope_settings.load_profile(settings.get("policy_scope_profile"))
             self.logging_check.setChecked(settings.get("require_logging", True))
             self.comments_check.setChecked(settings.get("require_comments", True))
+            self.rule_drop_threshold.setValue(settings.get("rule_count_drop_percent", 30))
+            self.inventory_drop_threshold.setValue(settings.get("inventory_count_drop_percent", 30))
             self.fragments_check.blockSignals(True)
             self.fragments_check.setChecked(settings.get("include_fragments", True))
             self.fragments_check.blockSignals(False)
@@ -3159,6 +3213,7 @@ class MainWindow(QMainWindow):
             existing.add(str(path))
             item: dict[str, Any] = {
                 "path": path,
+                "site_id": self._site_selection or None,
                 "parser": "Определение…",
                 "device": path.stem,
                 "warning": "В очереди",
@@ -3223,11 +3278,12 @@ class MainWindow(QMainWindow):
             ],
             self.staged,
         )
+        selected_inputs = self._scoped_staged() if self.project_id else ()
         self.run_button.setEnabled(
-            bool(self.staged)
+            bool(selected_inputs)
             and not self._batch_active
             and not self._restore_busy
-            and all(item["ready"] and not item["ambiguous"] for item in self.staged)
+            and all(item["ready"] and not item["ambiguous"] for item in selected_inputs)
             and any(checkbox.isChecked() for checkbox in self.check_boxes.values())
         )
 
@@ -3295,20 +3351,28 @@ class MainWindow(QMainWindow):
                 self.progress_label.setText("Дождитесь определения подготовленных файлов.")
                 self._refresh_staged()
                 return
+            sources = tuple(value)
             if self._site_selection is not None:
-                answer = QMessageBox.question(
-                    self, "Область сбора",
-                    "Подключения пока не имеют подтверждённой привязки к площадкам. "
-                    "Сбор обновит источники целиком; область просмотра сохранится. Продолжить?",
-                )
-                if answer != QMessageBox.StandardButton.Yes:
-                    self._refresh_staged()
-                    return
-            self._start_source_cycle(tuple(value))
+                sources = tuple(source for source in sources if (
+                    not source.site_ids if self._site_selection == ""
+                    else self._site_selection in source.site_ids
+                ))
+            if not sources:
+                self._refresh_staged()
+                if self._scoped_staged():
+                    self._update_file_inputs()
+                else:
+                    self.progress_label.setText(
+                        "Нет источников или файлов выбранной площадки. Назначьте источники через «Площадки»."
+                    )
+                return
+            self._start_source_cycle(sources)
 
         self.runner.submit(lambda: configured_sources(self.store, project_id), done)
 
-    def _start_source_cycle(self, sources: tuple) -> None:
+    def _start_source_cycle(
+        self, sources: tuple, *, file_inputs: tuple[FileCycleInput, ...] | None = None
+    ) -> None:
         from firewall_compliance.interfaces.desktop.source_cycle import SourceCycleResult, run_source_cycle
 
         try:
@@ -3321,16 +3385,22 @@ class MainWindow(QMainWindow):
                 "enabled_check_ids": [key for key, box in self.check_boxes.items() if box.isChecked()],
                 "configuration_complete": self.management_settings.complete.isChecked(),
                 "include_fragments": self.fragments_check.isChecked(),
+                "rule_count_drop_percent": self.rule_drop_threshold.value(),
+                "inventory_count_drop_percent": self.inventory_drop_threshold.value(),
             }
         except ValueError:
             self._open_check_settings()
             return
-        files = tuple(FileCycleInput(item["path"], item["device"]) for item in self.staged)
+        rows = self._scoped_staged() if file_inputs is None else ()
+        files = tuple(FileCycleInput(
+            item["path"], item["device"], site_id=item.get("site_id")
+        ) for item in rows) if file_inputs is None else file_inputs
         project_id, epoch = self.project_id, object()
         queue: Queue[CycleProgress | str] = Queue()
         stop = Event()
         self._cycle_epoch, self._cycle_project_id = epoch, project_id
         self._cycle_cancel, self._cycle_progress = stop, queue
+        self._cycle_rows = rows
         self._cycle_run_id = None
         self._batch_active = True
         self._batch_cancelled = False
@@ -3366,9 +3436,10 @@ class MainWindow(QMainWindow):
             else:
                 self._refresh_all()
             errors = sum(item.state in {"failed", "partial"} for item in value.items)
+            warnings = sum(item.warning_count for item in value.items)
             self.progress_label.setText(
                 f"Обработано источников: {len(value.items)}. "
-                f"С ошибками/ограничениями: {errors}. Подробности — в центре задач."
+                f"С ошибками/ограничениями: {errors}. Предупреждений: {warnings}. Подробности — в центре задач."
             )
             self._completed_run_id = runs[-1] if runs else None
             self.notification_label.setText(self.progress_label.text())
@@ -3384,6 +3455,14 @@ class MainWindow(QMainWindow):
             ), done,
         )
         self.management_settings.complete.setChecked(False)
+
+    def _scoped_staged(self) -> tuple[dict[str, Any], ...]:
+        if self._site_selection is None:
+            return tuple(self.staged)
+        assignments = self._source_project_snapshot().site_assignments
+        return tuple(item for item in self.staged if (
+            assignments.get(str(item["device"]), item.get("site_id") or "") == self._site_selection
+        ))
 
     def _update_file_inputs(self) -> None:
         """Prepare and execute the saved file workflow from one entry point."""
@@ -3454,8 +3533,16 @@ class MainWindow(QMainWindow):
                 ],
                 "configuration_complete": self.management_settings.complete.isChecked(),
                 "include_fragments": self.fragments_check.isChecked(),
+                "rule_count_drop_percent": self.rule_drop_threshold.value(),
+                "inventory_count_drop_percent": self.inventory_drop_threshold.value(),
             }
-            manifest = tuple(FileCycleInput(item["path"], item["device"]) for item in self.staged)
+            rows = self._scoped_staged()
+            if not rows:
+                self.progress_label.setText("Нет подготовленных файлов выбранной площадки.")
+                return
+            manifest = tuple(FileCycleInput(
+                item["path"], item["device"], site_id=item.get("site_id")
+            ) for item in rows)
         except ValueError:
             self._open_check_settings()
             return
@@ -3463,7 +3550,7 @@ class MainWindow(QMainWindow):
         epoch = object()
         progress_queue: Queue[CycleProgress | str] = Queue()
         cancel = Event()
-        rows = tuple(self.staged)
+        self._cycle_rows = rows
         self._cycle_epoch = epoch
         self._cycle_run_id = None
         self._cycle_project_id = project_id
@@ -3559,12 +3646,13 @@ class MainWindow(QMainWindow):
             }[event.stage]
             self.progress_label.setText(f"{stage}: {event.completed} из {event.total}")
             identifier = event.item_id if event.item_id is not None else event.source_id
+            rows = getattr(self, "_cycle_rows", ())
             if (
                 identifier is not None
                 and identifier.isdecimal()
-                and int(identifier) < len(self.staged)
+                and int(identifier) < len(rows)
             ):
-                self.staged[int(identifier)]["warning"] = stage
+                rows[int(identifier)]["warning"] = stage
         if changed:
             self._refresh_staged()
 
@@ -3706,6 +3794,7 @@ class MainWindow(QMainWindow):
         states = Counter(item["status"] for item in items)
         partial_count = states["partial"]
         missing_count = sum(not item.get("report") for item in items)
+        warnings = [message for item in items for message in item.get("collection_warnings", ())]
         title = (
             "Анализ отменён" if self._batch_cancelled
             else "Анализ завершён с ограничениями" if (self.run or {}).get("state") == "interrupted"
@@ -3713,8 +3802,9 @@ class MainWindow(QMainWindow):
         )
         self.notification_label.setText(
             f"{title} · файлов: {len(items)} · частичных: {partial_count} · "
-            f"без результата: {missing_count}."
+            f"без результата: {missing_count} · предупреждений о составе: {len(warnings)}."
         )
+        self.notification_label.setToolTip("\n".join(warnings))
         self.notification.show()
 
     def open_completed_result(self) -> None:

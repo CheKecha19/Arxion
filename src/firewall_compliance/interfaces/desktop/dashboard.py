@@ -141,6 +141,8 @@ def finding_trend(runs: Sequence[Mapping[str, Any]]) -> tuple[FindingTrendPoint,
         device_ids = []
         for item in items:
             report = _mapping(item.get("report")) if isinstance(item, dict) else {}
+            if isinstance(item, dict) and item.get("collection_warnings"):
+                limitations.append("Есть предупреждения о резком изменении состава входных данных")
             if not report:
                 continue
             device_id = report.get("device_id")

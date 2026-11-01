@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from firewall_compliance.application.workspace_profile import ProfileVersion
 from firewall_compliance.interfaces.desktop.jobs import JobError, JobRunner
 from firewall_compliance.interfaces.desktop.profile_history import LegacyProfileHistory
 from firewall_compliance.interfaces.desktop.project_store import ProjectStore
@@ -54,7 +53,7 @@ class WorkspaceSitesDialog(QDialog):
         layout = QVBoxLayout(self)
         explanation = QLabel(
             "Площадки задаются явно. Проекты и исходные конфигурации сохраняются.\n"
-            "Ниже — устройства выбранного проекта. Назначения пока не фильтруют другие экраны.\n"
+            "Устройства и источники назначаются отдельно. Для источника можно выбрать несколько площадок.\n"
             "При первом сохранении площадок или версии настроек создаётся резервная копия БД."
         )
         explanation.setWordWrap(True)
@@ -63,6 +62,8 @@ class WorkspaceSitesDialog(QDialog):
         site_column = QVBoxLayout()
         site_column.addWidget(QLabel("Площадки рабочего места"))
         self.sites = QListWidget()
+        self.sites.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.sites.setToolTip("Для назначения источника нескольким площадкам выберите их с Ctrl или Shift.")
         self.sites.setAccessibleName("Площадки рабочего места")
         site_column.addWidget(self.sites)
         self.create = QPushButton("Создать площадку")
@@ -87,6 +88,21 @@ class WorkspaceSitesDialog(QDialog):
         self.assign = QPushButton("Назначить выбранным устройствам")
         self.assign.clicked.connect(self._assign)
         device_column.addWidget(self.assign)
+        device_column.addWidget(QLabel("Сохранённые источники проекта"))
+        self.sources = QTableWidget(0, 2)
+        self.sources.setHorizontalHeaderLabels(("Источник", "Площадки"))
+        self.sources.setAccessibleName("Источники и их площадки")
+        self.sources.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.sources.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.sources.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.sources.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        device_column.addWidget(self.sources)
+        self.assign_sources = QPushButton("Назначить выбранные слева площадки источникам")
+        self.assign_sources.clicked.connect(lambda: self._assign_sources(False))
+        device_column.addWidget(self.assign_sources)
+        self.clear_source_sites = QPushButton("Снять назначения выбранных источников")
+        self.clear_source_sites.clicked.connect(lambda: self._assign_sources(True))
+        device_column.addWidget(self.clear_source_sites)
         body.addLayout(device_column, 3)
         layout.addLayout(body, 1)
         self.profile_status = QLabel("Версии настроек проверки загружаются…")
@@ -118,21 +134,22 @@ class WorkspaceSitesDialog(QDialog):
 
     def _read(
         self,
-    ) -> tuple[
-        list[dict[str, str]], list[dict[str, Any]], dict[str, str], tuple[ProfileVersion, ...]
-    ]:
+    ) -> tuple[Any, ...]:
         metadata = self._store.workspace_metadata
         return (
             metadata.list_sites(),
             self._store.list_project_devices(self._project_id),
             metadata.device_sites(self._project_id),
             LegacyProfileHistory(self._store.path).list_versions(self._project_id),
+            self._store.list_source_connections(self._project_id),
+            metadata.source_sites(self._project_id),
         )
 
     def _busy(self, busy: bool) -> None:
         self.progress.setVisible(busy)
         for widget in (
-            self.create, self.rename, self.assign, self.refresh, self.target, self.save_profile
+            self.create, self.rename, self.assign, self.refresh, self.target, self.save_profile,
+            self.assign_sources, self.clear_source_sites, self.sources, self.sites,
         ):
             widget.setEnabled(not busy)
 
@@ -163,8 +180,19 @@ class WorkspaceSitesDialog(QDialog):
                     "Назначения, сохранённые до ошибки, доступны после обновления."
                 )
                 return
-            sites, devices, assignments, versions = value
+            sites, devices, assignments, versions, connections, source_sites = value
             self._populate(sites, devices, assignments)
+            names = {site["id"]: site["name"] for site in sites}
+            self.sources.setRowCount(len(connections))
+            for row, connection in enumerate(connections):
+                config = connection["config"] if isinstance(connection["config"], dict) else {}
+                item = QTableWidgetItem(str(config.get("label") or config.get("site") or connection["provider"]))
+                item.setData(Qt.ItemDataRole.UserRole, connection["provider"])
+                self.sources.setItem(row, 0, item)
+                self.sources.setItem(row, 1, QTableWidgetItem(
+                    ", ".join(names.get(site, site) for site in source_sites.get(connection["provider"], ()))
+                    or "Без площадки"
+                ))
             self.profile_status.setText(
                 f"Версий настроек: {len(versions)}. Последняя: {versions[-1].version}.\n"
                 f"Fingerprint: {versions[-1].fingerprint}"
@@ -265,5 +293,24 @@ class WorkspaceSitesDialog(QDialog):
             metadata = self._store.workspace_metadata
             metadata.initialize()
             metadata.assign_devices(self._project_id, device_ids, site_id)
+
+        self._submit(work)
+
+    def _assign_sources(self, clear: bool) -> None:
+        keys = tuple(
+            str(self.sources.item(index.row(), 0).data(Qt.ItemDataRole.UserRole))
+            for index in self.sources.selectionModel().selectedRows()
+        )
+        sites = () if clear else tuple(
+            str(item.data(Qt.ItemDataRole.UserRole)) for item in self.sites.selectedItems()
+        )
+        if not keys or (not clear and not sites):
+            self.status.setText("Выберите источники и нужные площадки слева.")
+            return
+
+        def work() -> None:
+            metadata = self._store.workspace_metadata
+            metadata.initialize_source_sites()
+            metadata.assign_source_sites(self._project_id, keys, sites)
 
         self._submit(work)

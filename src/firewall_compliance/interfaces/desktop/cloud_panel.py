@@ -808,6 +808,11 @@ class CloudPanel:
             )
             or "Ошибок сбора не зарегистрировано."
         )
+        if payload.get("integrity_warnings"):
+            self.errors_view.appendPlainText(
+                "\nПредупреждения о составе данных:\n"
+                + "\n".join(warning["message"] for warning in payload["integrity_warnings"])
+            )
         self.requests_view.setPlainText(
             "\n".join(
                 f"{request['method']} {request['path']}" for request in payload.get("requests", [])

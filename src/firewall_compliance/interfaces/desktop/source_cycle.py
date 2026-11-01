@@ -12,6 +12,8 @@ from typing import Any
 
 from firewall_compliance.application.inspection_cycle import CycleProgress, CycleSettings
 from firewall_compliance.application.source_health import configuration_fingerprint
+from firewall_compliance.application.collection_integrity import count_drop_warning
+from firewall_compliance.application.workspace_profile import ProfileVersion, analysis_settings
 from firewall_compliance.devices.cloud.cloud_ru.public_client import (
     PLATFORM_RESOURCES, PUBLIC_DATA, AdvancedClient, AdvancedConfig,
     CloudCredentials, EvolutionClient, EvolutionConfig, PublicSelection,
@@ -33,6 +35,21 @@ class SourceManifest:
     config_json: str
     resources: tuple[str, ...] = ()
     data: tuple[str, ...] = ()
+    site_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_id, str) or not self.source_id.strip():
+            raise ValueError("Source ID is required")
+        if not isinstance(self.config_json, str):
+            raise TypeError("Configuration must be serialized JSON")
+        for name in ("resources", "data", "site_ids"):
+            values = getattr(self, name)
+            if isinstance(values, (str, bytes)):
+                raise TypeError("Manifest selections must be collections")
+            values = tuple(values)
+            if any(not isinstance(value, str) or not value for value in values):
+                raise ValueError("Manifest selections must contain identifiers")
+            object.__setattr__(self, name, tuple(dict.fromkeys(values)))
 
     def config(self) -> dict[str, Any]:
         value = json.loads(self.config_json)
@@ -48,6 +65,7 @@ class SourceCycleItem:
     scan_id: str | None = None
     run_id: str | None = None
     message: str = ""
+    warning_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +81,7 @@ def configured_sources(store: ProjectStore, project_id: str) -> tuple[SourceMani
     """Capture public configuration and last explicitly selected collection scope."""
     scans = store.list_cloud_scans(project_id)
     connections = store.list_source_connections(project_id)
+    site_memberships = store.workspace_metadata.source_sites(project_id)
     result = []
     for platform in ("vmware", "advanced", "evolution"):
         connection = next((row for row in connections if row["provider"] == "cloud_ru_" + platform), None)
@@ -80,13 +99,17 @@ def configured_sources(store: ProjectStore, project_id: str) -> tuple[SourceMani
         result.append(SourceManifest(
             "cloud_ru_" + platform, platform, json.dumps(config, sort_keys=True, allow_nan=False),
             tuple(selection.get("resources", resources)), tuple(selection.get("data", data)),
+            site_memberships.get("cloud_ru_" + platform, ()),
         ))
     for row in connections:
         if not row["provider"].startswith("ngfw:"):
             continue
         parts = row["provider"].split(":")
         platform = parts[1] if len(parts) == 3 else "unsupported"
-        result.append(SourceManifest(row["provider"], platform, json.dumps(row["config"], allow_nan=False)))
+        result.append(SourceManifest(
+            row["provider"], platform, json.dumps(row["config"], allow_nan=False),
+            site_ids=site_memberships.get(row["provider"], ()),
+        ))
     return tuple(result)
 
 
@@ -108,8 +131,12 @@ def run_source_cycle(
     must prevent manual/plan cycles from collecting these same sources together.
     """
     captured = CycleSettings.capture(settings)
-    LegacyProfileHistory(store.path).initialize()
     options = captured.values()
+    ProfileVersion.from_settings(project_id, 1, analysis_settings(options))
+    for key in ("configuration_complete", "include_fragments"):
+        if key in options and type(options[key]) is not bool:
+            raise ValueError("Параметры полноты и фрагментов должны быть логическими")
+    LegacyProfileHistory(store.path).initialize()
     manifest = tuple(sources)
     if len({source.source_id for source in manifest}) != len(manifest):
         raise ValueError("Duplicate source in collection manifest")
@@ -144,11 +171,21 @@ def run_source_cycle(
                     stop.is_set,
                 )
                 result = run_file_cycle(
-                    store, project_id, (FileCycleInput(path),), options, cancel=stop,
+                    store, project_id, (FileCycleInput(
+                        path, device_id=source.source_id,
+                        site_id=source.site_ids[0] if len(source.site_ids) == 1 else None
+                    ),), options, cancel=stop,
+                    progress=lambda event: emit(CycleProgress(
+                        event.stage, event.completed, event.total, source.source_id
+                    )),
                     source_reference=source.source_id,
                     source_fingerprint=configuration_fingerprint(source.config()),
+                    source_sites=source.site_ids,
                 )
-                outcomes.append(SourceCycleItem(source.source_id, result.outcome.state, run_id=result.run_id))
+                outcomes.append(SourceCycleItem(
+                    source.source_id, result.outcome.state, run_id=result.run_id,
+                    warning_count=len(result.warnings),
+                ))
                 continue
             platform = source.platform
             if platform not in clients:
@@ -201,6 +238,19 @@ def run_source_cycle(
                 run_id=failure_run, message=message,
             ))
             continue
+        previous_scan = next((scan for scan in store.list_cloud_scans(project_id)
+            if scan["id"] != scan_id and scan.get("state") == "completed"
+            and scan.get("config") == {"platform": platform, **config}
+            and set(scan.get("selection", {}).get("resources", ())) == set(source.resources)
+            and set(scan.get("selection", {}).get("data", ())) == set(source.data)
+        ), None)
+        warning = count_drop_warning(
+            len(previous_scan["result"].get("records", ())), len(payload.get("records", ())),
+            threshold_percent=options.get("inventory_count_drop_percent", 30),
+            before_reference=previous_scan["id"], unit="ресурсы",
+        ) if previous_scan is not None and payload.get("state") in {"completed", "partial"} else None
+        if warning is not None:
+            payload["integrity_warnings"] = [{"code": warning.code, "message": warning.message}]
         store.finish_cloud_scan(scan_id, payload)
         state = {"completed": "complete", "partial": "partial", "cancelled": "cancelled"}.get(
             payload.get("state"), "failed"
@@ -223,7 +273,18 @@ def run_source_cycle(
             if stop.is_set():
                 state, message = "cancelled", "Сбор сохранён; проверка отменена."
             elif reports:
-                run_id = store.save_cloud_analysis(scan_id, reports, options)
+                run_id = store.save_cloud_analysis(
+                    scan_id, reports, {**options, "source_site_ids": list(source.site_ids)}
+                )
+                if len(source.site_ids) == 1:
+                    metadata = store.workspace_metadata
+                    assigned = metadata.device_sites(project_id)
+                    device_ids = tuple(dict.fromkeys(
+                        item["report"]["device_id"] for item in reports
+                        if item.get("report") and item["report"]["device_id"] not in assigned
+                    ))
+                    if device_ids:
+                        metadata.assign_devices(project_id, device_ids, source.site_ids[0])
                 if any(item.get("status") != "complete" for item in reports):
                     state = "partial"
                 message = "Сбор и проверка завершены в поддержанной области Edge Firewall."
@@ -234,10 +295,65 @@ def run_source_cycle(
                 run_id = store.create_run(project_id, settings={**options, "cloud_scan_id": scan_id})
                 store.record_error(run_id, Path(source.source_id), message)
                 store.finish_run(run_id, "interrupted")
-        outcomes.append(SourceCycleItem(source.source_id, state, scan_id, run_id, message))
+        outcomes.append(SourceCycleItem(
+            source.source_id, state, scan_id, run_id, message,
+            warning_count=1 if warning is not None else 0,
+        ))
     if files:
         emit(CycleProgress("analysis", len(manifest), total, "files"))
-        result = run_file_cycle(store, project_id, files, options, cancel=stop)
-        outcomes.append(SourceCycleItem("files", result.outcome.state, run_id=result.run_id))
+        result = run_file_cycle(
+            store, project_id, files, options, cancel=stop,
+            progress=lambda event: emit(CycleProgress(
+                event.stage, event.completed, event.total, "files", event.item_id
+            )),
+        )
+        outcomes.append(SourceCycleItem(
+            "files", result.outcome.state, run_id=result.run_id, warning_count=len(result.warnings)
+        ))
     emit(CycleProgress("finished", total, total))
     return SourceCycleResult(tuple(outcomes))
+
+
+def retry_task_inputs(
+    store: ProjectStore, project_id: str, kind: str, task_id: str,
+) -> tuple[tuple[SourceManifest, ...], tuple[FileCycleInput, ...]]:
+    """Plan a new attempt; never overwrite the selected history entry."""
+    sources = configured_sources(store, project_id)
+    if kind == "scan":
+        scan = next((item for item in store.list_cloud_scans(project_id) if item["id"] == task_id), None)
+        if scan is None:
+            raise ValueError("Сбор не найден в выбранном проекте")
+        if scan["state"] == "running" or (
+            scan["state"] == "completed" and not scan.get("result", {}).get("integrity_warnings")
+            and not scan.get("result", {}).get("errors")
+        ):
+            raise ValueError("В сборе нет ошибок или предупреждений для повтора")
+        source_key = "cloud_ru_" + scan["config"].get("platform", "vmware")
+    elif kind == "run":
+        run = store.get_run(task_id)
+        if run["project_id"] != project_id or run["state"] == "running":
+            raise ValueError("Выберите завершённую задачу этого проекта")
+        if not any(item.get("status") in {"error", "unsupported", "cancelled", "canceled", "partial"} for item in run["items"]):
+            raise ValueError("Неуспешных элементов для повтора нет")
+        source_key = run.get("settings", {}).get("source_id")
+        if not source_key and run.get("settings", {}).get("cloud_scan_id"):
+            source_key = "cloud_ru_vmware"
+        if not source_key:
+            files = []
+            assignments = store.workspace_metadata.device_sites(project_id)
+            for item in run["items"]:
+                if item.get("status") not in {"error", "unsupported", "cancelled", "canceled", "partial"}:
+                    continue
+                path = Path(item["path"])
+                device_id = (item.get("report") or {}).get("device_id") or store.suggest_device(project_id, path.name)
+                files.append(FileCycleInput(
+                    path, device_id, site_id=(assignments.get(device_id) if device_id is not None else None)
+                    or run.get("settings", {}).get("workspace_input_sites", {}).get(str(path)),
+                ))
+            return (), tuple(files)
+    else:
+        raise ValueError("Неподдерживаемый тип задачи")
+    selected = tuple(source for source in sources if source.source_id == source_key)
+    if not selected:
+        raise ValueError("Сохранённое подключение для повтора отсутствует")
+    return selected, ()

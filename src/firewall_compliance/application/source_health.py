@@ -33,6 +33,7 @@ def build_source_health(
                 "source_id": key, "label": key, "platform": "unknown", "state": "invalid",
                 "last_attempt": None, "last_success": None, "errors": 1,
                 "analysis_state": "unknown",
+                "warnings": 0,
             })
             continue
         attempts = []
@@ -47,6 +48,7 @@ def build_source_health(
                     "compatible": run["settings"].get("source_config_fingerprint")
                     == configuration_fingerprint(config),
                     "errors": sum(item.get("status") in {"error", "unsupported"} for item in run.get("items", ())),
+                    "warnings": sum(len(item.get("collection_warnings", ())) for item in run.get("items", ())),
                 })
         if key.startswith("ngfw:"):
             platform = key.split(":")[1]
@@ -64,6 +66,7 @@ def build_source_health(
                     "success": scan.get("state") == "completed",
                     "compatible": {k: v for k, v in observed.items() if k != "platform"} == config,
                     "errors": len(scan.get("result", {}).get("errors", ())),
+                    "warnings": len(scan.get("result", {}).get("integrity_warnings", ())),
                 })
         attempts.sort(key=lambda row: row["created_at"] or "", reverse=True)
         latest = attempts[0] if attempts else None
@@ -79,5 +82,6 @@ def build_source_health(
             "last_success": last_success["created_at"] if last_success else None,
             "errors": latest["errors"] if latest else 0,
             "analysis_state": latest.get("analysis_state", "unknown") if latest else "not_executed",
+            "warnings": latest.get("warnings", 0) if latest else 0,
         })
     return tuple(rows)

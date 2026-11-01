@@ -19,7 +19,7 @@ ANALYSIS_SETTING_KEYS = frozenset(
         "management_profile",
         "policy_exposure_profile",
         "policy_scope_profile",
-        "enabled_check_ids",
+        "enabled_check_ids", "rule_count_drop_percent", "inventory_count_drop_percent",
     }
 )
 
@@ -55,6 +55,9 @@ class ProfileVersion:
         for key in ("require_logging", "require_comments"):
             if key in values and type(values[key]) is not bool:
                 raise ValueError(f"{key} must be boolean")
+        for key in ("rule_count_drop_percent", "inventory_count_drop_percent"):
+            if key in values and (type(values[key]) is not int or not 1 <= values[key] <= 100):
+                raise ValueError(f"{key} must be an integer between 1 and 100")
         if "enabled_check_ids" in values and values["enabled_check_ids"] is not None:
             checks = values["enabled_check_ids"]
             if not isinstance(checks, list) or any(not isinstance(v, str) or not v for v in checks):

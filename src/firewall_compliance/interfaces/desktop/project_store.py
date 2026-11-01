@@ -776,12 +776,18 @@ class ProjectStore:
             db.execute("INSERT INTO items VALUES (?,?,?)", (item_id, run_id, _json(payload)))
         return item_id
 
-    def record_session(self, run_id: str, session: AnalysisSession) -> str:
+    def record_session(
+        self, run_id: str, session: AnalysisSession, *, collection_warnings: tuple[str, ...] = ()
+    ) -> str:
         """Сохранить нормализованный снимок и ограниченные фрагменты доказательств."""
         report = session.report
         partial = (
             bool(report.parse_errors or report.unsupported_constructs)
-            or any(check.status.value == "partial" for check in report.checks)
+            or any(
+                check.status.value == "partial"
+                or any(limit.code == "CHECK_NOT_EXECUTED" for limit in check.limitations)
+                for check in report.checks
+            )
             or report.parse_coverage.coverage_ratio < 1
         )
         return self._record(
@@ -795,6 +801,7 @@ class ProjectStore:
                 "parse_result": session.parse_result.model_dump(mode="json"),
                 "revision": session.revision.model_dump(mode="json"),
                 "excerpts": _excerpts(session),
+                "collection_warnings": list(collection_warnings),
                 "diagnostics": [
                     x.model_dump(mode="json")
                     for x in (
@@ -802,6 +809,9 @@ class ProjectStore:
                         *report.parse_errors,
                         *report.unsupported_constructs,
                     )
+                ] + [
+                    {"code": "COLLECTION_COUNT_DROP", "message": message}
+                    for message in collection_warnings
                 ],
             },
         )

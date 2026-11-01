@@ -1,5 +1,11 @@
 # Изменения контрактов данных
 
+## Завершение реализации R2, 2026-11-01
+
+Приложение 0.7.0 добавляет opt-in workspace_source_sites_meta/version=1 и workspace_source_sites (ключ origin_project_id/source_key/site_id). Перед DDL создаётся отдельная полная резервная копия; миграция транзакционна, legacy user_version=1 не меняется. Таблицы связывают существующие integrations с workspace_sites, допускают несколько площадок и удаляют только текущие назначения при удалении подключения (ON DELETE CASCADE). Чтение не инициализирует схему. История runs/marks и исходные ревизии не переписываются; будущая активация org_context требует явного переноса метаданных.
+
+Settings новых запусков могут содержать workspace_input_sites и source_site_ids как снимок заявленной области. В профиле допустимы rule_count_drop_percent/inventory_count_drop_percent; отсутствие полей в старом JSON не меняет старый fingerprint при чтении. Элементы запуска имеют необязательные collection_warnings и диагностику COLLECTION_COUNT_DROP; исходный AnalysisResult/DeviceRevision остаётся прежней версии. В cloud_scans.result добавлена необязательная integrity_warnings с причинами сравнения счётчиков. Эти предупреждения не меняют семантику findings/полноты и не являются доказательствами удаления. Старые readers, игнорирующие дополнительные поля SQLite JSON, сохраняют совместимость; строгим внешним читателям нового внутреннего payload требуется поддержка этих дополнительных полей.
+
 ## Основа рабочего пространства R1, 2026-11-01
 
 Версия приложения 0.5.0. Legacy SQLite user_version=1 сохраняется. При явном действии пользователя добавляются workspace_metadata/schema_version=1, workspace_sites и workspace_device_sites; отдельно workspace_profile_history_meta/version=1 и append-only workspace_profile_history. Каждая инициализация перед DDL создаёт резервную копию полным SQLite backup, затем применяет DDL транзакционно. Инициализация не вызывается при простом открытии диалога или чтении. Неизвестные версии метаданных отклоняются. Конструкторы не активируют org_context.

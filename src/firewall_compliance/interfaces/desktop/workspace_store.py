@@ -203,3 +203,92 @@ class WorkspaceMetadataStore:
                     (project_id,),
                 )
             }
+
+    @classmethod
+    def _source_sites_ready(cls, db: sqlite3.Connection) -> bool:
+        cls._legacy(db)
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "workspace_source_sites_meta" not in tables:
+            if "workspace_source_sites" in tables:
+                raise ValueError("Неполная схема площадок источников")
+            return False
+        rows = db.execute("SELECT singleton,version FROM workspace_source_sites_meta").fetchall()
+        if [tuple(row) for row in rows] != [(1, 1)] or "workspace_source_sites" not in tables:
+            raise ValueError("Неподдерживаемая версия площадок источников")
+        cls._ready(db)
+        return True
+
+    def initialize_source_sites(self) -> Path | None:
+        """Add optional source memberships, backing up before the additive migration."""
+        self.initialize()
+        with workspace_lease(self._store.path):
+            with self._store._connect() as db:
+                if self._source_sites_ready(db):
+                    return None
+            backup = self._store.path.with_name(
+                f"{self._store.path.name}.before-source-sites-{uuid4().hex}.sqlite3"
+            )
+            create_workspace_backup(self._store.path, backup)
+            with self._store._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                if self._source_sites_ready(db):
+                    return backup
+                db.execute(
+                    "CREATE TABLE workspace_source_sites_meta ("
+                    "singleton INTEGER PRIMARY KEY CHECK(singleton=1),version INTEGER NOT NULL)"
+                )
+                db.execute("INSERT INTO workspace_source_sites_meta VALUES (1,1)")
+                db.execute(
+                    "CREATE TABLE workspace_source_sites ("
+                    "origin_project_id TEXT NOT NULL, source_key TEXT NOT NULL, "
+                    "site_id TEXT NOT NULL REFERENCES workspace_sites(id), updated_at TEXT NOT NULL, "
+                    "PRIMARY KEY(origin_project_id,source_key,site_id), "
+                    "FOREIGN KEY(origin_project_id,source_key) REFERENCES integrations(project_id,provider) "
+                    "ON DELETE CASCADE)"
+                )
+            return backup
+
+    def source_sites(self, project_id: str) -> dict[str, tuple[str, ...]]:
+        project_id = _text(project_id)
+        with self._store._connect() as db:
+            if not self._source_sites_ready(db):
+                return {}
+            result: dict[str, list[str]] = {}
+            for row in db.execute(
+                "SELECT source_key,site_id FROM workspace_source_sites "
+                "WHERE origin_project_id=? ORDER BY source_key,site_id", (project_id,),
+            ):
+                result.setdefault(row["source_key"], []).append(row["site_id"])
+            return {key: tuple(values) for key, values in result.items()}
+
+    def assign_source_sites(
+        self, project_id: str, source_keys: tuple[str, ...], site_ids: tuple[str, ...]
+    ) -> None:
+        """Replace explicit source memberships atomically, preserving imported facts."""
+        project_id = _text(project_id)
+        if isinstance(source_keys, (str, bytes)) or isinstance(site_ids, (str, bytes)):
+            raise TypeError("Идентификаторы должны быть коллекциями")
+        sources = tuple(dict.fromkeys(_text(key, maximum=2000) for key in source_keys))
+        sites = tuple(dict.fromkeys(_text(site) for site in site_ids))
+        if not sources:
+            raise ValueError("Выберите источники")
+        with self._store._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if not self._source_sites_ready(db):
+                raise ValueError("Сначала инициализируйте площадки источников")
+            for site in sites:
+                if not db.execute("SELECT 1 FROM workspace_sites WHERE id=?", (site,)).fetchone():
+                    raise ValueError("Площадка не найдена")
+            for source in sources:
+                if not db.execute(
+                    "SELECT 1 FROM integrations WHERE project_id=? AND provider=?", (project_id, source)
+                ).fetchone():
+                    raise ValueError("Источник не найден")
+                db.execute(
+                    "DELETE FROM workspace_source_sites WHERE origin_project_id=? AND source_key=?",
+                    (project_id, source),
+                )
+                db.executemany(
+                    "INSERT INTO workspace_source_sites VALUES (?,?,?,?)",
+                    ((project_id, source, site, datetime.now(UTC).isoformat()) for site in sites),
+                )
