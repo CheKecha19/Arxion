@@ -14,6 +14,8 @@ from dataclasses import replace
 from datetime import datetime
 from functools import partial
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Event
 from typing import Any, Literal
 
 from PySide6.QtCore import (
@@ -68,6 +70,7 @@ from PySide6.QtWidgets import (
 )
 
 from firewall_compliance.application.cloud_analysis import vmware_device_id
+from firewall_compliance.application.inspection_cycle import CycleProgress
 from firewall_compliance.checks.management.rules import MANAGEMENT_CHECKS
 from firewall_compliance.domain.revision import DeviceRevision
 from firewall_compliance.domain.source import SourceLocation
@@ -91,6 +94,11 @@ from firewall_compliance.interfaces.desktop.cloud_rule_presentation import (
     cloud_rule_columns,
     cloud_rule_details,
     cloud_rule_values,
+)
+from firewall_compliance.interfaces.desktop.cycle_backend import (
+    FileCycleInput,
+    FileCycleResult,
+    run_file_cycle,
 )
 from firewall_compliance.interfaces.desktop.dashboard import build_dashboard
 from firewall_compliance.interfaces.desktop.infrastructure_observations import project_observations
@@ -377,6 +385,14 @@ class MainWindow(QMainWindow):
         self.staged: list[dict[str, Any]] = []
         self._preflight_jobs: set[Any] = set()
         self._analysis_jobs: dict[Any, dict[str, Any]] = {}
+        self._cycle_job_id: Any = None
+        self._cycle_run_id: str | None = None
+        self._cycle_project_id: str | None = None
+        self._cycle_epoch: object | None = None
+        self._cycle_cancel = Event()
+        self._cycle_progress: Queue[CycleProgress | str] = Queue()
+        self._aggregate_tasks: dict[tuple[str, str], dict[str, Any]] = {}
+        self._start_after_preflight = False
         self._batch_active = False
         self._batch_cancelled = False
         self._restore_busy = False
@@ -500,8 +516,10 @@ class MainWindow(QMainWindow):
         scope_row.addStretch()
         self.add_data_button = _button("Добавить данные", self.choose_data_source, primary=True)
         header.addWidget(self.add_data_button)
-        self.prepare_button = _button("Запустить проверку", lambda: self.navigate("staging"))
+        self.prepare_button = _button("Обновить и проверить", self.update_and_check)
         header.addWidget(self.prepare_button)
+        self.tasks_button = _button("Задачи", self._open_task_center)
+        header.addWidget(self.tasks_button)
         self.run_button = _button("Запустить проверку файлов", self.start_analysis, primary=True)
         self.run_button.setEnabled(False)
         root.addLayout(header)
@@ -665,6 +683,7 @@ class MainWindow(QMainWindow):
         self.overview_scroll.hide()
         self.compact_dashboard = ProjectDashboard(self)
         self.compact_dashboard.navigation_requested.connect(self.navigate)
+        self.compact_dashboard.severity_requested.connect(self.open_overview_findings)
         outer_layout.addWidget(self.compact_dashboard, 1)
         hero = QFrame()
         hero.setObjectName("hero")
@@ -2779,16 +2798,59 @@ class MainWindow(QMainWindow):
             self.progress_label.setText("Дождитесь завершения текущей проверки.")
             return
         self.workspace_history.remember()
-        runs = self._project_runs()
-        latest = next((run for run in runs if run.get("finished_at")), None)
-        if latest:
-            self.load_run(latest["id"])
-        self.finding_scope.setCurrentIndex(self.finding_scope.findData("run"))
+        self.finding_scope.setCurrentIndex(self.finding_scope.findData("project"))
         self.finding_search.clear()
         for combo in (self.finding_device, self.finding_check, self.status_filter):
             combo.setCurrentIndex(0)
         self.severity_filter.setCurrentIndex(max(0, self.severity_filter.findData(severity)))
         self.navigate("findings", remember=False)
+
+    def _active_tasks(self) -> list[dict[str, Any]]:
+        rows = list(self._aggregate_tasks.values())
+        if self._cycle_job_id is not None and not rows:
+            rows.append({
+                "kind": "run" if self._cycle_run_id else "cycle",
+                "id": self._cycle_run_id,
+                "state": "running",
+                "limitations": self.progress_label.text(),
+            })
+        cloud = self.cloud_panel
+        if cloud.busy and cloud._active_project == self.project_id:
+            rows.append({
+                "kind": "scan", "id": cloud._active_scan, "state": "running",
+                "limitations": "Облачный сбор; состояние проверки правил показывается отдельно",
+            })
+        return rows
+
+    def _open_task_center(self) -> None:
+        from firewall_compliance.interfaces.desktop.qt_task_center import TaskCenterDialog
+
+        project_id = self.project_id
+        if not project_id:
+            self.progress_label.setText("Сначала выберите проект для просмотра задач.")
+            return
+        dialog = TaskCenterDialog(
+            self.store, project_id, self._active_tasks,
+            lambda: not self._closed and self.project_id == project_id, self,
+        )
+
+        def open_run(run_id: str) -> None:
+            if self._closed or self.project_id != project_id:
+                return
+            if self._batch_active or self._restore_busy:
+                self.progress_label.setText("Запуск сохранён; открыть его можно после текущей операции.")
+                return
+            self.load_run(run_id)
+            self.navigate("findings")
+
+        def open_scan(scan_id: str) -> None:
+            if not self._closed and self.project_id == project_id:
+                self.cloud_panel.open_result(scan_id)
+                self.navigate("scans")
+
+        dialog.open_run.connect(open_run)
+        dialog.open_scan.connect(open_scan)
+        dialog.exec()
 
     def _run_context(self) -> str:
         if not self.run:
@@ -2955,6 +3017,7 @@ class MainWindow(QMainWindow):
 
     def _apply_project_context(self) -> None:
         self.workspace_history.clear()
+        self._start_after_preflight = False
         self._loading_settings = True
         self.project_id = self.project_combo.currentData()
         if self.controls_panel is not None:
@@ -3035,7 +3098,7 @@ class MainWindow(QMainWindow):
             if self.project_id == project_id:
                 self.stage_paths([path])
 
-        collect_usergate(self, self.runner, saved)
+        collect_usergate(self, self.runner, saved, store=self.store, project_id=project_id)
 
     def choose_ideco(self) -> None:
         if not self._ensure_project() or self._batch_active or self._restore_busy:
@@ -3048,7 +3111,7 @@ class MainWindow(QMainWindow):
             if self.project_id == project_id:
                 self.stage_paths([path])
 
-        collect_ideco(self, self.runner, saved)
+        collect_ideco(self, self.runner, saved, store=self.store, project_id=project_id)
 
     def choose_folder(self) -> None:
         if not self._ensure_project():
@@ -3188,70 +3251,322 @@ class MainWindow(QMainWindow):
 
     def clear_staged(self) -> None:
         if not self._batch_active:
+            self._start_after_preflight = False
             self.staged.clear()
             self._refresh_staged()
 
     def remove_staged(self) -> None:
         if not self._batch_active:
+            self._start_after_preflight = False
             selected = self._selected_payloads(self.stage_table, self.stage_proxy, self.stage_model)
             self.staged = [item for item in self.staged if item not in selected]
             self._refresh_staged()
 
-    def start_analysis(self) -> None:
-        """Начать пакет; каждое задание независимо сохраняет успех или диагностику."""
-        if not self.run_button.isEnabled() or not self.project_id:
+    def update_and_check(self) -> None:
+        """Discover configured sources without blocking the interface."""
+        if self._batch_active or self._restore_busy or not self._ensure_project():
             return
+        if self.cloud_panel.busy:
+            self.progress_label.setText("Дождитесь текущей облачной операции или отмените её.")
+            return
+        from firewall_compliance.interfaces.desktop.source_cycle import configured_sources
+
+        project_id = self.project_id
+        ticket = object()
+        self._source_discovery_ticket = ticket
+        self._restore_busy = True
+        self._set_controls_busy(True)
+        self.progress_label.setText("Подготовка сохранённых источников…")
+
+        def done(value: object) -> None:
+            if self._closed or self.project_id != project_id or self._source_discovery_ticket is not ticket:
+                return
+            self._restore_busy = False
+            self._set_controls_busy(False)
+            if isinstance(value, JobError):
+                self.progress_label.setText("Не удалось прочитать источники: " + value.message)
+                self._refresh_staged()
+                return
+            if not value:
+                self._refresh_staged()
+                self._update_file_inputs()
+                return
+            if self._preflight_jobs or any(not item.get("ready") for item in self.staged):
+                self.progress_label.setText("Дождитесь определения подготовленных файлов.")
+                self._refresh_staged()
+                return
+            if self._site_selection is not None:
+                answer = QMessageBox.question(
+                    self, "Область сбора",
+                    "Подключения пока не имеют подтверждённой привязки к площадкам. "
+                    "Сбор обновит источники целиком; область просмотра сохранится. Продолжить?",
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    self._refresh_staged()
+                    return
+            self._start_source_cycle(tuple(value))
+
+        self.runner.submit(lambda: configured_sources(self.store, project_id), done)
+
+    def _start_source_cycle(self, sources: tuple) -> None:
+        from firewall_compliance.interfaces.desktop.source_cycle import SourceCycleResult, run_source_cycle
+
         try:
-            management_profile = self.management_settings.profile()
-            policy_exposure_profile = self.policy_exposure_settings.profile()
-            policy_scope_profile = self.policy_scope_settings.profile()
+            settings = {
+                "management_profile": self.management_settings.profile().model_dump(mode="json"),
+                "policy_exposure_profile": self.policy_exposure_settings.profile().model_dump(mode="json"),
+                "policy_scope_profile": self.policy_scope_settings.profile().model_dump(mode="json"),
+                "require_logging": self.logging_check.isChecked(),
+                "require_comments": self.comments_check.isChecked(),
+                "enabled_check_ids": [key for key, box in self.check_boxes.items() if box.isChecked()],
+                "configuration_complete": self.management_settings.complete.isChecked(),
+                "include_fragments": self.fragments_check.isChecked(),
+            }
         except ValueError:
             self._open_check_settings()
             return
-        configuration_complete = self.management_settings.complete.isChecked()
-        enabled = tuple(key for key, box in self.check_boxes.items() if box.isChecked())
-        settings: dict[str, Any] = {
-            "management_profile": management_profile.model_dump(mode="json"),
-            "policy_exposure_profile": policy_exposure_profile.model_dump(mode="json"),
-            "policy_scope_profile": policy_scope_profile.model_dump(mode="json"),
-            "require_logging": self.logging_check.isChecked(),
-            "require_comments": self.comments_check.isChecked(),
-            "enabled_check_ids": enabled,
-        }
-        self.store.update_settings(self.project_id, settings)
-        result = self.store.create_run(self.project_id)
-        self.run_id = result["id"] if isinstance(result, dict) else str(result)
-        self.sessions.clear()
-        self._map_live_item_ids.clear()
+        files = tuple(FileCycleInput(item["path"], item["device"]) for item in self.staged)
+        project_id, epoch = self.project_id, object()
+        queue: Queue[CycleProgress | str] = Queue()
+        stop = Event()
+        self._cycle_epoch, self._cycle_project_id = epoch, project_id
+        self._cycle_cancel, self._cycle_progress = stop, queue
+        self._cycle_run_id = None
         self._batch_active = True
-        self._refresh_map_items()
-        self.notification.hide()
         self._batch_cancelled = False
         self._set_controls_busy(True)
-        for item in self.staged:
-            item["warning"] = "В очереди"
-            job_id = self.runner.submit(
-                partial(
-                    analyze_file,
-                    item["path"],
-                    device_id=item["device"],
-                    require_logging=self.logging_check.isChecked(),
-                    require_comments=self.comments_check.isChecked(),
-                    enabled_check_ids=enabled,
-                    management_profile=management_profile,
-                    policy_exposure_profile=policy_exposure_profile,
-                    policy_scope_profile=policy_scope_profile,
-                    configuration_complete=configuration_complete,
-                ),
-                partial(self._analyzed, item),
-            )
-            self._analysis_jobs[job_id] = item
-        self.progress.setRange(0, len(self.staged))
-        self.management_settings.complete.setChecked(False)
+        self.cloud_panel._set_busy(True)
+        self.cloud_panel.cancel = stop
+        self.progress.setRange(0, len(sources) + bool(files))
         self.progress.setValue(0)
         self.progress.show()
         self.cancel_button.setEnabled(True)
+        self.progress_label.setText("Обновление настроенных источников…")
+
+        def done(value: object) -> None:
+            if self._closed or self._cycle_epoch is not epoch or self.project_id != project_id:
+                return
+            self._cycle_job_id, self._cycle_epoch = None, None
+            self._batch_active = False
+            self._set_controls_busy(False)
+            self.cloud_panel._set_busy(False)
+            self.progress.hide()
+            self.cancel_button.setEnabled(False)
+            if not isinstance(value, SourceCycleResult):
+                self.progress_label.setText(
+                    value.message if isinstance(value, JobError)
+                    else "Цикл прерван. Сохранённые результаты доступны в центре задач."
+                )
+                self._refresh_all()
+                return
+            runs = [item.run_id for item in value.items if item.run_id]
+            self._batch_cancelled = any(item.state == "cancelled" for item in value.items)
+            if runs:
+                self.load_run(runs[-1])
+            else:
+                self._refresh_all()
+            errors = sum(item.state in {"failed", "partial"} for item in value.items)
+            self.progress_label.setText(
+                f"Обработано источников: {len(value.items)}. "
+                f"С ошибками/ограничениями: {errors}. Подробности — в центре задач."
+            )
+            self._completed_run_id = runs[-1] if runs else None
+            self.notification_label.setText(self.progress_label.text())
+            self.notification_label.setToolTip(
+                "\n".join(f"{item.source_id}: {item.state}. {item.message}" for item in value.items)
+            )
+            self.notification.show()
+            self._refresh_staged()
+
+        self._cycle_job_id = self.runner.submit(
+            lambda: run_source_cycle(
+                self.store, project_id, sources, settings, files=files, cancel=stop, progress=queue.put
+            ), done,
+        )
+        self.management_settings.complete.setChecked(False)
+
+    def _update_file_inputs(self) -> None:
+        """Prepare and execute the saved file workflow from one entry point."""
+        if self._batch_active or self._restore_busy or not self._ensure_project():
+            return
+        if self.staged:
+            if self._preflight_jobs:
+                self._start_after_preflight = True
+                self.progress_label.setText("После определения файлов проверка начнётся автоматически.")
+            elif self.run_button.isEnabled():
+                self.start_analysis()
+            else:
+                self.navigate("staging")
+                self.progress_label.setText("Подтвердите устройства и состав проверок перед запуском.")
+            return
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Обновить и проверить")
+        dialog.setText("Выберите данные для проверки.")
+        dialog.setInformativeText(
+            "Ранее загруженные файлы можно заново прочитать с диска. "
+            "Это не обновляет конфигурации на самих устройствах."
+        )
+        choose = dialog.addButton("Выбрать файлы", QMessageBox.ButtonRole.AcceptRole)
+        previous = dialog.addButton("Файлы последнего запуска", QMessageBox.ButtonRole.ActionRole)
+        integration = dialog.addButton("Интеграции", QMessageBox.ButtonRole.ActionRole)
+        dialog.addButton(QMessageBox.StandardButton.Cancel)
+        source = self._source_project_snapshot()
+        latest = source.history[0] if source.history else None
+        previous.setEnabled(
+            bool(latest and any(item.get("path") for item in latest["items"]))
+        )
+        if latest:
+            dialog.setDetailedText(
+                "\n".join(str(item["path"]) for item in latest["items"] if item.get("path"))
+            )
+        dialog.exec()
+        if dialog.clickedButton() is integration:
+            self.choose_data_source()
+            return
+        if dialog.clickedButton() is choose:
+            self.choose_files()
+        elif dialog.clickedButton() is previous and latest is not None:
+            paths = tuple(
+                dict.fromkeys(Path(item["path"]) for item in latest["items"] if item.get("path"))
+            )
+            self.stage_paths(paths)
+        else:
+            return
+        if self.staged:
+            self._start_after_preflight = True
+            self.progress_label.setText("Подготовка данных; проверка начнётся после определения файлов.")
+
+    def start_analysis(self) -> None:
+        """Capture inputs once; collection, analysis and persistence run in a worker."""
+        if not self.run_button.isEnabled() or not self.project_id:
+            return
+        try:
+            settings: dict[str, Any] = {
+                "management_profile": self.management_settings.profile().model_dump(mode="json"),
+                "policy_exposure_profile": self.policy_exposure_settings.profile().model_dump(
+                    mode="json"
+                ),
+                "policy_scope_profile": self.policy_scope_settings.profile().model_dump(mode="json"),
+                "require_logging": self.logging_check.isChecked(),
+                "require_comments": self.comments_check.isChecked(),
+                "enabled_check_ids": [
+                    key for key, box in self.check_boxes.items() if box.isChecked()
+                ],
+                "configuration_complete": self.management_settings.complete.isChecked(),
+                "include_fragments": self.fragments_check.isChecked(),
+            }
+            manifest = tuple(FileCycleInput(item["path"], item["device"]) for item in self.staged)
+        except ValueError:
+            self._open_check_settings()
+            return
+        project_id = self.project_id
+        epoch = object()
+        progress_queue: Queue[CycleProgress | str] = Queue()
+        cancel = Event()
+        rows = tuple(self.staged)
+        self._cycle_epoch = epoch
+        self._cycle_run_id = None
+        self._cycle_project_id = project_id
+        self._cycle_cancel = cancel
+        self._cycle_progress = progress_queue
+        self._start_after_preflight = False
+        self._batch_active = True
+        self._batch_cancelled = False
+        self.notification.hide()
+        self._set_controls_busy(True)
+        for item in rows:
+            item["warning"] = "В очереди получения данных"
+        self.progress.setRange(0, len(rows))
+        self.progress.setValue(0)
+        self.progress.show()
+        self.progress_label.setText("Получение и проверка файлов выполняются в фоне.")
+        self.cancel_button.setEnabled(True)
+
+        def work() -> FileCycleResult:
+            return run_file_cycle(
+                self.store,
+                project_id,
+                manifest,
+                settings,
+                progress=progress_queue.put,
+                cancel=cancel,
+                started=progress_queue.put,
+            )
+
+        def done(value: object) -> None:
+            if self._closed or self._cycle_epoch is not epoch or self.project_id != project_id:
+                return
+            self._cycle_job_id = None
+            self._cycle_epoch = None
+            self._batch_active = False
+            self._set_controls_busy(False)
+            self.progress.hide()
+            self.cancel_button.setEnabled(False)
+            if not isinstance(value, FileCycleResult):
+                self.progress_label.setText(
+                    value.message if isinstance(value, JobError)
+                    else "Цикл не завершён. Сохранённые результаты доступны в истории."
+                )
+                for item in rows:
+                    item["warning"] = "Цикл прерван; проверьте историю запуска"
+                self._refresh_all()
+                return
+            self.sessions = dict(value.sessions)
+            self._map_live_item_ids = set(self.sessions)
+            for outcome in value.outcome.sources:
+                if outcome.state != "collected":
+                    rows[int(outcome.source_id)]["warning"] = outcome.message or "Отменено"
+            labels = {
+                "complete": "Анализ завершён",
+                "partial": "Частичный результат",
+                "failed": "Ошибка анализа",
+                "cancelled": "Отменено",
+            }
+            for outcome in value.outcome.items:
+                rows[int(outcome.input_id)]["warning"] = outcome.message or labels[outcome.state]
+            self._batch_cancelled = value.outcome.state == "cancelled"
+            self.load_run(value.run_id)
+            self.progress_label.setText(
+                "Цикл завершён. Полнота, ограничения и ошибки доступны в результатах."
+                if value.outcome.state == "complete"
+                else "Цикл завершён с ограничениями. Откройте результаты и ошибки источников."
+            )
+            self._notify_completion()
+
+        self._cycle_job_id = self.runner.submit(work, done)
+        self.management_settings.complete.setChecked(False)
         self._refresh_staged()
+
+    def _poll_cycle_progress(self) -> None:
+        changed = False
+        while True:
+            try:
+                event = self._cycle_progress.get_nowait()
+            except Empty:
+                break
+            if self._cycle_job_id is None or self.project_id != self._cycle_project_id:
+                continue
+            if isinstance(event, str):
+                self._cycle_run_id = event
+                continue
+            changed = True
+            self.progress.setRange(0, max(1, event.total))
+            self.progress.setValue(event.completed)
+            stage = {
+                "collection": "Получение данных",
+                "analysis": "Анализ",
+                "finished": "Завершение",
+            }[event.stage]
+            self.progress_label.setText(f"{stage}: {event.completed} из {event.total}")
+            identifier = event.item_id if event.item_id is not None else event.source_id
+            if (
+                identifier is not None
+                and identifier.isdecimal()
+                and int(identifier) < len(self.staged)
+            ):
+                self.staged[int(identifier)]["warning"] = stage
+        if changed:
+            self._refresh_staged()
 
     def _analyzed(self, item: dict[str, Any], result: object) -> None:
         if isinstance(result, AnalysisSession):
@@ -3278,6 +3593,8 @@ class MainWindow(QMainWindow):
             self.create_button,
             self.sites_button,
             self.site_selector,
+            self.add_data_button,
+            self.prepare_button,
             self.folder_button,
             self.files_button,
             self.logging_check,
@@ -3296,6 +3613,7 @@ class MainWindow(QMainWindow):
     def poll_jobs(self) -> None:
         """Доставить завершения backend только в Qt-потоке и обновить счётчик пакета."""
         events = self.runner.poll()
+        self._poll_cycle_progress()
         if not self._ui_ready or self._loading_settings:
             return
         terminal_jobs = {
@@ -3305,6 +3623,13 @@ class MainWindow(QMainWindow):
         }
         for event in events:
             if event.status == JobStatus.CANCELED:
+                if event.job_id == self._cycle_job_id:
+                    self._cycle_job_id = None
+                    self._cycle_epoch = None
+                    self._batch_active = False
+                    self._set_controls_busy(False)
+                    self.progress.hide()
+                    self.progress_label.setText("Цикл отменён до начала выполнения.")
                 if event.job_id == self._analysis_result_save_id:
                     self._analysis_result_save_id = None
                     self._analysis_result_busy = False
@@ -3352,7 +3677,15 @@ class MainWindow(QMainWindow):
                         else "Можно запускать анализ."
                     )
                 )
-        if self._batch_active and not self._analysis_jobs:
+            if self._start_after_preflight:
+                self._start_after_preflight = False
+                self._refresh_staged()
+                if self.run_button.isEnabled():
+                    self.start_analysis()
+                else:
+                    self.navigate("staging")
+                    self.progress_label.setText("Подтвердите неоднозначные устройства перед запуском.")
+        if self._batch_active and self._cycle_job_id is None and not self._analysis_jobs:
             self._batch_active = False
             self.store.finish_run(
                 self.run_id, state="cancelled" if self._batch_cancelled else "completed"
@@ -3365,7 +3698,7 @@ class MainWindow(QMainWindow):
                 "Пакет завершён. Ограничения и ошибки включены в сводку и отчёт."
             )
             self._notify_completion()
-        self.cancel_button.setEnabled(bool(self.runner.pending_count))
+        self.cancel_button.setEnabled(bool(self._cycle_job_id or self.runner.pending_count))
 
     def _notify_completion(self) -> None:
         self._completed_run_id = self.run_id
@@ -3373,7 +3706,11 @@ class MainWindow(QMainWindow):
         states = Counter(item["status"] for item in items)
         partial_count = states["partial"]
         missing_count = sum(not item.get("report") for item in items)
-        title = "Анализ отменён" if self._batch_cancelled else "Анализ завершён"
+        title = (
+            "Анализ отменён" if self._batch_cancelled
+            else "Анализ завершён с ограничениями" if (self.run or {}).get("state") == "interrupted"
+            else "Анализ завершён"
+        )
         self.notification_label.setText(
             f"{title} · файлов: {len(items)} · частичных: {partial_count} · "
             f"без результата: {missing_count}."
@@ -3397,6 +3734,14 @@ class MainWindow(QMainWindow):
         self.navigate("findings", remember=False)
 
     def cancel_pending(self) -> None:
+        self._start_after_preflight = False
+        if self._cycle_job_id is not None:
+            self._batch_cancelled = True
+            self._cycle_cancel.set()
+            self.progress_label.setText(
+                "Отмена запрошена. Текущий файл завершится, остальные будут отмечены отменёнными."
+            )
+            return
         if self._batch_active and self.runner.pending_count:
             self._batch_cancelled = True
         self.runner.cancel_pending()
@@ -4403,6 +4748,7 @@ class MainWindow(QMainWindow):
                 history,
                 saved_scans,
                 self.store.list_map_integrations(self.project_id) if self.project_id else [],
+                self._source_project_snapshot().source_health if self.project_id else (),
             )
         )
         devices = self._project_devices()
@@ -4802,6 +5148,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         """Отключить поздние callbacks без ожидания выполняющегося worker."""
         self._closed = True
+        self._cycle_cancel.set()
+        self._cycle_epoch = None
         if not self._ui_ready:
             self.timer.stop()
             self.runner.shutdown()
@@ -4813,7 +5161,7 @@ class MainWindow(QMainWindow):
             self.governance_panel.shutdown()
         self.cloud_panel.close()
         self.timer.stop()
-        if self.run_id and self._batch_active:
+        if self.run_id and self._batch_active and self._cycle_job_id is None:
             for job_id, item in self._analysis_jobs.items():
                 if self.runner.status(job_id) == JobStatus.RUNNING:
                     self.store.record_error(

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -23,6 +25,7 @@ from PySide6.QtWidgets import (
 from firewall_compliance.interfaces.desktop.dashboard import (
     SEVERITIES,
     DashboardSnapshot,
+    FindingTrendPoint,
     OperationSummary,
     build_dashboard,
 )
@@ -45,6 +48,169 @@ _STATES = {
     "error": "Ошибка",
     "unknown": "Неизвестно",
 }
+
+_BAR_COLORS = {
+    "critical": "#f87171",
+    "high": "#fb923c",
+    "medium": "#facc15",
+    "low": "#60a5fa",
+    "info": "#94a3b8",
+}
+
+
+class SeverityBars(QWidget):
+    """One common linear scale, with total and open counts always visible."""
+
+    activated = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._totals: dict[str, int] = {}
+        self._open: dict[str, int] = {}
+        self._selected = 0
+        self.setMinimumSize(300, 190)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName("Находки по критичности: всего и открыто")
+        self.setToolTip(
+            "Длина серой полосы — все находки; цветная часть — открытые. "
+            "Числа справа: всего / открыто. Нажмите строку, чтобы открыть находки. "
+            "Клавиатура: стрелки вверх/вниз и Enter."
+        )
+
+    def set_counts(self, totals: Mapping[str, int], opened: Mapping[str, int]) -> None:
+        self._totals = {key: max(0, totals.get(key, 0)) for key in SEVERITIES}
+        self._open = {key: max(0, opened.get(key, 0)) for key in SEVERITIES}
+        self.setAccessibleDescription(
+            "; ".join(
+                f"{_SEVERITY_LABELS[key]}: всего {self._totals[key]}, открыто {self._open[key]}"
+                for key in SEVERITIES
+            )
+        )
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        row_height = self.height() / len(SEVERITIES)
+        label_width = min(150, self.width() * 0.38)
+        count_width = 85
+        bar_width = max(1.0, self.width() - label_width - count_width - 16)
+        maximum = max((1, *self._totals.values()))
+        for row, severity in enumerate(SEVERITIES):
+            y = row * row_height
+            total = self._totals.get(severity, 0)
+            opened = self._open.get(severity, 0)
+            painter.setPen(self.palette().text().color())
+            label = painter.fontMetrics().elidedText(
+                _SEVERITY_LABELS[severity], Qt.TextElideMode.ElideRight, int(label_width - 8)
+            )
+            painter.drawText(
+                QRectF(0, y, label_width - 8, row_height),
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                label,
+            )
+            top = y + row_height / 2 - 7
+            painter.fillRect(QRectF(label_width, top, bar_width, 14), QColor("#263244"))
+            painter.fillRect(
+                QRectF(label_width, top, bar_width * total / maximum, 14), QColor("#64748b")
+            )
+            painter.fillRect(
+                QRectF(label_width, top, bar_width * min(opened, total) / maximum, 14),
+                QColor(_BAR_COLORS[severity]),
+            )
+            painter.drawText(
+                QRectF(label_width + bar_width + 8, y, count_width, row_height),
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+                f"{total} / {opened}",
+            )
+            if self.hasFocus() and self._selected == row:
+                painter.setPen(QPen(self.palette().highlight().color(), 1))
+                painter.drawRect(QRectF(1, y + 1, self.width() - 2, row_height - 2))
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            row = int(event.position().y() * len(SEVERITIES) / max(1, self.height()))
+            if 0 <= row < len(SEVERITIES):
+                self._selected = row
+                self.setFocus()
+                self.update()
+                self.activated.emit(SEVERITIES[row])
+                return
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            step = -1 if event.key() == Qt.Key.Key_Up else 1
+            self._selected = (self._selected + step) % len(SEVERITIES)
+            self.update()
+            return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.activated.emit(SEVERITIES[self._selected])
+            return
+        super().keyPressEvent(event)
+
+
+class FindingTrendChart(QWidget):
+    """Plot observed counts; only explicitly comparable neighbors are connected."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.points: tuple[FindingTrendPoint, ...] = ()
+        self.setMinimumHeight(180)
+        self.setAccessibleName("Число находок по завершённым запускам")
+
+    def set_points(self, points: tuple[FindingTrendPoint, ...]) -> None:
+        self.points = points[-12:]
+        descriptions = [
+            f"{_date(point.timestamp)}: "
+            f"{point.findings if point.findings is not None else 'нет результата'}; "
+            + ("; ".join(point.limitations) or "в проверенной области")
+            for point in self.points
+        ]
+        self.setAccessibleDescription("\n".join(descriptions))
+        self.setToolTip("\n".join(descriptions) or "Завершённых запусков пока нет")
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        foreground = self.palette().text().color()
+        painter.setPen(foreground)
+        if not self.points:
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Нет завершённых запусков")
+            return
+        left, top, bottom = 36.0, 28.0, self.height() - 38.0
+        width = max(1.0, self.width() - left - 30)
+        maximum = max((1, *(point.findings or 0 for point in self.points)))
+        painter.setPen(QPen(QColor("#64748b"), 1))
+        painter.drawLine(QPointF(left, bottom), QPointF(left + width, bottom))
+        painter.drawText(QRectF(0, bottom - 10, 30, 20), Qt.AlignmentFlag.AlignRight, "0")
+        previous: QPointF | None = None
+        for index, point in enumerate(self.points):
+            x = left + width * index / max(1, len(self.points) - 1)
+            if point.findings is None:
+                painter.setPen(foreground)
+                painter.drawText(QRectF(x - 10, bottom - 22, 20, 20), Qt.AlignmentFlag.AlignCenter, "?")
+                previous = None
+                continue
+            y = bottom - (bottom - top) * point.findings / maximum
+            current = QPointF(x, y)
+            painter.setPen(QPen(QColor("#60a5fa"), 2))
+            if point.comparable_to_previous and previous is not None:
+                painter.drawLine(previous, current)
+            painter.setBrush(QColor("#fbbf24" if point.limitations else "#60a5fa"))
+            painter.drawEllipse(current, 4, 4)
+            painter.setPen(foreground)
+            painter.drawText(
+                QRectF(x - 25, y - 24, 50, 20), Qt.AlignmentFlag.AlignCenter, str(point.findings)
+            )
+            if index in (0, len(self.points) - 1):
+                date = _date(point.timestamp)
+                painter.drawText(
+                    QRectF(max(0.0, min(x - 45, self.width() - 100.0)), bottom + 8, 100, 24),
+                    Qt.AlignmentFlag.AlignCenter, date,
+                )
+            previous = current
 
 
 def _label(text: str, name: str = "") -> QLabel:
@@ -95,6 +261,7 @@ def _fill(
 
 class ProjectDashboard(QWidget):
     navigation_requested = Signal(str)
+    severity_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -130,6 +297,26 @@ class ProjectDashboard(QWidget):
             self.summary_labels[key] = value
             metrics.addWidget(card, 1)
         layout.addLayout(metrics)
+        self.execution_summary = _label("", "muted")
+        layout.addWidget(self.execution_summary)
+        self.finding_summary = _label("Находки последних проверенных снимков", "heading")
+        layout.addWidget(self.finding_summary)
+        layout.addWidget(_label("Всего / открыто. Цветная часть полосы — открытые находки."))
+        self.severity_chart = SeverityBars()
+        self.severity_chart.activated.connect(self._open_severity)
+        layout.addWidget(self.severity_chart)
+        layout.addWidget(_label("Динамика числа находок по завершённым запускам", "heading"))
+        self.trend_chart = FindingTrendChart()
+        layout.addWidget(self.trend_chart)
+        self.trend_note = _label("", "muted")
+        layout.addWidget(self.trend_note)
+        layout.addWidget(_label("Источники: последняя попытка и успешный сбор", "heading"))
+        self.source_table = _table(
+            ("Источник", "Сбор", "Анализ", "Последняя попытка", "Успешный сбор", "Ошибок"),
+            "dashboardSources",
+        )
+        layout.addWidget(self.source_table)
+        layout.addWidget(_label("Полнота и актуальность данных", "heading"))
         self.category_table = _table(
             (
                 "Категория",
@@ -189,7 +376,7 @@ class ProjectDashboard(QWidget):
         for page, text in (
             ("devices", "Инфраструктура"),
             ("findings", "Проблемы"),
-            ("history", "История"),
+            ("history", "Изменения и запуски"),
             ("scans", "Облачный сбор"),
         ):
             button = QPushButton(text)
@@ -204,6 +391,22 @@ class ProjectDashboard(QWidget):
 
     def refresh(self, snapshot: DashboardSnapshot) -> None:
         self.snapshot = snapshot
+        states = {
+            **_STATES, "never": "Сбор ещё не выполнялся",
+            "configuration_changed": "Настройки изменены после сбора",
+            "invalid": "Некорректные настройки",
+            "not_executed": "Не выполнялся", "not_supported": "Не поддержан",
+        }
+        _fill(self.source_table, [
+            (str(source["label"]), states.get(source["state"], source["state"]),
+             states.get(source["analysis_state"], source["analysis_state"]),
+             _date(source["last_attempt"]), _date(source["last_success"]), str(source["errors"]))
+            for source in snapshot.source_health
+        ])
+        self.source_table.setToolTip(
+            "Результат последней операции не подтверждает текущую связность. "
+            "Даты сбора не заменяют время наблюдения конфигурации. Источники показаны по проекту."
+        )
         self.last_check_label.setText(
             "Последняя выполненная проверка: " + _date(snapshot.last_check_at)
             if snapshot.last_check_at
@@ -214,6 +417,30 @@ class ProjectDashboard(QWidget):
         )
         for key, label in self.summary_labels.items():
             label.setText(str(getattr(snapshot, key)))
+        self.execution_summary.setText(
+            f"За показанную историю: выполнено проверок {snapshot.executed_checks} "
+            f"(из них частично {snapshot.partial_checks}); "
+            f"не выполнено {snapshot.not_executed_checks}.\n"
+            f"Ошибок обработки файлов: {snapshot.error_items}; "
+            f"неподдержанных входов: {snapshot.unsupported_items}; "
+            f"записей ошибок облачного сбора: {snapshot.collection_errors}."
+        )
+        self.finding_summary.setText(
+            f"Находки последних проверенных снимков: {snapshot.findings} "
+            f"· открыто {snapshot.open_findings}"
+        )
+        self.severity_chart.set_counts(
+            snapshot.findings_by_severity, snapshot.open_findings_by_severity
+        )
+        self.trend_chart.set_points(snapshot.finding_trend)
+        limited = sum(bool(point.limitations) for point in snapshot.finding_trend[-12:])
+        self.trend_note.setText(
+            "Показаны последние 12 завершённых запусков; точки — фактическое число находок. "
+            "Линии соединяют только сопоставимые запуски; жёлтые точки/разрывы означают "
+            f"ограничения сравнения (точек с ограничениями: {limited}). "
+            "Причины и время каждой точки — в подсказке. Снижение числа не доказывает исправление "
+            "или безопасность; сравниваются сохранённые области проверок, не полнота всей сети."
+        )
         _fill(
             self.category_table,
             [
@@ -278,6 +505,10 @@ class ProjectDashboard(QWidget):
             *snapshot.warnings,
         ]
         self.coverage_label.setText("\n".join(notes))
+
+    def _open_severity(self, severity: str) -> None:
+        self.navigation_requested.emit("findings")
+        self.severity_requested.emit(severity)
 
     @staticmethod
     def _operation_state(operation: OperationSummary) -> str:

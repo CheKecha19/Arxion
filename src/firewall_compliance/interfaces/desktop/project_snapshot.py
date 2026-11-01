@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from firewall_compliance.application.source_health import build_source_health
+
 
 @dataclass(frozen=True, slots=True)
 class ProjectSnapshot:
@@ -24,6 +26,7 @@ class ProjectSnapshot:
     run_by_id: dict[str, dict[str, Any]]
     site_assignments: dict[str, str] = field(default_factory=dict)
     sites: tuple[dict[str, str], ...] = ()
+    source_health: tuple[dict[str, Any], ...] = ()
 
 
 def scoped_project_snapshot(
@@ -75,6 +78,7 @@ def scoped_project_snapshot(
         {run["id"]: run for run in history},
         snapshot.site_assignments,
         snapshot.sites,
+        snapshot.source_health,
     )
 
 
@@ -138,4 +142,7 @@ def read_project_snapshot(store: Any, project_id: str) -> ProjectSnapshot:
         run_by_id=run_by_id,
         site_assignments=assignments,
         sites=sites,
+        source_health=build_source_health(
+            store.list_source_connections(project_id), history, scans
+        ) if hasattr(store, "list_source_connections") else (),
     )

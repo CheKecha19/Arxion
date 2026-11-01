@@ -14,21 +14,24 @@ class WorkspaceSection:
 
 WORKSPACE_SECTIONS = (
     WorkspaceSection("home", "Обзор", (("home", "Обзор"),)),
-    WorkspaceSection("devices", "Инфраструктура", (("devices", "Ресурсы проекта"),)),
-    WorkspaceSection("map", "Сетевая карта", (("map", "Сетевая карта"),)),
+    WorkspaceSection(
+        "devices", "Инфраструктура", (("devices", "Ресурсы проекта"), ("map", "Сетевая карта"))
+    ),
     WorkspaceSection(
         "findings",
-        "Анализ",
+        "Проверки",
         (
             ("findings", "Проблемы"),
             ("rules", "Правила и объекты"),
+            ("staging", "Файлы и запуск"),
+            ("scans", "Облачный сбор"),
             ("advanced", "Расширенные инструменты"),
         ),
     ),
     WorkspaceSection(
         "history",
-        "Операции",
-        (("history", "История"), ("staging", "Файлы и проверки"), ("scans", "Облачный сбор")),
+        "Изменения",
+        (("history", "Запуски и сравнение"),),
     ),
     WorkspaceSection("reports", "Отчёты", (("reports", "Отчёты"),)),
 )
