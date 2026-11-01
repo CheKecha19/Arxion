@@ -8,6 +8,7 @@
 
 ## Требования и границы продукта
 
+- [UI_WORKSPACE_REQUIREMENTS](UI_WORKSPACE_REQUIREMENTS.md) — ТЗ переработки UI, карт, полного цикла проверок и матрицы доступа; целевое поведение, не статус реализации.
 - [PRODUCT_VISION](PRODUCT_VISION.md)
 - [FUNCTIONAL_REQUIREMENTS](FUNCTIONAL_REQUIREMENTS.md)
 - [QUALITY_REQUIREMENTS](QUALITY_REQUIREMENTS.md)

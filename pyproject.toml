@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "firewall-compliance"
-version = "0.3.2"
+version = "0.5.0"
 description = "Локальная система анализа конфигураций сетевого оборудования"
 readme = "README.md"
 requires-python = ">=3.12"

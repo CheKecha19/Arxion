@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from firewall_compliance.application.analysis_result import AnalysisResult
     from firewall_compliance.domain.acl_map import AclMap
     from firewall_compliance.interfaces.desktop.resource_registry import ResourceRegistry
+    from firewall_compliance.interfaces.desktop.workspace_store import WorkspaceMetadataStore
 
 
 class SourceMismatchError(ValueError):
@@ -179,6 +180,13 @@ class ProjectStore:
         from firewall_compliance.interfaces.desktop.resource_registry import ResourceRegistry
 
         return ResourceRegistry(self.path)
+
+    @cached_property
+    def workspace_metadata(self) -> "WorkspaceMetadataStore":
+        """Access optional site metadata without implicitly migrating the database."""
+        from firewall_compliance.interfaces.desktop.workspace_store import WorkspaceMetadataStore
+
+        return WorkspaceMetadataStore(self)
 
     def project_history(self, project_id: str) -> list[dict[str, Any]]:
         """Read full saved run snapshots once for cumulative registry/dashboard projections."""
@@ -685,9 +693,22 @@ class ProjectStore:
 
     def create_run(self, project_id: str) -> str:
         """Начать новый запуск без переноса статусов предыдущего запуска."""
-        project = self.get_project(project_id)
+        from firewall_compliance.interfaces.desktop.profile_history import LegacyProfileHistory
+
         run_id = str(uuid4())
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            project = db.execute("SELECT settings FROM projects WHERE id=?", (project_id,)).fetchone()
+            if project is None:
+                raise KeyError("Проект не найден")
+            settings = json.loads(project["settings"])
+            if LegacyProfileHistory.is_initialized(db):
+                profile = LegacyProfileHistory.record_on_connection(db, project_id, settings)
+                settings = {
+                    **settings,
+                    "workspace_profile_version": profile.version,
+                    "workspace_profile_fingerprint": profile.fingerprint,
+                }
             db.execute(
                 "INSERT INTO runs VALUES (?,?,?,?,?,?)",
                 (
@@ -696,7 +717,7 @@ class ProjectStore:
                     _now(),
                     None,
                     "running",
-                    _json(project["settings"]),
+                    _json(settings),
                 ),
             )
         return run_id

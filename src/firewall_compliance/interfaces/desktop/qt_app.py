@@ -121,6 +121,7 @@ from firewall_compliance.interfaces.desktop.project_map import build_project_map
 from firewall_compliance.interfaces.desktop.project_snapshot import (
     ProjectSnapshot,
     read_project_snapshot,
+    scoped_project_snapshot,
 )
 from firewall_compliance.interfaces.desktop.qt_acl_map import (
     AclMapState,
@@ -340,6 +341,8 @@ class MainWindow(QMainWindow):
         self._ui_ready = False
         self._project_load_ticket: object | None = None
         self._project_snapshot: ProjectSnapshot | None = None
+        self._site_selection: str | None = None
+        self._site_reload_ticket: object | None = None
         self._snapshot_token: tuple[Any, ...] | None = None
         self._dirty_pages: set[str] = set(SECTION_IDS)
         self._map_pending_item: dict[str, Any] | None = None
@@ -485,6 +488,16 @@ class MainWindow(QMainWindow):
         header.addWidget(self.project_combo)
         self.create_button = _button("Новый проект", self._create_project_dialog)
         header.addWidget(self.create_button)
+        scope_row = QHBoxLayout()
+        scope_row.addWidget(_label("Область просмотра"))
+        self.sites_button = _button("Площадки", self._open_workspace_sites)
+        self.site_selector = QComboBox()
+        self.site_selector.setAccessibleName("Область площадок")
+        self.site_selector.addItem("Все площадки", None)
+        self.site_selector.currentIndexChanged.connect(self._site_changed)
+        scope_row.addWidget(self.site_selector)
+        scope_row.addWidget(self.sites_button)
+        scope_row.addStretch()
         self.add_data_button = _button("Добавить данные", self.choose_data_source, primary=True)
         header.addWidget(self.add_data_button)
         self.prepare_button = _button("Запустить проверку", lambda: self.navigate("staging"))
@@ -492,6 +505,13 @@ class MainWindow(QMainWindow):
         self.run_button = _button("Запустить проверку файлов", self.start_analysis, primary=True)
         self.run_button.setEnabled(False)
         root.addLayout(header)
+        root.addLayout(scope_row)
+        self.site_scope_note = _label(
+            "Все площадки выбранного проекта. Назначения не меняют исходные результаты.",
+            muted=True,
+        )
+        self.site_scope_note.setWordWrap(True)
+        root.addWidget(self.site_scope_note)
         body = QHBoxLayout()
         sidebar = QWidget()
         sidebar.setFixedWidth(200)
@@ -896,11 +916,11 @@ class MainWindow(QMainWindow):
                 self._map_pending_item = preferred_item
             return
         previous_id = self.map_result_selector.currentData()
-        items = [] if self._batch_active else self._items()
+        items = [] if self._batch_active else self._view_items()
         self._map_items = {str(item["id"]): item for item in items}
         for item_id in sorted(self._map_live_item_ids):
             session = self.sessions.get(item_id)
-            if session is not None:
+            if session is not None and self._site_contains_device(str(session.report.device_id)):
                 self._map_items.setdefault(
                     item_id,
                     {
@@ -909,7 +929,11 @@ class MainWindow(QMainWindow):
                         "source_name": Path(session.path).name,
                     },
                 )
-        if preferred_item is not None and preferred_item.get("id") is not None:
+        if (
+            preferred_item is not None
+            and preferred_item.get("id") is not None
+            and self._site_contains_device((preferred_item.get("report") or {}).get("device_id"))
+        ):
             preferred_id = str(preferred_item["id"])
             self._map_items[preferred_id] = preferred_item
         else:
@@ -1880,6 +1904,35 @@ class MainWindow(QMainWindow):
         layout.addWidget(buttons)
         dialog.exec()
 
+    def _site_changed(self, *_: Any) -> None:
+        if self._loading_settings or self._restore_busy:
+            return
+        self._site_selection = self.site_selector.currentData()
+        active = self._site_selection is not None
+        self.site_scope_note.setText(
+            "Площадка: " + self.site_selector.currentText() + ". "
+            "Фильтр: устройства, находки, правила, история проверок и их карта. "
+            "Ошибки без устройства, облачный инвентарь, источники и сборы остаются по проекту. "
+            "Реестр, расширенные инструменты, сохранённые карты и отчёты — "
+            "весь проект / выбранный полный запуск. Запуск проверки использует все подготовленные файлы."
+            if active
+            else "Все площадки выбранного проекта. Назначения не меняют исходные результаты."
+        )
+        self._refresh_all()
+
+    def _populate_site_selector(self, snapshot: ProjectSnapshot | None) -> None:
+        previous = self._site_selection
+        self.site_selector.blockSignals(True)
+        self.site_selector.clear()
+        self.site_selector.addItem("Все площадки", None)
+        self.site_selector.addItem("Без площадки", "")
+        for site in snapshot.sites if snapshot is not None else ():
+            self.site_selector.addItem(site["name"], site["id"])
+        index = self.site_selector.findData(previous)
+        self.site_selector.setCurrentIndex(max(0, index))
+        self._site_selection = self.site_selector.currentData()
+        self.site_selector.blockSignals(False)
+
     def _build_preparation(self) -> None:
         _, layout = self._page(
             "Файлы и проверки",
@@ -2777,8 +2830,48 @@ class MainWindow(QMainWindow):
         self.refresh_projects(str(project_id), load_immediately=True)
         return str(project_id)
 
+    def _open_workspace_sites(self) -> None:
+        from firewall_compliance.interfaces.desktop.qt_workspace_sites import WorkspaceSitesDialog
+
+        project_id = self.project_id
+        if not project_id:
+            QMessageBox.information(self, "Площадки", "Сначала выберите или создайте проект.")
+            return
+        dialog = WorkspaceSitesDialog(
+            self.store,
+            self.runner,
+            project_id,
+            lambda: not self._closed and self.project_id == project_id,
+            self,
+        )
+        dialog.exec()
+        if not self._closed and self.project_id == project_id:
+            self._reload_site_scope(project_id)
+
+    def _reload_site_scope(self, project_id: str) -> None:
+        ticket = object()
+        self._site_reload_ticket = ticket
+        project_ticket = self._project_load_ticket
+
+        def done(value: Any) -> None:
+            if (
+                self._closed or self.project_id != project_id
+                or self._site_reload_ticket is not ticket
+                or self._project_load_ticket is not project_ticket
+            ):
+                return
+            if isinstance(value, JobError):
+                self.progress_label.setText("Не удалось обновить площадки: " + value.message)
+                return
+            snapshot, token = value
+            self._project_snapshot, self._snapshot_token = snapshot, token
+            self._populate_site_selector(snapshot)
+            self._site_changed()
+
+        self.runner.submit(lambda: self._read_stable_snapshot(project_id), done)
+
     def _create_project_dialog(self) -> None:
-        name, accepted = QInputDialog.getText(self, "Новый проект", "Название проекта / площадки")
+        name, accepted = QInputDialog.getText(self, "Новый проект", "Название проекта")
         if accepted and name.strip():
             self.create_project(name.strip())
 
@@ -2830,12 +2923,14 @@ class MainWindow(QMainWindow):
                 return
             snapshot, token = value if isinstance(value, tuple) else (None, None)
             self._project_snapshot = snapshot
+            self._populate_site_selector(snapshot)
             self._snapshot_token = token
             self._inventory_evidence_token = token
             self._inventory_runs = snapshot.history if snapshot is not None else []
             self._inventory_scans = snapshot.scans if snapshot is not None else []
             try:
                 self._apply_project_context()
+                self._site_changed()
             except (OSError, sqlite3.Error, ValueError, KeyError):
                 self._loading_settings = False
                 self._restore_busy = True
@@ -3181,6 +3276,8 @@ class MainWindow(QMainWindow):
         for widget in (
             self.project_combo,
             self.create_button,
+            self.sites_button,
+            self.site_selector,
             self.folder_button,
             self.files_button,
             self.logging_check,
@@ -3345,7 +3442,7 @@ class MainWindow(QMainWindow):
                 return snapshot, before
         raise ValueError("История проекта изменяется во время загрузки")
 
-    def _read_project_snapshot(self) -> ProjectSnapshot:
+    def _source_project_snapshot(self) -> ProjectSnapshot:
         if self.project_id is None:
             raise ValueError("Проект не выбран")
         token = self._inventory_token()
@@ -3360,12 +3457,16 @@ class MainWindow(QMainWindow):
             self._snapshot_token = token
         return snapshot
 
+    def _read_project_snapshot(self) -> ProjectSnapshot:
+        snapshot = self._source_project_snapshot()
+        return scoped_project_snapshot(snapshot, snapshot.site_assignments, self._site_selection)
+
     def _project_runs(self) -> list[dict[str, Any]]:
         return self._read_project_snapshot().runs if self.project_id else []
 
     def _get_run(self, run_id: str) -> dict[str, Any]:
         if self.project_id:
-            run = self._read_project_snapshot().run_by_id.get(run_id)
+            run = self._source_project_snapshot().run_by_id.get(run_id)
             if run is not None:
                 return run
         return self.store.get_run(run_id)
@@ -3377,7 +3478,7 @@ class MainWindow(QMainWindow):
             return [], [], []
         token = self._inventory_token()
         if token != self._inventory_evidence_token:
-            snapshot = self._read_project_snapshot()
+            snapshot = self._source_project_snapshot()
             runs, scans = snapshot.history, snapshot.scans
             self.store.resource_registry.reconcile(
                 self.project_id, project_observations(runs, scans)
@@ -3385,11 +3486,19 @@ class MainWindow(QMainWindow):
             self._inventory_runs, self._inventory_scans = runs, scans
             # Reconciliation writes must not certify older evidence as current.
             self._inventory_evidence_token = self._snapshot_token
-        return (
-            self.store.resource_registry.list_resources(self.project_id, include_archived=True),
-            self._inventory_runs,
-            self._inventory_scans,
+        resources = self.store.resource_registry.list_resources(
+            self.project_id, include_archived=True
         )
+        snapshot = self._read_project_snapshot()
+        if self._site_selection is not None:
+            assignments = snapshot.site_assignments
+            resources = [
+                resource for resource in resources
+                if not (resource.get("source") or {}).get("device_id")
+                or assignments.get(str(resource["source"]["device_id"]), "")
+                == self._site_selection
+            ]
+        return resources, snapshot.history, self._inventory_scans
 
     def _registry_changed(self) -> None:
         self._refresh_summary()
@@ -3484,6 +3593,23 @@ class MainWindow(QMainWindow):
     def _items(self) -> list[dict[str, Any]]:
         return self.run.get("items", []) if self.run else []
 
+    def _view_items(self) -> list[dict[str, Any]]:
+        """Visible subset only; forensic reads and exporters retain the full run."""
+        if self._site_selection is None or not self.project_id:
+            return self._items()
+        return [
+            item for item in self._items()
+            if self._site_contains_device((item.get("report") or {}).get("device_id"))
+        ]
+
+    def _site_contains_device(self, device_id: str | None) -> bool:
+        if self._site_selection is None or not device_id or not self.project_id:
+            return True
+        return (
+            self._source_project_snapshot().site_assignments.get(str(device_id), "")
+            == self._site_selection
+        )
+
     def _marks(self) -> dict[str, Any]:
         return self._get_run(self.run_id).get("marks", {}) if self.run_id else {}
 
@@ -3494,7 +3620,7 @@ class MainWindow(QMainWindow):
         items = (
             self._project_devices()
             if self.finding_scope.currentData() == "project"
-            else [{**item, "run_id": self.run_id} for item in self._items()]
+            else [{**item, "run_id": self.run_id} for item in self._view_items()]
         )
         device = self.finding_device.currentData() or ""
         self.finding_device.blockSignals(True)
@@ -3869,7 +3995,7 @@ class MainWindow(QMainWindow):
         items = (
             self._project_devices()
             if self.device_scope.currentData() == "project"
-            else self._items()
+            else self._view_items()
         )
         if self.device_scope.currentData() == "project":
             analyses = {
@@ -4152,7 +4278,9 @@ class MainWindow(QMainWindow):
         rows, payloads = [], []
         cloud_count = 0
         items = (
-            self._project_devices() if self.rule_scope.currentData() == "project" else self._items()
+            self._project_devices()
+            if self.rule_scope.currentData() == "project"
+            else self._view_items()
         )
         self.rule_detail.clear()
         analyzed = {
@@ -4331,7 +4459,7 @@ class MainWindow(QMainWindow):
             )
             self.coverage_text.setPlainText("Результатов завершённых проверок пока нет.")
         else:
-            latest = self._get_run(last["id"])
+            latest = self._read_project_snapshot().run_by_id[last["id"]]
             items = latest["items"]
             states = Counter(item["status"] for item in items)
             findings = Counter(
@@ -4369,7 +4497,7 @@ class MainWindow(QMainWindow):
     def _refresh_report_runs(self) -> None:
         self.report_run.blockSignals(True)
         self.report_run.clear()
-        for run in self._project_runs():
+        for run in self._source_project_snapshot().runs if self.project_id else []:
             self.report_run.addItem(f"{run['created_at']} · {run['id']}", run["id"])
         self.report_run.setCurrentIndex(self.report_run.findData(self.run_id))
         self.report_run.setEnabled(not self._batch_active and not self._restore_busy)
@@ -4453,7 +4581,7 @@ class MainWindow(QMainWindow):
             )
             return
         runs = [
-            self._get_run(run["id"])
+            self._read_project_snapshot().run_by_id[run["id"]]
             for run in sorted(selected, key=lambda run: run.get("created_at", ""))
         ]
 
