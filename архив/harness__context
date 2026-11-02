@@ -1,0 +1,29 @@
+# Project context — updated 2026-10-31
+
+Repository CheKecha19/Arxion, Python 3.12+, uv lock, Pydantic, Typer, PySide6,
+stdlib SQLite, PyInstaller. Version 0.3.2; current state in specifications/CURRENT_STATE.md.
+AGENTS.md governs work; for small changes read only relevant source. Substantial
+changes use GOALS.md, PLANS.md and harness/project-map.md as relevant.
+
+Code: domain contracts; devices vendor implementations; checks grouped policy and
+management logic; analysis network/diff/map engines; application workflows;
+interfaces CLI/Qt; infrastructure shared I/O plus UserGate/Ideco collectors.
+Old parser/check modules retain compatibility aliases. Default catalogue has ASA,
+HP/Aruba, Comware, UserGate and Ideco; controller is standalone, Juniper absent.
+Tests are maintained under tests (including regression and harness), not removed.
+_temp_files holds disposable caches/build outputs, artifacts holds evidence.
+
+.github/workflows/harness.yml: Windows jobs for maps/context/impact/architecture,
+quality, tests, smoke, Python package and security; triggers PR/main/manual.
+Review CI logs/artifacts by default. Local automated commands and setup require
+explicit request; no new tests without request. Tool availability does not imply
+permission to run it. Security source review follows root SECURITY.md exclusions.
+
+Native delivery: scripts/build_desktop.ps1 -> dist/FirewallComplience_v<version>,
+whole application and _internal; no automatic ZIP or separate CLI/feature build.
+Read specifications/WINDOWS_DISTRIBUTION.md before a requested build and
+GIT_RELEASE_POLICY.md before an authorized commit/release.
+
+Authoritative links: specifications/SPECIFICATION_INDEX.md, SOURCE_LAYOUT.md,
+SUPPORTED_PLATFORMS.md, SCHEMA_MIGRATIONS.md and DECISIONS.md. Historical task
+reports are evidence for their baseline, not current execution guarantees.
