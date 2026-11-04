@@ -2,9 +2,18 @@
 
 import html
 import json
+import sqlite3
 from collections import Counter
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from firewall_compliance.application.matrix_artifact import MatrixAssessmentArtifact
+from firewall_compliance.application.matrix_reports import matrix_report_section
+from firewall_compliance.application.run_comparison_artifact import RunComparisonArtifact
+from firewall_compliance.interfaces.desktop.matrix_store import AccessMatrixStore
+from firewall_compliance.interfaces.desktop.run_comparison import comparison_report_section
+from firewall_compliance.interfaces.desktop.run_comparison_store import RunComparisonStore
 
 from firewall_compliance.interfaces.desktop.check_presentation import (
     CHECK_STATUS_LABELS,
@@ -97,9 +106,50 @@ def build_batch_report(
             for check in item["report"]["checks"]:
                 checks[check["status"]] += 1
                 severity.update(finding["severity"] for finding in check["findings"])
+    assessments: list[dict[str, Any]] = []
+    assessment_notes: list[str] = []
+    comparisons: list[dict[str, Any]] = []
+    comparison_notes: list[str] = []
+    database = getattr(store, "path", None)
+    if isinstance(database, Path):
+        matrix_store = AccessMatrixStore(database)
+        try:
+            identifiers = matrix_store.assessment_ids_for_run(project["id"], run_id)
+            for identifier in identifiers:
+                try:
+                    artifact = matrix_store.get_assessment(project["id"], identifier)
+                    if artifact.origin_run_id != run_id:
+                        raise ValueError("Assessment belongs to another run")
+                    assessments.append(artifact.model_dump(mode="json"))
+                except (ValueError, TypeError, sqlite3.Error):
+                    assessment_notes.append(
+                        f"Сверка {identifier} не включена: целостность или область записи не подтверждены."
+                    )
+        except (ValueError, TypeError, OSError, sqlite3.Error):
+            assessment_notes.append("История сверок матрицы недоступна для этого хранилища.")
+        comparison_store = RunComparisonStore(database)
+        try:
+            identifiers = comparison_store.ids_for_run(project["id"], run_id)
+            for identifier in identifiers:
+                try:
+                    artifact = comparison_store.get(project["id"], identifier)
+                    if artifact.after_run_id != run_id:
+                        raise ValueError("Comparison belongs to another run")
+                    comparisons.append(artifact.model_dump(mode="json"))
+                except (ValueError, TypeError, sqlite3.Error):
+                    comparison_notes.append(
+                        f"Сравнение {identifier} не включено: целостность или область записи не подтверждены."
+                    )
+        except (ValueError, TypeError, OSError, sqlite3.Error):
+            comparison_notes.append("История сравнений недоступна для этого хранилища.")
     return {
         "package_type": "firewall-compliance.batch-report",
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "selection": {
+            "mode": "full_run", "filters": {},
+            "description": "Полный сохранённый запуск. Фильтры текущих таблиц не применяются.",
+        },
         "project": {"id": project["id"], "name": project["name"]},
         "run": {key: run[key] for key in ("id", "created_at", "finished_at", "state", "settings")},
         "summary": {
@@ -112,6 +162,10 @@ def build_batch_report(
         "fragments_included": include_fragments,
         "items": items,
         "user_decisions": run["marks"],
+        "matrix_assessments": assessments,
+        "matrix_assessment_notes": assessment_notes,
+        "run_comparisons": comparisons,
+        "run_comparison_notes": comparison_notes,
     }
 
 
@@ -179,6 +233,9 @@ def render_batch_html(package: dict[str, Any]) -> str:
         f"<h1>{_escape(package['project']['name'])}</h1>",
         f"<p>Запуск: {_escape(package['run']['created_at'])} · "
         f"Состояние: {_label(package['run']['state'])}</p>",
+        f"<p>Сформировано: {_escape(package.get('generated_at', 'не зафиксировано'))}<br>"
+        + _escape(package.get("selection", {}).get("description", "Полный сохранённый запуск."))
+        + "</p>",
         "<h2>Управленческая сводка</h2>",
         f"<p>Файлов: {summary['files']}. Находок: "
         f"{sum(summary['findings_by_severity'].values())}.</p>",
@@ -296,6 +353,42 @@ def render_batch_html(package: dict[str, Any]) -> str:
                 f"<pre>{_escape(excerpt['text'])}</pre>" for excerpt in item["excerpts"]
             )
         sections.append("</section>")
+    for payload in package.get("run_comparisons", []):
+        try:
+            comparison = RunComparisonArtifact.model_validate(payload)
+            if (
+                comparison.after_run_id != package["run"]["id"]
+                or comparison.project_id != package["project"]["id"]
+            ):
+                raise ValueError("Comparison scope differs from the report")
+            sections.append(comparison_report_section(
+                comparison.model_dump(mode="json")["package"], str(comparison.comparison_id),
+            ))
+        except (ValueError, TypeError, KeyError):
+            sections.append('<p class="notice">Сравнение не показано: входы или область не подтверждены.</p>')
+    sections.extend(
+        f'<p class="notice">{_escape(value)}</p>'
+        for value in package.get("run_comparison_notes", [])
+    )
+    sections.append("<h2>Сверки матрицы для выбранного запуска</h2>")
+    assessments = package.get("matrix_assessments", [])
+    if not assessments:
+        sections.append("<p>Сохранённых сверок матрицы в этом пакете нет.</p>")
+    for payload in assessments:
+        try:
+            artifact = MatrixAssessmentArtifact.model_validate(payload)
+            if (
+                artifact.origin_run_id != package["run"]["id"]
+                or artifact.origin_project_id != package["project"]["id"]
+            ):
+                raise ValueError("Assessment scope differs from the report")
+            sections.append(matrix_report_section(artifact))
+        except (ValueError, TypeError):
+            sections.append('<p class="notice">Сверка не показана: её входы или область не подтверждены.</p>')
+    sections.extend(
+        f'<p class="notice">{_escape(value)}</p>'
+        for value in package.get("matrix_assessment_notes", [])
+    )
     content = "\n".join(sections)
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">

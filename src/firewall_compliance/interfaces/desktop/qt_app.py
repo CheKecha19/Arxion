@@ -2332,6 +2332,7 @@ class MainWindow(QMainWindow):
             self.resource_details.show_rule_source
         )
         menu.addAction("Технический JSON").triggered.connect(self.resource_details.show_rule_json)
+        menu.addAction("Матрица доступа…").triggered.connect(self._open_access_matrix)
         rule_actions.setMenu(menu)
         layout.addWidget(rule_actions)
 
@@ -2349,6 +2350,8 @@ class MainWindow(QMainWindow):
         actions = QHBoxLayout()
         actions.addWidget(_button("Открыть выбранный запуск", self._open_history))
         actions.addWidget(_button("Сравнить два выбранных", self.compare_selected_runs))
+        actions.addWidget(_button("Сравнить с предыдущим", self.compare_with_previous_run))
+        actions.addWidget(_button("История сравнений", self.open_comparison_history))
         actions.addStretch()
         layout.addLayout(actions)
         self.history_detail = QTextBrowser()
@@ -2388,6 +2391,8 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.addWidget(_button("Сохранить HTML", lambda: self.export_batch("html"), primary=True))
         row.addWidget(_button("Сохранить JSON", lambda: self.export_batch("json")))
+        row.addWidget(_button("Предпросмотр отчёта", self.preview_batch_report))
+        row.addWidget(_button("Матрица доступа…", self._open_access_matrix))
         row.addStretch()
         layout.addLayout(row)
         self.report_summary = QTextBrowser()
@@ -2411,6 +2416,62 @@ class MainWindow(QMainWindow):
             self.governance_panel.result_saved.connect(
                 lambda result_id: self._refresh_analysis_results(preferred_id=result_id)
             )
+
+    def _open_access_matrix(self) -> None:
+        from firewall_compliance.application.workspace_profile import analysis_settings
+        from firewall_compliance.interfaces.desktop.qt_access_matrix import AccessMatrixDialog
+
+        project_id = self.project_id
+        if not project_id or not isinstance(getattr(self.store, "path", None), Path):
+            self.progress_label.setText("Выберите сохранённый проект для работы с матрицей доступа.")
+            return
+        site_id = self._site_selection
+        items = self._project_devices()
+        choices = ["Редактор без выбранного снимка"]
+        choices.extend(
+            f"{index + 1}. {(item.get('report') or {}).get('device_id') or item.get('source_name', 'Устройство')}"
+            f" · {item.get('run_created_at') or item.get('created_at') or 'время не указано'}"
+            for index, item in enumerate(items)
+        )
+        choice, accepted = QInputDialog.getItem(
+            self, "Матрица доступа", "Снимок для сверки заданных условий:", choices, 0, False,
+        )
+        if not accepted:
+            return
+        revision = None
+        profile_version = "не зафиксирована"
+        profile_settings_json = None
+        origin_run_id = None
+        origin_item_id = None
+        index = choices.index(choice) - 1
+        if index >= 0:
+            item = items[index]
+            try:
+                revision = DeviceRevision.model_validate(item.get("revision"))
+            except (TypeError, ValueError):
+                QMessageBox.information(
+                    self, "Матрица доступа",
+                    "В этом снимке нет пригодной нормализованной ревизии. Доступен редактор без сверки.",
+                )
+            if item.get("run_id"):
+                origin_run_id = str(item["run_id"])
+                origin_item_id = str(item["id"])
+                settings = self._get_run(origin_run_id).get("settings", {})
+                profile_version = str(settings.get("workspace_profile_version", "не зафиксирована"))
+                profile_settings_json = json.dumps(analysis_settings(settings), ensure_ascii=False)
+        dialog = AccessMatrixDialog(
+            self.store.path, self.runner, project_id, revision, self,
+            scope_id=site_id or project_id,
+            profile_id="legacy-project-profile:" + project_id,
+            profile_version=profile_version,
+            origin_run_id=origin_run_id, profile_settings_json=profile_settings_json,
+            origin_item_id=origin_item_id,
+            context_valid=lambda: (
+                not self._closed and self.project_id == project_id and self._site_selection == site_id
+            ),
+        )
+        dialog.exec()
+        dialog.deleteLater()
 
     def _controls_report_selected(self, *_: Any) -> None:
         panel = self.controls_panel
@@ -5077,6 +5138,9 @@ class MainWindow(QMainWindow):
                 self.navigate("findings", remember=False)
 
     def compare_selected_runs(self) -> None:
+        if self._restore_busy:
+            self.history_detail.setPlainText("Дождитесь открытия выбранного проекта или запуска.")
+            return
         selected = self._selected_payloads(
             self.history_table, self.history_proxy, self.history_model
         )
@@ -5088,40 +5152,123 @@ class MainWindow(QMainWindow):
                 "Сравнение находок доступно для двух проверок. Облачный сбор не выполняет checks."
             )
             return
-        runs = [
-            self._read_project_snapshot().run_by_id[run["id"]]
-            for run in sorted(selected, key=lambda run: run.get("created_at", ""))
-        ]
+        try:
+            if any(datetime.fromisoformat(run["created_at"]).utcoffset() is None for run in selected):
+                raise ValueError("Run timestamp has no timezone")
+            ordered = sorted(selected, key=lambda run: datetime.fromisoformat(run["created_at"]))
+            snapshot = self._read_project_snapshot()
+            before, after = (snapshot.run_by_id[run["id"]] for run in ordered)
+        except (ValueError, TypeError, KeyError):
+            self.history_detail.setPlainText("Не удалось определить время или область выбранных запусков.")
+            return
+        self._open_run_comparison(before, after)
 
-        def signatures(run: dict[str, Any]) -> Counter[Any]:
-            return Counter(
-                (
-                    report["device_id"],
-                    check["check_id"],
-                    finding["title"],
-                    tuple(finding["affected_rule_ids"]),
-                )
-                for item in run["items"]
-                for report in [item.get("report") or {}]
-                for check in report.get("checks", [])
-                for finding in check["findings"]
-            )
+    def compare_with_previous_run(self) -> None:
+        from firewall_compliance.interfaces.desktop.run_comparison import previous_comparable_run
 
-        before, after = map(signatures, runs)
-        self.history_detail.setPlainText(
-            f"Раньше находок: {sum(before.values())}; сейчас: {sum(after.values())}\n"
-            f"Появились в результатах: {sum((after - before).values())}\n"
-            f"Отсутствуют в новых результатах: {sum((before - after).values())}\n\n"
-            "Это различия результатов, а не подтверждение устранения: "
-            "изменились правила, полнота или входные данные. "
-            "Решения пользователя между запусками не переносятся.\n\n"
-            + _json(
-                {
-                    "new": list((after - before).elements()),
-                    "absent": list((before - after).elements()),
-                }
+        if self._restore_busy or not self.project_id:
+            return
+        selected = self._selected_payloads(self.history_table, self.history_proxy, self.history_model)
+        if len(selected) != 1 or selected[0].get("operation_kind") == "collection":
+            self.history_detail.setPlainText("Выберите одну проверку для поиска предыдущего сопоставимого запуска.")
+            return
+        snapshot = self._read_project_snapshot()
+        after = snapshot.run_by_id.get(selected[0]["id"])
+        if after is None:
+            return
+        before = previous_comparable_run(tuple(snapshot.run_by_id.values()), after)
+        if before is None:
+            self.history_detail.setPlainText(
+                "Предыдущего полного сопоставимого запуска нет: нужны подтверждённый одинаковый профиль, "
+                "та же область входов и состав устройств, платформа/контекст, парсер и версии выполненных проверок. "
+                "Для просмотра ограниченных различий выберите два запуска вручную."
             )
+            return
+        self._open_run_comparison(
+            before, after,
+            "Выбран ближайший предыдущий полный запуск с тем же подтверждённым профилем, "
+            "областью входов, составом устройств, контекстами, парсером и версиями проверок. Другую пару можно выбрать в истории.",
         )
+
+    def _open_run_comparison(
+        self, before: dict[str, Any], after: dict[str, Any],
+        selection_basis: str = "Два запуска выбраны вручную.",
+    ) -> None:
+        from firewall_compliance.interfaces.desktop.qt_run_comparison import RunComparisonDialog
+        from firewall_compliance.interfaces.desktop.run_comparison_store import RunComparisonStore
+
+        project_id, site_id = self.project_id, self._site_selection
+        if not project_id:
+            return
+        identities = (
+            (before["id"], frozenset(item["id"] for item in before["items"])),
+            (after["id"], frozenset(item["id"] for item in after["items"])),
+        )
+
+        def load_runs() -> tuple[dict[str, Any], dict[str, Any]]:
+            values = []
+            for run_id, item_ids in identities:
+                run = self.store.get_run(run_id)
+                if run["project_id"] != project_id:
+                    raise ValueError("Comparison run belongs to another project")
+                if site_id is not None:
+                    run["items"] = [item for item in run["items"] if item["id"] in item_ids]
+                run["site_selection"] = site_id
+                values.append(run)
+            return values[0], values[1]
+
+        dialog = RunComparisonDialog(
+            {"id": before["id"], "created_at": before["created_at"]},
+            {"id": after["id"], "created_at": after["created_at"]}, self.runner, self,
+            context_valid=lambda: (
+                not self._closed and not self._restore_busy
+                and self.project_id == project_id and self._site_selection == site_id
+            ),
+            load_runs=load_runs,
+            selection_basis=selection_basis,
+            comparison_store=RunComparisonStore(self.store.path) if isinstance(getattr(self.store, "path", None), Path) else None,
+        )
+        dialog.exec()
+        dialog.deleteLater()
+
+    def open_comparison_history(self) -> None:
+        from firewall_compliance.interfaces.desktop.qt_run_comparison import ComparisonHistoryDialog
+        from firewall_compliance.interfaces.desktop.run_comparison_store import RunComparisonStore
+
+        project_id, site_id = self.project_id, self._site_selection
+        if not project_id or self._restore_busy or not isinstance(getattr(self.store, "path", None), Path):
+            return
+        dialog = ComparisonHistoryDialog(
+            RunComparisonStore(self.store.path), self.runner, project_id, self, site_id=site_id,
+            context_valid=lambda: (
+                not self._closed and not self._restore_busy and self.project_id == project_id
+                and self._site_selection == site_id
+            ),
+        )
+        dialog.exec()
+        dialog.deleteLater()
+
+    def preview_batch_report(self) -> None:
+        self._open_batch_report_dialog()
+
+    def _open_batch_report_dialog(self, target: tuple[str, Path] | None = None) -> None:
+        from firewall_compliance.interfaces.desktop.qt_batch_report import BatchReportDialog
+
+        project_id, run_id = self.project_id, self.run_id
+        if not project_id or not run_id:
+            self.progress_label.setText("Откройте сохранённый запуск для отчёта.")
+            return
+        dialog = BatchReportDialog(
+            self.store, self.runner, project_id, run_id, self,
+            include_fragments=self.fragments_check.isChecked(), target=target,
+            context_valid=lambda: (
+                not self._closed and self.project_id == project_id and self.run_id == run_id
+            ),
+        )
+        dialog.exec()
+        if not self._closed and self.project_id == project_id and dialog.saved_path is not None:
+            self.progress_label.setText("Отчёт сохранён: " + dialog.saved_path.name)
+        dialog.deleteLater()
 
     def export_batch(self, kind: str, path: Path | None = None) -> None:
         if not self.run_id:
@@ -5133,7 +5280,8 @@ class MainWindow(QMainWindow):
             )
             if not filename:
                 return
-            path = Path(filename)
+            self._open_batch_report_dialog((kind, Path(filename)))
+            return
         from firewall_compliance.interfaces.desktop.batch_reports import (
             export_batch_html,
             export_batch_json,

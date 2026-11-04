@@ -662,16 +662,26 @@ class ProjectStore:
         ):
             raise ValueError("Результат проверки не соответствует исходному сбору.")
         from firewall_compliance.interfaces.desktop.profile_history import LegacyProfileHistory
+        from firewall_compliance.application.source_health import configuration_fingerprint
 
         run_id = str(uuid4())
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             scan = db.execute(
-                "SELECT project_id FROM cloud_scans WHERE id=?", (scan_id,)
+                "SELECT project_id,config,selection,state FROM cloud_scans WHERE id=?", (scan_id,)
             ).fetchone()
             if scan is None:
                 raise ValueError("Исходный облачный сбор не найден.")
             snapshot = {**settings, "cloud_scan_id": scan_id, "analysis_source": "cloud_ru_vmware"}
+            configuration = json.loads(scan["config"])
+            if configuration.get("platform", "vmware") != "vmware":
+                raise ValueError("Этот результат не относится к VMware-сбору.")
+            snapshot.update({
+                "source_id": "cloud_ru_vmware",
+                "source_config_fingerprint": configuration_fingerprint(configuration),
+                "source_selection_fingerprint": configuration_fingerprint(json.loads(scan["selection"])),
+                "source_collection_state": scan["state"],
+            })
             if LegacyProfileHistory.is_initialized(db):
                 profile = LegacyProfileHistory.record_on_connection(db, scan["project_id"], snapshot)
                 snapshot.update({
