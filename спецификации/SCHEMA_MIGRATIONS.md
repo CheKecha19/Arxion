@@ -1,5 +1,14 @@
 # Изменения контрактов данных
 
+## Switch import 0.10.0
+
+Необязательные ParseResult.switch_facts/switch_policies имеют схему 1.0.0;
+Rule.policy_purpose опционален и отсутствует в legacy-сериализации. Чтение старой
+ревизии не добавляет факты и не переписывает историю. SQLite DDL не меняется:
+целые payload хранятся в JSON. Старые readers с extra=forbid не обязаны принимать
+новые envelopes. Batch-report 1.2.0 добавляет switch_import. Точная совместимость
+и влияние версий парсеров на diff описаны в DOCUMENTATION.md.
+
 ## История матрицы и сверок R4
 
 Опциональные workspace_comparison_meta/version=1 и workspace_run_comparisons сохраняют неизменяемую историю сравнений. Запись содержит comparison_id, project_id, before_run_id/after_run_id с FK на запуски, saved_at, site_id, payload и SHA-256. Перед явной инициализацией создаётся полная резервная копия; DDL выполняется транзакционно, legacy user_version=1 не меняется. Чтение не создаёт таблицы; неизвестная/частичная схема и org_context отклоняются. UPDATE/DELETE запрещены триггерами. Оболочка firewall-compliance.run-comparison-artifact1.0 содержит полный пакет сравнения и сверяет ссылки, даты и область; отфильтрованный экспорт не сохраняется в эту историю. Пакет batch-report1.1 также содержит run_comparisons и run_comparison_notes.

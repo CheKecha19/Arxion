@@ -5,6 +5,7 @@ from ipaddress import ip_address, ip_network
 
 from firewall_compliance.domain import DataStatus, Endpoint, EndpointKind, Protocol, Rule, Service
 from firewall_compliance.domain.reachability import ReachabilityQuery
+from firewall_compliance.domain.switch_policy import is_transit_rule
 
 type Interval = tuple[int, int]
 type AddressSet = tuple[tuple[Interval, ...], tuple[Interval, ...]]
@@ -146,7 +147,8 @@ def resolve_rule(rule: Rule) -> RuleMatch | None:
 def scope_key(rule: Rule) -> ScopeKey | None:
     """Определить явно подтверждённую область first-match policy."""
     if (
-        rule.policy_id is None
+        not is_transit_rule(rule)
+        or rule.policy_id is None
         or rule.policy_direction is None
         or rule.policy_semantics != "first_match"
         or rule.zone_status != DataStatus.KNOWN

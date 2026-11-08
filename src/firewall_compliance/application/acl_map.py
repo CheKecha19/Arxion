@@ -14,6 +14,7 @@ from firewall_compliance.domain.base import DomainModel
 from firewall_compliance.domain.parse_result import ParseIssue
 from firewall_compliance.domain.revision import DeviceRevision
 from firewall_compliance.domain.snapshot import freeze_snapshot_fields
+from firewall_compliance.domain.switch_policy import rule_purpose
 
 
 class AclMapBatchFailure(DomainModel):
@@ -83,6 +84,9 @@ def export_acl_map_html(graph: AclMap, *, filters: AclMapFilter | None = None) -
     filters = filters or AclMapFilter()
     relations = filter_acl_relations(validated, filters)
     revision = validated.revision
+    show_purpose = revision.parse_result.switch_policies is not None or any(
+        relation.rule.policy_purpose is not None for relation in validated.relations
+    )
     header = (
         f"<h1>Карта заданных условий ACL</h1><p>Устройство: {escape(revision.device.device_id)}; "
         f"ревизия: {revision.revision_id}; построена: {escape(validated.built_at.isoformat())}</p>"
@@ -104,6 +108,7 @@ def export_acl_map_html(graph: AclMap, *, filters: AclMapFilter | None = None) -
         rule = relation.rule
         cells = (
             rule.policy_id or "unknown",
+            *((rule_purpose(rule),) if show_purpose else ()),
             rule.rule_id,
             str(rule.sequence),
             rule.action.value,
@@ -125,6 +130,7 @@ def export_acl_map_html(graph: AclMap, *, filters: AclMapFilter | None = None) -
         )
     labels = (
         "ACL",
+        *(("Назначение",) if show_purpose else ()),
         "Правило",
         "Порядок",
         "Действие",
@@ -199,6 +205,8 @@ def export_acl_map_dot(graph: AclMap) -> str:
             f"{rule.rule_id} | {rule.action.value} | sequence={rule.sequence} | "
             f"{'enabled' if rule.enabled else 'disabled'} | {relation.condition_status}"
         )
+        if rule.policy_purpose is not None or validated.revision.parse_result.switch_policies:
+            label += f" | purpose={rule_purpose(rule)}"
         location = rule.source_location
         label += (
             f"\npolicy={rule.policy_id}; direction={rule.policy_direction}"

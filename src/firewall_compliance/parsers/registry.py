@@ -12,6 +12,7 @@ from firewall_compliance.parsers.contracts import (
     ParseRequest,
     SourceDocument,
 )
+from firewall_compliance.parsers.platform_detection import detect_switch_platform
 
 
 class ParserContractError(ValueError):
@@ -44,6 +45,12 @@ class ParserRegistry:
 
     def select(self, source: SourceDocument) -> ConfigurationParser | None:
         """Выбрать один подходящий парсер либо вернуть None."""
+        try:
+            platform = detect_switch_platform(source.content.decode("utf-8-sig"))
+        except UnicodeDecodeError:
+            platform = None
+        if platform is not None and platform.ambiguous:
+            raise AmbiguousParserError(" ".join(platform.reasons))
         detections = self.detect_all(source)
         candidates = [
             (parser, result)
@@ -61,7 +68,18 @@ class ParserRegistry:
 
     def parse(self, request: ParseRequest) -> ParseOutcome:
         """Выбрать парсер и выполнить parse либо вернуть диагностический failure."""
-        parser = self.select(request.source)
+        try:
+            parser = self.select(request.source)
+        except AmbiguousParserError as error:
+            return ParseFailure(
+                parser_id="registry",
+                source_name=request.source.source_name,
+                content_sha256=request.source.content_sha256,
+                errors=(ParseIssue(
+                    code="PLATFORM_AMBIGUOUS", level=ParseIssueLevel.ERROR,
+                    message=str(error),
+                ),),
+            )
         if parser is None:
             return ParseFailure(
                 parser_id="registry",

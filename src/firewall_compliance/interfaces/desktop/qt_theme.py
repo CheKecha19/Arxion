@@ -54,8 +54,9 @@ def apply_theme(app: QApplication) -> None:
         QListWidget#navigation::item { padding: 14px 16px; margin: 3px 6px; border-radius: 8px; }
         QListWidget#navigation::item:selected { background: #30284A; color: #B7A0FF; }
         QTreeWidget#navigation { background: #191F2D; border: none; border-radius: 12px; }
-        QTreeWidget#navigation::item { padding: 11px 6px; border-radius: 8px; }
+        QTreeWidget#navigation::item { padding: 7px 5px; border-radius: 8px; }
         QTreeWidget#navigation::item:selected { background: #30284A; color: #B7A0FF; }
+        QTreeWidget#navigation::item:disabled { color: #6F7A90; }
         QTreeWidget#navigation:focus { border: 2px solid #79B8FF; }
         QPushButton:checked { background: #30284A; color: #B7A0FF; }
         QFrame#settingsMenu, QFrame#integrationGroup {

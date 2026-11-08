@@ -26,12 +26,7 @@ class PolicyScopeSettings(QWidget):
         super().__init__(parent)
         self._loading = False
         layout = QVBoxLayout(self)
-        note = QLabel(
-            "CHECKS-003/005 используют только явные пороги, ролевые требования и полноту "
-            "инвентаря привязок. JSON-массивы соответствуют POLICY_SCOPE_CHECKS.md."
-        )
-        note.setWordWrap(True)
-        layout.addWidget(note)
+        layout.setContentsMargins(0, 0, 0, 0)
         form = QFormLayout()
         self.excessive_state = self._state_combo()
         self.attachment_state = self._state_combo()

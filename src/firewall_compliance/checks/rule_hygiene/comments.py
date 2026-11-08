@@ -9,6 +9,7 @@ from firewall_compliance.checks.common.policy import (
 )
 from firewall_compliance.domain import DataStatus, Finding, Severity
 from firewall_compliance.domain.assurance import CheckLimitation, CheckResult, CheckStatus
+from firewall_compliance.domain.switch_policy import is_transit_rule
 
 
 class CommentsCheck:
@@ -26,6 +27,8 @@ class CommentsCheck:
         findings: list[Finding] = []
         limitations: list[CheckLimitation] = []
         for rule in context.revision.parse_result.rules:
+            if not is_transit_rule(rule):
+                continue
             if not rule.enabled:
                 continue
             if rule.description_status not in {DataStatus.KNOWN, DataStatus.ABSENT}:

@@ -11,6 +11,12 @@ from typing import Any
 from firewall_compliance.application.matrix_artifact import MatrixAssessmentArtifact
 from firewall_compliance.application.matrix_reports import matrix_report_section
 from firewall_compliance.application.run_comparison_artifact import RunComparisonArtifact
+from firewall_compliance.application.switch_reports import (
+    switch_report_html_section,
+    switch_report_payload,
+)
+from firewall_compliance.application.switch_topology import build_switch_topology_from_items
+from firewall_compliance.domain.parse_result import ParseResult
 from firewall_compliance.interfaces.desktop.matrix_store import AccessMatrixStore
 from firewall_compliance.interfaces.desktop.run_comparison import comparison_report_section
 from firewall_compliance.interfaces.desktop.run_comparison_store import RunComparisonStore
@@ -85,6 +91,13 @@ def build_batch_report(
     severity: Counter[str] = Counter()
     checks: Counter[str] = Counter()
     for item in run["items"]:
+        switch = None
+        parsed_payload = item.get("parse_result")
+        if parsed_payload and (
+            parsed_payload.get("switch_facts") is not None
+            or parsed_payload.get("switch_policies") is not None
+        ):
+            switch = switch_report_payload(ParseResult.model_validate(parsed_payload))
         items.append(
             {
                 "item_id": item["id"],
@@ -100,6 +113,7 @@ def build_batch_report(
                 "diagnostics": item["diagnostics"],
                 "result": item["report"],
                 "excerpts": item["excerpts"] if include_fragments else [],
+                **({"switch_import": switch} if switch is not None else {}),
             }
         )
         if item["report"]:
@@ -142,9 +156,14 @@ def build_batch_report(
                     )
         except (ValueError, TypeError, OSError, sqlite3.Error):
             comparison_notes.append("История сравнений недоступна для этого хранилища.")
+    switch_topology = (
+        build_switch_topology_from_items(run["items"]).model_dump(mode="json")
+        if any(item.get("switch_import") is not None for item in items)
+        else None
+    )
     return {
         "package_type": "firewall-compliance.batch-report",
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "generated_at": datetime.now(UTC).isoformat(),
         "selection": {
             "mode": "full_run", "filters": {},
@@ -166,6 +185,7 @@ def build_batch_report(
         "matrix_assessment_notes": assessment_notes,
         "run_comparisons": comparisons,
         "run_comparison_notes": comparison_notes,
+        **({"switch_topology": switch_topology} if switch_topology is not None else {}),
     }
 
 
@@ -262,12 +282,16 @@ def render_batch_html(package: dict[str, Any]) -> str:
             f"<td>{platform}</td><td>{_label(item['status'])}</td><td>{count}</td></tr>"
         )
     sections.append("</tbody></table><h2>Находки и технические подробности</h2>")
+    if package.get("switch_topology") is not None:
+        sections.append(switch_report_html_section({"switch_topology": package["switch_topology"]}))
     for item in package["items"]:
         sections.append(
             f'<section id="item-{_escape(item["item_id"])}"><h3>'
             f"{_escape(item['source_name'])} — {_label(item['status'])}</h3>"
         )
         sections.append(f"<p>SHA-256: <code>{_escape(item['content_sha256'])}</code></p>")
+        if item.get("switch_import") is not None:
+            sections.append(switch_report_html_section(item["switch_import"]))
         item_groups = project_item_limitations(item)
         sections.append(_limitation_section(item_groups))
         result = item["result"]

@@ -244,10 +244,7 @@ class ResourceEditor(QDialog):
         self.setWindowTitle("Изменить ресурс" if row else "Добавить ресурс вручную")
         self.resize(650, 640)
         layout = QVBoxLayout(self)
-        hint = QLabel(
-            "Имя и признаки источника сохраняются отдельно от подписи пользователя. "
-            "Пустое размещение допустимо. ↶ удаляет ручное переопределение поля."
-        )
+        hint = QLabel("↶ — сбросить ручное значение поля.")
         hint.setWordWrap(True)
         layout.addWidget(hint)
         tabs = QTabWidget()

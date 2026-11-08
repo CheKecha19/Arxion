@@ -11,6 +11,7 @@ from firewall_compliance.checks.policy_quality.rules import PolicyCheckContext
 from firewall_compliance.domain.assurance import CheckLimitation, CheckResult
 from firewall_compliance.domain.configuration import Rule
 from firewall_compliance.domain.finding import Finding
+from firewall_compliance.domain.switch_policy import rule_purpose
 
 
 class PolicyAttachmentCheck(_ProfileCheck):
@@ -48,6 +49,8 @@ class PolicyAttachmentCheck(_ProfileCheck):
             return _result(self.check_id, context, findings, limitations)
         policy_rules: dict[str, list[Rule]] = {}
         for rule in parsed.rules:
+            if rule_purpose(rule) == "management":
+                continue
             if rule.policy_id is None:
                 limitations.append(
                     CheckLimitation(

@@ -37,6 +37,7 @@ from firewall_compliance.parsers.contracts import (
     SourceDocument,
 )
 from firewall_compliance.parsers.management import parse_management
+from firewall_compliance.parsers.platform_detection import detect_switch_platform
 
 _PORTS = {
     "ssh": 22,
@@ -119,7 +120,7 @@ class _Diagnostics:
 class HpArubaParser:
     """Распознать характерный HP/Aruba export и сохранить ACL с ограничениями."""
 
-    _metadata = ParserMetadata(parser_id="hp-aruba-acl", version="0.2.0", vendor="hp-aruba")
+    _metadata = ParserMetadata(parser_id="hp-aruba-acl", version="0.3.0", vendor="hp-aruba")
 
     @property
     def metadata(self) -> ParserMetadata:
@@ -131,14 +132,13 @@ class HpArubaParser:
             text = source.content.decode("utf-8-sig")
         except UnicodeDecodeError:
             return DetectionResult(parser_id=self.metadata.parser_id, is_match=False, confidence=0)
+        detection = detect_switch_platform(text)
         platform = _platform(text)
         return DetectionResult(
             parser_id=self.metadata.parser_id,
             is_match=platform is not None,
-            confidence=0.96 if platform is not None else 0,
-            reasons=("Обнаружены характерные директивы HP/Aruba; подлинность export не проверена.",)
-            if platform is not None
-            else (),
+            confidence=detection.confidence if platform is not None else 0,
+            reasons=detection.reasons,
         )
 
     def parse(self, request: ParseRequest) -> ParseOutcome:
@@ -151,6 +151,12 @@ class HpArubaParser:
                 self.metadata.parser_id,
                 "HP_ARUBA_ENCODING",
                 "Поддержана только текстовая UTF-8 конфигурация.",
+            )
+        detection = detect_switch_platform(text)
+        if detection.ambiguous:
+            return _failure(
+                request, self.metadata.parser_id, "PLATFORM_AMBIGUOUS",
+                " ".join(detection.reasons),
             )
         platform = _platform(text)
         if platform is None:
@@ -284,9 +290,11 @@ class HpArubaParser:
             )
             for acl, linked_scopes in bindings.items()
             for binding in linked_scopes
-            if binding.mode != "control-plane"
+            if binding.mode not in {"control-plane", "snmp"}
         )
-        return ParseResult(
+        from firewall_compliance.parsers.switch_policy import enrich_switch_result
+
+        result = ParseResult(
             configuration=config,
             management=parse_management(request.source, platform),
             rules=tuple(rules),
@@ -302,34 +310,14 @@ class HpArubaParser:
                 unsupported_constructs=len(diagnostics.unsupported_lines),
             ),
         )
+        return enrich_switch_result(request.source, result)
 
 
 def _platform(text: str) -> str | None:
-    lowered = text.lower()
-    if re.search(r"^\s*(?:asa version|set version|version \d.*comware)", lowered, re.MULTILINE):
-        return None
-    if re.search(r"^\s*ip access-list session\s", lowered, re.MULTILINE) and re.search(
-        r"^\s*(?:user-role|wlan)\s", lowered, re.MULTILINE
-    ):
-        return "arubaos-controller"
-    has_cx = bool(
-        re.search(
-            r"^\s*[!;#]?\s*(?:version\s+)?(?:arubaos-cx|aos-cx|aruba os-cx)\b",
-            lowered,
-            re.MULTILINE,
-        )
-    )
-    has_switch = "configuration editor" in lowered or "arubaos-switch" in lowered
-    has_manager = bool(re.search(r"^\s*ip authorized-managers\s", lowered, re.MULTILINE))
-    has_cx_acl = bool(re.search(r"^\s*access-list ip\s+\S+", lowered, re.MULTILINE))
-    has_cx_binding = bool(re.search(r"^\s*apply access-list ip\s", lowered, re.MULTILINE))
-    if has_cx and has_switch:
-        return None
-    if has_cx or has_cx_acl and has_cx_binding:
-        return "aos-cx"
-    if has_switch or has_manager:
-        return "aos-switch"
-    return None
+    detection = detect_switch_platform(text)
+    return detection.platform if detection.platform in {
+        "aos-switch", "aos-cx", "arubaos-controller"
+    } else None
 
 
 def _failure(request: ParseRequest, parser_id: str, code: str, message: str) -> ParseFailure:
@@ -351,6 +339,7 @@ def _collect(
     hostname: str | None = None
     current_acl: tuple[str, Literal["standard", "extended"]] | None = None
     scope: str | None = None
+    community_line: int | None = None
     for number, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith((";", "#")):
@@ -358,7 +347,10 @@ def _collect(
         if line.startswith("!") or line in {"exit", "end"}:
             current_acl = None
             scope = None
+            community_line = None
             continue
+        if not raw[:1].isspace():
+            community_line = None
         if current_acl is not None and raw[:1].isspace():
             diagnostics.source_map[f"acl-range:{current_acl[0]}:{number}"] = diagnostics.location(
                 number
@@ -387,6 +379,29 @@ def _collect(
         if tokens[0] == "hostname" and len(tokens) == 2:
             hostname = tokens[1]
             current_acl = None
+        elif tokens[:2] == ("snmp-server", "community"):
+            # Значение community — секрет; строка блока даёт безопасный идентификатор.
+            current_acl = None
+            scope = None
+            community_line = number
+        elif tokens[:2] == ("access-list", "ipv4") and community_line is not None:
+            current_acl = None
+            diagnostics.discovered.add(number)
+            if len(tokens) == 3:
+                binding = _Binding(
+                    f"management:snmp:community-line:{community_line}",
+                    "snmp",
+                    diagnostics.location(number),
+                )
+                bindings.setdefault(tokens[2], []).append(binding)
+                diagnostics.source_map[f"acl-binding:{tokens[2]}:{number}"] = binding.location
+            else:
+                diagnostics.reject(
+                    number,
+                    "HP_ARUBA_SNMP_BINDING_UNSUPPORTED",
+                    "Повреждённая привязка IPv4 ACL к SNMP community.",
+                    "management-access",
+                )
         elif tokens[:2] == ("ip", "authorized-managers"):
             current_acl = None
             managers.append((number, tokens))
@@ -765,7 +780,7 @@ def _acl_rule(
             "Permit log зависит от платформы/версии; поддержанная версия не установлена.",
             "logging",
         )
-    management_binding = binding is not None and binding.mode == "control-plane"
+    management_binding = binding is not None and binding.mode in {"control-plane", "snmp"}
     known = not (unresolved or service_unknown or suffix_unknown or duplicate or management_binding)
     service_status = DataStatus.UNKNOWN if service_unknown else DataStatus.KNOWN
     service = Service(
@@ -779,7 +794,9 @@ def _acl_rule(
     source_zone = destination_zone = None
     policy_id = f"acl:{entry.acl}:unbound"
     if binding is not None:
-        direction = "in" if binding.mode in {"in", "routed-in", "control-plane"} else "out"
+        direction = (
+            "in" if binding.mode in {"in", "routed-in", "control-plane", "snmp"} else "out"
+        )
         zone = f"{binding.scope}:{binding.mode}"
         source_zone = zone if direction == "in" else None
         destination_zone = zone if direction == "out" else None
@@ -805,7 +822,7 @@ def _acl_rule(
         destination_zone=destination_zone,
         policy_id=policy_id,
         policy_direction=direction,
-        policy_semantics="first_match" if not duplicate else None,
+        policy_semantics="first_match" if not (duplicate or management_binding) else None,
         match_status=DataStatus.KNOWN if known else DataStatus.UNKNOWN,
         source_status=source.resolution_status,
         destination_status=destination.resolution_status,

@@ -108,7 +108,6 @@ class CloudPanel:
         vmware = QWidget()
         layout = QVBoxLayout(vmware)
         layout.addWidget(_label("Cloud.ru VMware · VMware Cloud Director"))
-        layout.addWidget(_label("Данные подключения сохраняются отдельно для каждого проекта."))
         form = QFormLayout()
         self.site = QLineEdit()
         self.site.setPlaceholderText("Адрес площадки или полная ссылка https://…/tenant/…/")
@@ -151,7 +150,7 @@ class CloudPanel:
                 "с ротацией refresh_token пока не поддержаны."
             )
         )
-        buttons = QVBoxLayout()
+        buttons = QHBoxLayout()
         self.save_button = QPushButton("Сохранить подключение")
         self.save_button.clicked.connect(self.save)
         self.test_button = QPushButton("Проверить подключение")
@@ -160,6 +159,7 @@ class CloudPanel:
         self.delete_button.clicked.connect(self.delete)
         for button in (self.save_button, self.test_button, self.delete_button):
             buttons.addWidget(button)
+        buttons.addStretch()
         layout.addLayout(buttons)
         self.connection_status = _label("Выберите или создайте проект.")
         self.connection_status.setTextFormat(Qt.TextFormat.PlainText)
@@ -192,11 +192,6 @@ class CloudPanel:
         title = _label("Сканирования")
         title.setObjectName("heading")
         root_layout.addWidget(title)
-        root_layout.addWidget(
-            _label(
-                "Получение данных из подключённых платформ. История сохраняется в текущем проекте."
-            )
-        )
         self.collection_tabs = QTabWidget()
         root_layout.addWidget(self.collection_tabs, 1)
         preparation = QWidget()
@@ -657,7 +652,7 @@ class CloudPanel:
         if settings.get("enabled_check_ids") is not None and not any(
             key.startswith("FW-") for key in settings["enabled_check_ids"]
         ):
-            self.analysis_status.setText("Включите хотя бы одну проверку FW в Настройки → Правила.")
+            self.analysis_status.setText("Включите хотя бы одну проверку FW в Настройки → Проверки.")
             return
         self.cancel = Event()
         cancel = self.cancel

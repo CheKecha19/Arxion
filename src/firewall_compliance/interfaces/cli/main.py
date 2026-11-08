@@ -9,8 +9,9 @@ import typer
 from pydantic import ValidationError
 
 from firewall_compliance import __version__
-from firewall_compliance.application.firewall_assurance import analyze_source
+from firewall_compliance.application.firewall_assurance import build_source_revision
 from firewall_compliance.domain.management import ManagementProfile
+from firewall_compliance.domain.parse_result import ParseResult
 from firewall_compliance.domain.policy_exposure import PolicyExposureProfile
 from firewall_compliance.domain.policy_scope import PolicyScopeProfile
 from firewall_compliance.infrastructure.source_reader import FileSourceReader
@@ -174,10 +175,19 @@ def analyze(
             "Некорректный профиль проверок: проверьте JSON, адреса и типы значений.", err=True
         )
         raise typer.Exit(2) from None
-    result = analyze_source(
+    revision = build_source_revision(
         source,
         create_default_registry(),
         imported_at=datetime.now(UTC),
+    )
+    if isinstance(revision, ParseFailure):
+        typer.echo(revision.model_dump_json(indent=2))
+        raise typer.Exit(2)
+    from firewall_compliance.analysis.firewall_assurance import analyze_firewall
+
+    _echo_switch_summary(revision.parse_result)
+    result = analyze_firewall(
+        revision,
         require_logging=require_logging,
         require_comments=require_comments,
         management_profile=profile,
@@ -186,8 +196,76 @@ def analyze(
         policy_scope_profile=scope,
     )
     typer.echo(result.model_dump_json(indent=2))
-    if isinstance(result, ParseFailure):
-        raise typer.Exit(2)
+
+
+def _echo_switch_summary(parsed: ParseResult) -> None:
+    """Сводка импорта идёт в stderr, сохраняя JSON-контракт stdout."""
+    policies = parsed.switch_policies
+    if policies is None:
+        return
+    summary = policies.summary
+    typer.echo(
+        f"Импорт {parsed.configuration.platform}: ACL {summary.acl_count}, "
+        f"исходных ACE {summary.ace_count}, привязок {summary.binding_count}; "
+        f"управление {summary.management_bindings}, транзит {summary.transit_bindings}, "
+        f"authorized managers {summary.manager_count}; "
+        f"непривязанных ACL {summary.unbound_acls}, некорректных ACE {summary.invalid_entries}.",
+        err=True,
+    )
+    if summary.transit_bindings == 0:
+        typer.echo("Транзитные ACL в представленном файле не обнаружены.", err=True)
+
+
+@app.command("switch-inspect")
+def switch_inspect(
+    path: Annotated[Path, typer.Argument(exists=True, file_okay=True, dir_okay=False)],
+    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+    format_name: Annotated[Literal["json", "csv", "html"], typer.Option("--format")] = "json",
+    complete_config: Annotated[bool, typer.Option("--complete-config")] = False,
+) -> None:
+    """Прочитать политики и структуру коммутатора без запуска проверок."""
+    from firewall_compliance.application.switch_reports import (
+        export_switch_csv,
+        export_switch_html,
+        switch_report_payload,
+    )
+    from firewall_compliance.application.switch_topology import build_switch_topology
+
+    try:
+        if output is not None:
+            _require_separate_output(output, path)
+        source = FileSourceReader().read(path)
+        source = SourceDocument.model_validate(
+            {**source.model_dump(), "configuration_complete": complete_config}
+        )
+        revision = build_source_revision(
+            source, create_default_registry(), imported_at=datetime.now(UTC)
+        )
+        if isinstance(revision, ParseFailure):
+            typer.echo(revision.model_dump_json(indent=2))
+            raise typer.Exit(2)
+        parsed = revision.parse_result
+        payload = switch_report_payload(parsed, topology=build_switch_topology((revision,)))
+        if payload is None:
+            raise ValueError("Для файла не получены сведения конфигурации коммутатора.")
+        if format_name == "csv":
+            text = export_switch_csv(payload)
+        elif format_name == "html":
+            text = export_switch_html(payload)
+        else:
+            text = json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False)
+        if output is not None:
+            output.write_text(text, encoding="utf-8")
+        else:
+            typer.echo(text)
+        _echo_switch_summary(parsed)
+    except (OSError, ValueError, UnicodeError):
+        typer.echo(
+            "Не удалось прочитать или экспортировать конфигурацию коммутатора; "
+            "проверьте формат и путь файла.",
+            err=True,
+        )
+        raise typer.Exit(2) from None
 
 
 def _analysis_input(path: Path) -> str:

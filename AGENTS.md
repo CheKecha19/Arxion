@@ -112,3 +112,8 @@ README.md and the sections relevant to a substantial change. Do not treat these
 contracts as disposable historical notes. Keep them aligned with code changes;
 PROJECT_STATUS.md remains the single status/roadmap/backlog. Current user and
 AGENTS instructions override old test/local-execution prescriptions in specs.
+
+Version format: MAJOR.MINOR.PATCH[.REVISION], as defined in DEVELOPMENT.md.
+Document-only/service-only checkpoints increment REVISION; functional changes
+increment the appropriate first three components and reset REVISION. Keep
+pyproject.toml, __version__ and the project uv.lock entry consistent.

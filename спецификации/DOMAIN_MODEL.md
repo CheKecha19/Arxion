@@ -1,5 +1,13 @@
 # Доменная модель
 
+Дополнение 08.11.2026: ParseResult имеет опциональные SwitchFacts и SwitchPolicies
+(схемы 1.0.0), отделяющие конфигурационные L2/VRF/stack сведения от наблюдаемых
+Interface/Route и ASA forwarding. Объявления и применения политик независимы;
+Rule.policy_purpose: transit/management/unbound/unknown. Старые записи не
+переинтерпретируются по имени ACL. DeviceRevision 2.0.0 сохраняет оболочку,
+вложенные envelopes версионированы отдельно. Совместимость — DOCUMENTATION.md;
+требования — SWITCH_CONFIG_IMPORT.md.
+
 Актуальное дополнение 27.10.2026: результат DeviceRevisionDiff 2.0.0 разделяет
 известные сетевые различия, происхождение, нормализацию и доступность сведений.
 Он не меняет DeviceRevision и не переинтерпретирует старый unversioned diff.

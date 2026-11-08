@@ -37,6 +37,8 @@
 
 ## Контракты результатов и сетевой семантики
 
+- [SWITCH_CONFIG_IMPORT](SWITCH_CONFIG_IMPORT.md) — ТЗ импорта AOS-Switch, AOS-CX и Comware 5/7: управление, ACL, сетевые факты и доказательность карты.
+
 - [ANALYSIS_RESULT](ANALYSIS_RESULT.md)
 - [SCHEMA_MIGRATIONS](SCHEMA_MIGRATIONS.md)
 - [SR005_DIFF_CONTRACT](SR005_DIFF_CONTRACT.md)

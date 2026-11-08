@@ -9,6 +9,7 @@ from firewall_compliance.checks.common.policy import (
 )
 from firewall_compliance.domain import Finding, RuleAction, Severity
 from firewall_compliance.domain.assurance import CheckLimitation, CheckResult
+from firewall_compliance.domain.switch_policy import is_transit_rule
 
 
 class AnyAnyCheck:
@@ -20,6 +21,8 @@ class AnyAnyCheck:
         findings: list[Finding] = []
         limitations: list[CheckLimitation] = []
         for rule in context.revision.parse_result.rules:
+            if not is_transit_rule(rule):
+                continue
             if rule.enabled and rule.action == RuleAction.UNKNOWN:
                 limitations.append(
                     _limitation("UNKNOWN_ACTION", "Действие правила неизвестно.", rule)

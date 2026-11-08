@@ -6,6 +6,8 @@ from collections.abc import Callable
 from pathlib import Path
 from threading import Event
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QLabel,
     QLineEdit, QPushButton, QSpinBox, QWidget,
@@ -16,11 +18,32 @@ from firewall_compliance.interfaces.desktop.ngfw_sources import NgfwSource, Save
 from firewall_compliance.interfaces.desktop.project_store import ProjectStore
 
 
+class _SourceEditor(QDialog):
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Escape and not self.isWindow():
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 def edit_ngfw_source(
     parent: QWidget, runner: JobRunner, store: ProjectStore, project_id: str,
     provider: str, on_saved: Callable[[Path], None],
 ) -> None:
-    dialog = QDialog(parent)
+    dialog = create_ngfw_source_editor(parent, runner, store, project_id, provider, on_saved)
+    dialog.setWindowFlags(Qt.WindowType.Dialog)
+    dialog.resize(650, 540)
+    dialog.exec()
+
+
+def create_ngfw_source_editor(
+    parent: QWidget, runner: JobRunner, store: ProjectStore, project_id: str,
+    provider: str, on_saved: Callable[[Path], None],
+    on_changed: Callable[[], None] = lambda: None,
+) -> QDialog:
+    """Build the same saved-source form for embedding in an integration page."""
+    dialog = _SourceEditor(parent)
+    dialog.setWindowFlags(Qt.WindowType.Widget)
     dialog.setWindowTitle(f"{provider.title()} — источники данных")
     form = QFormLayout(dialog)
     sources = QComboBox()
@@ -48,7 +71,7 @@ def edit_ngfw_source(
     form.addRow("Таймаут, с", timeout)
     consent = QCheckBox("Сохранить подключение и защищённый пароль для повторных проверок")
     form.addRow(consent)
-    status = QLabel("Чтение через поддержанный API. Изменение настроек устройства не выполняется.")
+    status = QLabel()
     status.setWordWrap(True)
     form.addRow(status)
     save = QPushButton("Сохранить подключение")
@@ -68,6 +91,7 @@ def edit_ngfw_source(
     dialog.finished.connect(finish)
 
     def busy(value: bool) -> None:
+        dialog.setProperty("operationActive", value)
         for widget in (*fields.values(), sources, family, port, timeout, consent, save, collect):
             widget.setEnabled(not value)
 
@@ -99,6 +123,9 @@ def edit_ngfw_source(
     runner.submit(lambda: saved.list(project_id, provider), loaded)
 
     def command(collect_now: bool) -> None:
+        if getattr(parent, "_batch_active", False) or getattr(parent, "_restore_busy", False):
+            status.setText("Дождитесь завершения текущей операции.")
+            return
         old = sources.currentData()
         try:
             config = {
@@ -157,6 +184,8 @@ def edit_ngfw_source(
             if closed:
                 return
             busy(False)
+            if persist and not isinstance(value, JobError):
+                on_changed()
             if isinstance(value, JobError):
                 status.setText("Операция не завершена. Проверьте соединение, права и файл CA.")
             elif isinstance(value, Path):
@@ -177,5 +206,4 @@ def edit_ngfw_source(
 
     save.clicked.connect(lambda: command(False))
     collect.clicked.connect(lambda: command(True))
-    dialog.resize(650, 540)
-    dialog.exec()
+    return dialog

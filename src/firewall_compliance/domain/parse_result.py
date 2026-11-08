@@ -11,6 +11,8 @@ from firewall_compliance.domain.management import ManagementInventory
 from firewall_compliance.domain.network import Endpoint, Service
 from firewall_compliance.domain.policy_attachment import PolicyAttachment
 from firewall_compliance.domain.source import SourceLocation
+from firewall_compliance.domain.switch_facts import SwitchFacts
+from firewall_compliance.domain.switch_policy import SwitchPolicies
 
 
 class ParseIssue(DomainModel):
@@ -59,6 +61,8 @@ class ParseResult(DomainModel):
 
     configuration: Configuration
     management: ManagementInventory | None = None
+    switch_facts: SwitchFacts | None = None
+    switch_policies: SwitchPolicies | None = None
     rules: tuple[Rule, ...] = ()
     endpoints: tuple[Endpoint, ...] = ()
     services: tuple[Service, ...] = ()
@@ -74,6 +78,10 @@ class ParseResult(DomainModel):
         payload: dict[str, Any] = handler(self)
         if self.management is None:
             payload.pop("management", None)
+        if self.switch_facts is None:
+            payload.pop("switch_facts", None)
+        if self.switch_policies is None:
+            payload.pop("switch_policies", None)
         if not self.policy_attachments:
             payload.pop("policy_attachments", None)
         return payload
@@ -82,6 +90,17 @@ class ParseResult(DomainModel):
     def validate_configuration_links(self) -> "ParseResult":
         """Проверить, что правила принадлежат снимку результата."""
         configuration_id = self.configuration.configuration_id
+        for switch_inventory in (self.switch_facts, self.switch_policies):
+            if switch_inventory is not None and (
+                switch_inventory.source_name != self.configuration.source_name
+                or switch_inventory.content_sha256 != self.configuration.content_sha256
+            ):
+                raise ValueError("switch facts and policies must belong to this configuration source")
+        if self.switch_facts is not None and (
+            self.switch_facts.platform != self.configuration.platform
+            or self.switch_facts.captured_at != self.configuration.captured_at
+        ):
+            raise ValueError("switch facts platform/time must match the configuration")
         attachments = self.policy_attachments
         if len({item.attachment_id for item in attachments}) != len(attachments):
             raise ValueError("policy attachment IDs must be unique")

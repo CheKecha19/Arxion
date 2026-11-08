@@ -169,13 +169,7 @@ class PolicyExposureSettings(QWidget):
         self.profile_id = "policy-exposure"
         self.profile_version = "1"
         layout = QVBoxLayout(self)
-        note = QLabel(
-            "Явные требования организации к сетевым сервисам. Включите каталог, чтобы задать "
-            "политику; включённый каталог без строк означает пустые требования. Выключенный "
-            "каталог означает неизвестные требования. Доверенные сети и цели не угадываются."
-        )
-        note.setWordWrap(True)
-        layout.addWidget(note)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.catalogues: dict[str, ServiceCatalogue] = {}
         for key, title in (
             ("dangerous_services", "Опасные сервисы"),

@@ -15,11 +15,13 @@ from firewall_compliance.checks.access.scope_common import (
     _result,
     _services_covered,
 )
+from firewall_compliance.checks.common.transit import transit_limitations
 from firewall_compliance.checks.policy_quality.rules import PolicyCheckContext
 from firewall_compliance.domain.assurance import CheckLimitation, CheckResult
 from firewall_compliance.domain.enums import RuleAction
 from firewall_compliance.domain.finding import Finding
 from firewall_compliance.domain.policy_matching import resolve_rule
+from firewall_compliance.domain.switch_policy import is_transit_rule
 
 
 class ExcessiveAccessCheck(_ProfileCheck):
@@ -51,6 +53,8 @@ class ExcessiveAccessCheck(_ProfileCheck):
             )
         try:
             for rule in context.revision.parse_result.rules:
+                if not is_transit_rule(rule):
+                    continue
                 budget.spend()
                 if not rule.enabled or rule.action != RuleAction.ALLOW:
                     continue
@@ -139,6 +143,7 @@ class ExcessiveAccessCheck(_ProfileCheck):
                     message="Лимит операций исчерпан; отсутствие других findings не доказано.",
                 )
             )
+        limitations.extend(transit_limitations(context.revision.parse_result))
         if not context.revision.parse_result.rules and limitations:
             limitations.append(
                 CheckLimitation(

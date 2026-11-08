@@ -30,8 +30,10 @@ if (-not (Test-Path -LiteralPath $pythonPath)) {
 }
 Push-Location $projectRoot
 $previousBuildPath = $env:PATH
+$previousPythonPath = $env:PYTHONPATH
 try {
     # Сторонние ICU DLL из PATH не должны подменять системный ICU, используемый Qt.
+    $env:PYTHONPATH = Join-Path $projectRoot 'src'
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$projectRoot\.venv\Scripts"
     $versionOutput = 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])' | & $pythonPath -
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось прочитать версию проекта.' }
@@ -63,5 +65,6 @@ try {
     Write-Output (Join-Path $bundlePath "$bundleName.exe")
 } finally {
     $env:PATH = $previousBuildPath
+    $env:PYTHONPATH = $previousPythonPath
     Pop-Location
 }

@@ -6,6 +6,7 @@ from ipaddress import IPv4Address, IPv6Address, ip_network
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, uuid5
 
+from firewall_compliance.checks.common.transit import transit_limitations
 from firewall_compliance.checks.policy_quality.rules import PolicyCheckContext
 from firewall_compliance.domain.assurance import CheckLimitation, CheckResult, CheckStatus
 from firewall_compliance.domain.configuration import Rule
@@ -19,6 +20,7 @@ from firewall_compliance.domain.policy_matching import (
     merge_intervals,
     resolve_rule,
 )
+from firewall_compliance.domain.switch_policy import is_transit_rule
 
 CHECK_VERSION = "1.0.0"
 
@@ -257,6 +259,7 @@ class _ExposureCheck:
         executed: bool,
     ) -> CheckResult:
         parsed = context.revision.parse_result
+        limitations.extend(transit_limitations(parsed))
         if (
             parsed.errors
             or parsed.warnings
@@ -328,6 +331,8 @@ class _ExposureCheck:
         trusted = _addresses(self.profile.trusted_admin_networks or ())
         try:
             for rule in context.revision.parse_result.rules:
+                if not is_transit_rule(rule):
+                    continue
                 budget.spend()
                 if not rule.enabled:
                     continue

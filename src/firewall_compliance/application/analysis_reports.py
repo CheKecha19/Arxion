@@ -17,6 +17,8 @@ from firewall_compliance.application.analysis_result import (
     component_revisions,
     component_state,
 )
+from firewall_compliance.application.switch_reports import switch_report_payload, switch_report_records
+from firewall_compliance.application.switch_topology import build_switch_topology
 
 CSV_COLUMNS = (
     "row_type",
@@ -140,6 +142,23 @@ def _records(result: AnalysisResult) -> Iterator[dict[str, Any]]:
             "details_json": source.model_dump(mode="json", exclude={"canonical_api_record"}),
         }
     decisions = {(value.component_id, value.finding_id): value for value in result.decisions}
+    switch_revisions = [
+        revision
+        for component in result.components
+        for revision in component_revisions(component)
+        if revision.parse_result.switch_facts is not None
+    ]
+    if switch_revisions:
+        topology = build_switch_topology(switch_revisions, built_at=result.finished_at)
+        for record in switch_report_records({"switch_topology": topology.model_dump(mode="json")}):
+            yield {
+                "row_type": "switch_topology",
+                "family": "network",
+                "operation": "configured_topology",
+                "entity_id": record["entity_id"],
+                "title": record["section"],
+                "details_json": record["details"],
+            }
     for component in result.components:
         base = {
             "component_id": component.component_id,
@@ -160,6 +179,16 @@ def _records(result: AnalysisResult) -> Iterator[dict[str, Any]]:
             }
         if isinstance(component, PolicyComponent):
             report = component.result
+            switch = switch_report_payload(component.revision.parse_result)
+            if switch is not None:
+                for record in switch_report_records(switch):
+                    yield {
+                        **base,
+                        "row_type": "switch_configuration",
+                        "entity_id": record["entity_id"],
+                        "title": record["section"],
+                        "details_json": record["details"],
+                    }
             for issue in (*report.parse_warnings, *report.parse_errors):
                 yield {
                     **base,

@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
     QGridLayout,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
@@ -272,19 +271,36 @@ class ProjectDashboard(QWidget):
         scroll.setWidgetResizable(True)
         root.addWidget(scroll)
         content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(12, 8, 12, 12)
+        content.setMaximumWidth(1560)
+        scroll.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        layout = QGridLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setHorizontalSpacing(16)
+        columns: list[QVBoxLayout] = []
+        for index in range(3):
+            panel = QFrame()
+            panel.setObjectName("dashboardColumn")
+            panel.setMinimumWidth(320)
+            column = QVBoxLayout(panel)
+            column.setContentsMargins(12, 12, 12, 12)
+            column.setSpacing(12)
+            layout.addWidget(panel, 0, index)
+            layout.setColumnStretch(index, 1)
+            columns.append(column)
+        resources, findings, activity = columns
         scroll.setWidget(content)
-        layout.addWidget(_label("Обзор проекта", "heading"))
+        resources.addWidget(_label("Инфраструктура", "heading"))
         self.last_check_label = _label("Последняя проверка: ещё не выполнялась")
-        layout.addWidget(self.last_check_label)
-        metrics = QHBoxLayout()
+        resources.addWidget(self.last_check_label)
+        metrics = QGridLayout()
         self.summary_labels: dict[str, QLabel] = {}
-        for key, title in (
-            ("integrations", "Облачных подключений"),
-            ("virtual_machines", "ВМ в облаке"),
-            ("analysis_runs", "Запусков анализа"),
-            ("executed_checks", "Выполнено проверок"),
+        for index, (key, title) in enumerate(
+            (
+                ("integrations", "Облачных подключений"),
+                ("virtual_machines", "ВМ в облаке"),
+                ("analysis_runs", "Запусков анализа"),
+                ("executed_checks", "Выполнено проверок"),
+            )
         ):
             card = QFrame()
             card.setObjectName("hero")
@@ -295,28 +311,27 @@ class ProjectDashboard(QWidget):
             value.setAccessibleName(title)
             card_layout.addWidget(value)
             self.summary_labels[key] = value
-            metrics.addWidget(card, 1)
-        layout.addLayout(metrics)
+            metrics.addWidget(card, index // 2, index % 2)
+        resources.addLayout(metrics)
         self.execution_summary = _label("", "muted")
-        layout.addWidget(self.execution_summary)
+        activity.addWidget(self.execution_summary)
         self.finding_summary = _label("Находки последних проверенных снимков", "heading")
-        layout.addWidget(self.finding_summary)
-        layout.addWidget(_label("Всего / открыто. Цветная часть полосы — открытые находки."))
+        findings.addWidget(self.finding_summary)
         self.severity_chart = SeverityBars()
         self.severity_chart.activated.connect(self._open_severity)
-        layout.addWidget(self.severity_chart)
-        layout.addWidget(_label("Динамика числа находок по завершённым запускам", "heading"))
+        findings.addWidget(self.severity_chart)
+        activity.insertWidget(0, _label("Динамика находок", "heading"))
         self.trend_chart = FindingTrendChart()
-        layout.addWidget(self.trend_chart)
+        activity.insertWidget(1, self.trend_chart)
         self.trend_note = _label("", "muted")
-        layout.addWidget(self.trend_note)
-        layout.addWidget(_label("Источники: последняя попытка и успешный сбор", "heading"))
+        activity.insertWidget(2, self.trend_note)
+        resources.addWidget(_label("Источники", "heading"))
         self.source_table = _table(
             ("Источник", "Сбор", "Анализ", "Последняя попытка", "Успешный сбор", "Ошибок", "Предупр."),
             "dashboardSources",
         )
-        layout.addWidget(self.source_table)
-        layout.addWidget(_label("Полнота и актуальность данных", "heading"))
+        resources.addWidget(self.source_table)
+        resources.addWidget(_label("Полнота данных", "heading"))
         self.category_table = _table(
             (
                 "Категория",
@@ -333,45 +348,31 @@ class ProjectDashboard(QWidget):
             "Полностью и частично — ресурсы с реальными результатами проверок. "
             "Получение инвентаря не считается проверкой. Архив исключён."
         )
-        self.category_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        layout.addWidget(self.category_table)
-        middle = QGridLayout()
-        check_panel = QWidget()
-        check_layout = QVBoxLayout(check_panel)
-        check_layout.setContentsMargins(0, 0, 0, 0)
-        check_layout.addWidget(_label("Пять последних запусков проверки"))
+        resources.addWidget(self.category_table)
+        for table in (self.source_table, self.category_table):
+            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+            table.horizontalHeader().setDefaultSectionSize(105)
+            table.setColumnWidth(0, 150)
+            table.setMinimumWidth(0)
+        activity.addWidget(_label("Последние проверки", "heading"))
         self.checks_table = _table(("Дата", "Состояние", "Ресурсы", "Проверки"), "dashboardChecks")
         self.checks_table.cellDoubleClicked.connect(
             lambda *_: self.navigation_requested.emit("history")
         )
-        check_layout.addWidget(self.checks_table)
-        check_layout.addStretch()
-        middle.addWidget(check_panel, 0, 0)
-        finding_panel = QWidget()
-        finding_layout = QVBoxLayout(finding_panel)
-        finding_layout.setContentsMargins(0, 0, 0, 0)
-        finding_layout.addWidget(_label("Находки последних проверенных снимков"))
+        activity.addWidget(self.checks_table)
         self.findings_table = _table(("Приоритет", "Всего", "Открыто"), "dashboardFindings")
         self.findings_table.cellDoubleClicked.connect(
             lambda *_: self.navigation_requested.emit("findings")
         )
-        finding_layout.addWidget(self.findings_table)
-        finding_layout.addStretch()
-        middle.addWidget(finding_panel, 0, 1)
-        middle.setColumnStretch(0, 1)
-        middle.setColumnStretch(1, 1)
-        layout.addLayout(middle)
-        layout.addWidget(_label("Последние операции"))
+        findings.addWidget(self.findings_table)
+        activity.addWidget(_label("Последние операции", "heading"))
         self.operations_table = _table(
             ("Дата", "Операция", "Состояние", "Ресурсы"), "dashboardOperations"
         )
         self.operations_table.cellDoubleClicked.connect(self._open_operation)
-        layout.addWidget(self.operations_table)
+        activity.addWidget(self.operations_table)
         self.coverage_label = _label("", "muted")
-        layout.addWidget(self.coverage_label)
-        actions = QHBoxLayout()
+        resources.addWidget(self.coverage_label)
         self.navigation_buttons: dict[str, QPushButton] = {}
         for page, text in (
             ("devices", "Инфраструктура"),
@@ -383,10 +384,15 @@ class ProjectDashboard(QWidget):
             button.clicked.connect(
                 lambda _checked=False, page=page: self.navigation_requested.emit(page)
             )
-            actions.addWidget(button)
+            target = (
+                resources if page in {"devices", "scans"}
+                else findings if page == "findings"
+                else activity
+            )
+            target.addWidget(button, alignment=Qt.AlignmentFlag.AlignLeft)
             self.navigation_buttons[page] = button
-        layout.addLayout(actions)
-        layout.addStretch()
+        for column in columns:
+            column.addStretch()
         self.refresh(self.snapshot)
 
     def refresh(self, snapshot: DashboardSnapshot) -> None:
@@ -418,12 +424,12 @@ class ProjectDashboard(QWidget):
         for key, label in self.summary_labels.items():
             label.setText(str(getattr(snapshot, key)))
         self.execution_summary.setText(
-            f"За показанную историю: выполнено проверок {snapshot.executed_checks} "
-            f"(из них частично {snapshot.partial_checks}); "
-            f"не выполнено {snapshot.not_executed_checks}.\n"
-            f"Ошибок обработки файлов: {snapshot.error_items}; "
+            f"Проверок за всю историю: {snapshot.executed_checks}; "
+            f"частичных: {snapshot.partial_checks}; "
+            f"не выполнено: {snapshot.not_executed_checks}.\n"
+            f"Ошибок файлов: {snapshot.error_items}; "
             f"неподдержанных входов: {snapshot.unsupported_items}; "
-            f"записей ошибок облачного сбора: {snapshot.collection_errors}."
+            f"ошибок сбора: {snapshot.collection_errors}."
         )
         self.finding_summary.setText(
             f"Находки последних проверенных снимков: {snapshot.findings} "
@@ -435,11 +441,19 @@ class ProjectDashboard(QWidget):
         self.trend_chart.set_points(snapshot.finding_trend)
         limited = sum(bool(point.limitations) for point in snapshot.finding_trend[-12:])
         self.trend_note.setText(
-            "Показаны последние 12 завершённых запусков; точки — фактическое число находок. "
-            "Линии соединяют только сопоставимые запуски; жёлтые точки/разрывы означают "
-            f"ограничения сравнения (точек с ограничениями: {limited}). "
-            "Причины и время каждой точки — в подсказке. Снижение числа не доказывает исправление "
-            "или безопасность; сравниваются сохранённые области проверок, не полнота всей сети."
+            f"Запусков с ограничениями сравнения: {limited}" if limited else ""
+        )
+        self.trend_note.setVisible(bool(limited))
+        self.trend_chart.setAccessibleDescription(
+            self.trend_chart.accessibleDescription()
+            + "\nЛинии соединяют сопоставимые запуски; жёлтые точки означают ограничения. "
+            "Снижение числа находок не доказывает исправление или безопасность."
+        )
+        self.trend_chart.setToolTip(
+            self.trend_chart.toolTip()
+            + "\nПоследние 12 запусков; линии соединяют сопоставимые результаты. "
+            "Жёлтые точки означают ограничения сравнения. "
+            "Снижение числа находок не доказывает исправление или безопасность."
         )
         _fill(
             self.category_table,
@@ -495,16 +509,15 @@ class ProjectDashboard(QWidget):
         )
         notes = [
             f"В активном реестре: {snapshot.active_resources}; "
-            f"в архиве: {snapshot.archived_resources}. "
-            f"Частичных проверок за всю историю: {snapshot.partial_checks}; "
-            f"не выполненных: {snapshot.not_executed_checks}.",
-            "Один запуск анализа может выполнять несколько проверок.",
-            "Находки — по последним проверенным снимкам активных ресурсов. "
-            "«Открыто» исключает resolved/false_positive; принятый риск остаётся учтённым. "
-            "Ноль находок не доказывает безопасность.",
+            f"в архиве: {snapshot.archived_resources}.",
             *snapshot.warnings,
         ]
         self.coverage_label.setText("\n".join(notes))
+        self.finding_summary.setToolTip(
+            "Находки по последним проверенным снимкам активных ресурсов. "
+            "Открытые исключают resolved/false_positive; принятый риск учтён. "
+            "Ноль находок не доказывает безопасность."
+        )
 
     def _open_severity(self, severity: str) -> None:
         self.navigation_requested.emit("findings")

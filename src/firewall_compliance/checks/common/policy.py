@@ -21,6 +21,7 @@ from firewall_compliance.analysis.policy_matching import (
     resolve_rule,
     scope_key,
 )
+from firewall_compliance.checks.common.transit import transit_limitations
 from firewall_compliance.domain import (
     DataStatus,
     Evidence,
@@ -34,6 +35,7 @@ from firewall_compliance.domain import Severity as Severity
 from firewall_compliance.domain.assurance import CheckLimitation as CheckLimitation
 from firewall_compliance.domain.assurance import CheckResult as CheckResult
 from firewall_compliance.domain.assurance import CheckStatus
+from firewall_compliance.domain.switch_policy import is_transit_rule
 
 CHECK_VERSION = "1.0.0"
 ARUBA_CHECK_VERSION = "1.1.0"
@@ -55,6 +57,8 @@ class PolicyCheckContext:
 
 def check_version(context: PolicyCheckContext) -> str:
     """Версия семантики проверок для текущего adapter без изменения старых результатов."""
+    if context.revision.parse_result.switch_policies is not None:
+        return "1.2.0"
     if context.revision.parse_result.configuration.vendor == "hp-aruba":
         return ARUBA_CHECK_VERSION
     return CHECK_VERSION
@@ -80,6 +84,7 @@ def _result(
     limitations: list[CheckLimitation],
 ) -> CheckResult:
     parsed = context.revision.parse_result
+    limitations.extend(transit_limitations(parsed))
     aruba = parsed.configuration.vendor == "hp-aruba"
     scope_warnings = PLATFORM_SCOPE_WARNINGS | ARUBA_METADATA_WARNINGS if aruba else set()
     relevant_warnings = [issue for issue in parsed.warnings if issue.code not in scope_warnings]
@@ -106,7 +111,7 @@ def _result(
             )
         )
     if parsed.configuration.vendor == "hp-aruba":
-        candidates = [rule for rule in parsed.rules if rule.enabled]
+        candidates = [rule for rule in parsed.rules if rule.enabled and is_transit_rule(rule)]
         if check_id in {"FW-ANY-ANY", "FW-LOGGING"}:
             candidates = [
                 rule for rule in candidates if rule.action in {RuleAction.ALLOW, RuleAction.UNKNOWN}
@@ -277,7 +282,7 @@ def _pair_groups(context: PolicyCheckContext) -> tuple[list[list[Rule]], list[Ch
     groups: dict[ScopeKey, list[Rule]] = {}
     limitations: list[CheckLimitation] = []
     for rule in parsed.rules:
-        if not rule.enabled:
+        if not rule.enabled or not is_transit_rule(rule):
             continue
         key = scope_key(rule)
         if key is None:
@@ -357,7 +362,7 @@ def _coverage_groups(
 ) -> tuple[list[list[Rule]], set[str], list[CheckLimitation]]:
     """Establish scope/order from real source evidence, retaining unknown predicates."""
     parsed = context.revision.parse_result
-    active = [rule for rule in parsed.rules if rule.enabled]
+    active = [rule for rule in parsed.rules if rule.enabled and is_transit_rule(rule)]
     limitations: list[CheckLimitation] = []
     unknown: set[str] = set()
     aruba = parsed.configuration.vendor == "hp-aruba"

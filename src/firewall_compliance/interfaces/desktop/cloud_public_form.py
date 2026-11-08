@@ -8,6 +8,7 @@ from typing import Any
 
 from PySide6.QtWidgets import (
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -94,8 +95,11 @@ class PublicCloudForm(QWidget):
         self.test_button.clicked.connect(test)
         self.delete_button = QPushButton("Удалить подключение")
         self.delete_button.clicked.connect(self.delete)
+        buttons = QHBoxLayout()
         for button in (self.save_button, self.test_button, self.delete_button):
-            layout.addWidget(button)
+            buttons.addWidget(button)
+        buttons.addStretch()
+        layout.addLayout(buttons)
         self.status = QLabel("Выберите или создайте проект.")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)

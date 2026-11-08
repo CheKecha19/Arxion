@@ -28,12 +28,13 @@ from firewall_compliance.parsers.contracts import (
     ParserMetadata,
     SourceDocument,
 )
+from firewall_compliance.parsers.platform_detection import detect_switch_platform
 
 
 class ComwareParser:
     """Сохраняет ACL и management scope; не вычисляет транзитную достижимость."""
 
-    _metadata = ParserMetadata(parser_id="hp-h3c-comware", version="0.1.0", vendor="hp-h3c")
+    _metadata = ParserMetadata(parser_id="hp-h3c-comware", version="0.2.0", vendor="hp-h3c")
 
     @property
     def metadata(self) -> ParserMetadata:
@@ -41,24 +42,18 @@ class ComwareParser:
         return self._metadata
 
     def detect(self, source: SourceDocument) -> DetectionResult:
-        """Требовать характерную конфигурацию Comware, а не отдельное слово acl."""
+        """Распознать версию и характерный контекст Comware, в том числе без ACL."""
         try:
             text = source.content.decode("utf-8-sig")
         except UnicodeDecodeError:
             return DetectionResult(parser_id=self.metadata.parser_id, is_match=False, confidence=0)
-        match = bool(
-            re.search(r"^\s*acl (?:number|basic|advanced)\b", text, re.M)
-            and (
-                re.search(r"^\s*version (?:5\.20\.|7\.1\.)", text, re.M)
-                or re.search(r"\bComware\b", text, re.I)
-            )
-            and not re.search(r"\b(?:Huawei|VRP)\b", text, re.I)
-        )
+        detection = detect_switch_platform(text)
+        match = detection.platform == "comware"
         return DetectionResult(
             parser_id=self.metadata.parser_id,
             is_match=match,
-            confidence=0.9 if match else 0,
-            reasons=("ACL и характерный контекст Comware.",) if match else (),
+            confidence=detection.confidence if match else 0,
+            reasons=detection.reasons,
         )
 
     @staticmethod
@@ -88,6 +83,20 @@ class ComwareParser:
 
     def parse(self, request: ParseRequest) -> ParseOutcome:
         """Разобрать правила без раскрытия непрочитанных команд и секретов."""
+        try:
+            detection = detect_switch_platform(request.source.content.decode("utf-8-sig"))
+        except UnicodeDecodeError:
+            detection = None
+        if detection is not None and detection.ambiguous:
+            return ParseFailure(
+                parser_id=self.metadata.parser_id,
+                source_name=request.source.source_name,
+                content_sha256=request.source.content_sha256,
+                errors=(ParseIssue(
+                    code="PLATFORM_AMBIGUOUS", level=ParseIssueLevel.ERROR,
+                    message=" ".join(detection.reasons),
+                ),),
+            )
         if not self.detect(request.source).is_match:
             return ParseFailure(
                 parser_id=self.metadata.parser_id,
@@ -120,20 +129,35 @@ class ComwareParser:
             captured_at=request.source.captured_at,
             imported_at=request.imported_at,
         )
-        management_acls = set()
-        for line in lines:
-            if line.strip().startswith("snmp-agent "):
-                found = re.search(r"\bacl (\S+)", line)
-                if found:
-                    management_acls.add(found.group(1))
+        management_acls: dict[str, set[str]] = {}
+        binding_locations: dict[str, list[SourceLocation]] = {}
+        declared_acls: set[str] = set()
+        for lineno, raw in enumerate(lines, 1):
+            line = raw.strip()
+            binding = re.fullmatch(r"ssh server acl (\S+)", line)
+            method = "ssh"
+            if line.startswith("snmp-agent community "):
+                binding = re.search(r"\bacl (\S+)\s*$", line)
+                method = "snmp"
+            if binding:
+                acl_id = binding.group(1)
+                management_acls.setdefault(acl_id, set()).add(method)
+                binding_locations.setdefault(acl_id, []).append(
+                    SourceLocation(
+                        source_name=request.source.source_name,
+                        line_start=lineno,
+                        line_end=lineno,
+                    )
+                )
         rules: list[Rule] = []
         unsupported: list[UnsupportedConstruct] = []
         warnings = [
             ParseIssue(
                 code="LIMITED_COMWARE_SCOPE",
                 level=ParseIssueLevel.WARNING,
-                message="Разобраны IPv4 ACL. Применение ACL, порядок auto, управление SNMP, "
-                "QoS и транзитная достижимость не вычисляются. Coverage относится к ACL-входу.",
+                message="Разобраны IPv4 ACL и назначения SSH/SNMP. Порядок auto, "
+                "effective-применение, QoS и транзитная достижимость не вычисляются. "
+                "Coverage относится к ACL-входу.",
             )
         ]
         acl: str | None = None
@@ -144,6 +168,7 @@ class ComwareParser:
             header = re.match(r"acl (number|basic|advanced) (\S+)(.*)$", line)
             if header:
                 acl = header.group(2)
+                declared_acls.add(acl)
                 acl_identifier_known = acl.isdigit()
                 advanced = header.group(1) == "advanced" or (
                     acl_identifier_known and 3000 <= int(acl) <= 3999
@@ -173,7 +198,7 @@ class ComwareParser:
             )
             identifier = f"comware:acl:{acl}:line:{lineno}"
             tokens = line.split()
-            valid = len(tokens) >= 4 and tokens[1].isdigit() and tokens[2] in {"permit", "deny"}
+            valid = len(tokens) >= 3 and tokens[1].isdigit() and tokens[2] in {"permit", "deny"}
             sequence = int(tokens[1]) if len(tokens) > 1 and tokens[1].isdigit() else lineno
             action = (
                 RuleAction.ALLOW
@@ -261,18 +286,19 @@ class ComwareParser:
                     )
                 )
             management = acl in management_acls
+            methods = "/".join(sorted(management_acls.get(acl, ())))
             if management:
                 destination = Endpoint(
                     endpoint_id=identifier + ":management",
-                    name="Управление SNMP",
+                    name=f"Управление {methods.upper()}",
                     kind=EndpointKind.ZONE,
-                    zone="management:snmp",
+                    zone=f"management:{methods}",
                     resolution_status=DataStatus.UNKNOWN,
                 )
                 match_status = DataStatus.UNKNOWN
             service = Service(
                 service_id=identifier + ":service",
-                name="SNMP management scope" if management else protocol.value,
+                name=f"{methods.upper()} management scope" if management else protocol.value,
                 protocol=Protocol.OTHER if management else protocol,
                 port_ranges=() if management else ports,
                 resolution_status=DataStatus.UNKNOWN if management else DataStatus.KNOWN,
@@ -281,7 +307,11 @@ class ComwareParser:
                 rule_id=identifier,
                 configuration_id=config.configuration_id,
                 name=f"ACL {acl} / {sequence}"
-                + (" · управление SNMP" if management else " · назначение не подтверждено"),
+                + (
+                    f" · управление {methods.upper()}"
+                    if management
+                    else " · назначение не подтверждено"
+                ),
                 sequence=sequence,
                 action=action,
                 enabled=True,
@@ -296,8 +326,8 @@ class ComwareParser:
                 if valid
                 else DataStatus.UNSUPPORTED,
                 match_status=match_status,
-                policy_id=("management:snmp:" if management else "") + f"acl:{acl}",
-                source_zone="management:snmp" if management else None,
+                policy_id=(f"management:{methods}:" if management else "") + f"acl:{acl}",
+                source_zone=f"management:{methods}" if management else None,
                 zone_status=DataStatus.UNKNOWN,
                 logging_enabled=logging,
                 logging_status=DataStatus.KNOWN if logging is not None else DataStatus.UNKNOWN,
@@ -306,6 +336,17 @@ class ComwareParser:
                 source_location=location,
             )
             rules.append(rule)
+        for acl_id, locations in binding_locations.items():
+            if acl_id not in declared_acls:
+                warnings.extend(
+                    ParseIssue(
+                        code="COMWARE_BINDING_WITHOUT_ACL",
+                        level=ParseIssueLevel.WARNING,
+                        message="Привязка управления ссылается на необъявленную ACL.",
+                        source_location=location,
+                    )
+                    for location in locations
+                )
         if not rules:
             warnings.append(
                 ParseIssue(
@@ -315,8 +356,9 @@ class ComwareParser:
                 )
             )
         from firewall_compliance.parsers.management import parse_management
+        from firewall_compliance.parsers.switch_policy import enrich_switch_result
 
-        return ParseResult(
+        result = ParseResult(
             configuration=config,
             management=parse_management(request.source, "comware"),
             rules=tuple(rules),
@@ -331,3 +373,4 @@ class ComwareParser:
                 unsupported_constructs=len(unsupported),
             ),
         )
+        return enrich_switch_result(request.source, result)

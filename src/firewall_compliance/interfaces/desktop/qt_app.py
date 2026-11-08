@@ -85,6 +85,7 @@ from firewall_compliance.interfaces.desktop.check_presentation import (
     check_execution_status,
     check_status_label,
 )
+from firewall_compliance.interfaces.desktop.check_selection import CheckSelection
 from firewall_compliance.interfaces.desktop.cloud_panel import (
     ALL_RESOURCES,
     SCAN_STATES,
@@ -149,6 +150,15 @@ from firewall_compliance.interfaces.desktop.qt_project_map import ProjectMapWidg
 from firewall_compliance.interfaces.desktop.qt_theme import apply_theme
 from firewall_compliance.interfaces.desktop.qt_topology_map import TopologyMapWidget
 from firewall_compliance.interfaces.desktop.resource_details import ResourceDetails
+from firewall_compliance.interfaces.desktop.switch_details import (
+    PURPOSE_LABELS,
+    SwitchDetailsPanel,
+    SwitchTopologyPanel,
+    acl_rule_html,
+    rule_category,
+    safe_switch_source,
+    switch_summary,
+)
 from firewall_compliance.interfaces.desktop.result_presentation import (
     check_limitations,
     finding_limitations,
@@ -525,36 +535,57 @@ class MainWindow(QMainWindow):
         self.run_button.setEnabled(False)
         root.addLayout(header)
         root.addLayout(scope_row)
-        self.site_scope_note = _label(
-            "Все площадки выбранного проекта. Назначения не меняют исходные результаты.",
-            muted=True,
-        )
+        self.site_scope_note = _label("", muted=True)
         self.site_scope_note.setWordWrap(True)
-        root.addWidget(self.site_scope_note)
+        self.site_scope_note.hide()
         body = QHBoxLayout()
         sidebar = QWidget()
-        sidebar.setFixedWidth(200)
+        sidebar.setFixedWidth(252)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         self.navigation = QTreeWidget()
         self.navigation.setObjectName("navigation")
         self.navigation.setHeaderHidden(True)
-        self.navigation.setRootIsDecorated(False)
+        self.navigation.setRootIsDecorated(True)
         self.navigation.setIndentation(18)
         self.navigation.setExpandsOnDoubleClick(False)
         self.navigation.setAccessibleName("Разделы приложения")
         self.nav_items: dict[str, QTreeWidgetItem] = {}
+        self.settings_tree_items: dict[str, QTreeWidgetItem] = {}
         for section in WORKSPACE_SECTIONS:
             item = QTreeWidgetItem(self.navigation, [section.title])
-            item.setData(0, Qt.ItemDataRole.UserRole, section.key)
-            for page_id, _title in section.pages:
-                self.nav_items[page_id] = item
-        self.navigation.currentItemChanged.connect(self._navigation_changed)
+            if section.key == "home":
+                item.setData(0, Qt.ItemDataRole.UserRole, "home")
+                self.nav_items["home"] = item
+            else:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                for page_id, title in section.pages:
+                    child = QTreeWidgetItem(item, [title])
+                    if page_id == "matrix":
+                        child.setFlags(child.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+                    else:
+                        child.setData(0, Qt.ItemDataRole.UserRole, page_id)
+                        self.nav_items[page_id] = child
+                item.setExpanded(True)
+        reports_item = QTreeWidgetItem(self.navigation, ["Отчёты"])
+        reports_item.setFlags(reports_item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+        self.settings_tree = QTreeWidgetItem(self.navigation, ["Настройки"])
+        self.settings_tree.setFlags(self.settings_tree.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        for key, title in (
+            ("general", "Общие"), ("integrations", "Интеграции"),
+            ("rules", "Проверки"), ("license", "Лицензия"),
+            ("documentation", "Документация"),
+        ):
+            child = QTreeWidgetItem(self.settings_tree, [title])
+            self.settings_tree_items[key] = child
+            if key in ("integrations", "rules"):
+                child.setData(0, Qt.ItemDataRole.UserRole, "settings:" + key)
+            else:
+                child.setFlags(child.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+        self.settings_tree.setExpanded(True)
         self.navigation.itemClicked.connect(self._navigation_clicked)
+        self.navigation.currentItemChanged.connect(self._navigation_changed)
         sidebar_layout.addWidget(self.navigation, 1)
-        self.settings_button = _button("Настройки", lambda: self.navigate("settings"))
-        self.settings_button.setCheckable(True)
-        sidebar_layout.addWidget(self.settings_button)
         body.addWidget(sidebar)
         content = QVBoxLayout()
         context_row = QHBoxLayout()
@@ -594,6 +625,10 @@ class MainWindow(QMainWindow):
         self.cloud_panel.configure_button.clicked.connect(self._configure_cloud)
         self.cloud_panel.on_open_analysis = self._open_cloud_analysis
         self._build_settings()
+        for key, title in self.check_settings_groups:
+            child = QTreeWidgetItem(self.settings_tree_items["rules"], [title])
+            child.setData(0, Qt.ItemDataRole.UserRole, "checks:" + key)
+            self.settings_tree_items["checks:" + key] = child
         self.pages.addWidget(self.cloud_panel.scans_widget)
         self._build_preparation()
         self.cloud_panel.on_history_changed = self._cloud_history_changed
@@ -639,7 +674,6 @@ class MainWindow(QMainWindow):
         heading = _label(title)
         heading.setObjectName("heading")
         layout.addWidget(heading)
-        layout.addWidget(_label(subtitle, muted=True))
         self.pages.addWidget(page)
         return page, layout
 
@@ -670,9 +704,7 @@ class MainWindow(QMainWindow):
         return table, model, proxy
 
     def _build_summary(self) -> None:
-        _, outer_layout = self._page(
-            "Обзор", "Инфраструктура проекта, охват данных и результаты последней проверки."
-        )
+        _, outer_layout = self._page("Дашборд", "")
         dashboard = QWidget()
         layout = QVBoxLayout(dashboard)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -756,6 +788,7 @@ class MainWindow(QMainWindow):
         self.map_mode_selector.addItem("Связи по правилам", "policy")
         self.map_mode_selector.addItem("Топология конфигурации", "topology")
         self.map_mode_selector.addItem("Карта проекта", "project")
+        self.map_mode_selector.addItem("Структура коммутаторов", "switches")
         mode_label = _label("Режим:")
         mode_label.setBuddy(self.map_mode_selector)
         source_row.addWidget(mode_label)
@@ -808,6 +841,7 @@ class MainWindow(QMainWindow):
         self.map_widget = AclMapWidget(self)
         self.topology_map_widget = TopologyMapWidget(self)
         self.project_map_widget = ProjectMapWidget(self)
+        self.switch_topology_widget = SwitchTopologyPanel(self)
         self.project_map_widget.labels_changed.connect(self._save_map_zone_labels)
         self.project_map_widget.view_settings_changed.connect(self._save_map_view_settings)
         self.project_map_widget.rules_requested.connect(self._open_project_map_rules)
@@ -816,6 +850,7 @@ class MainWindow(QMainWindow):
         self.map_mode_stack.addWidget(self.map_widget)
         self.map_mode_stack.addWidget(self.topology_map_widget)
         self.map_mode_stack.addWidget(self.project_map_widget)
+        self.map_mode_stack.addWidget(self.switch_topology_widget)
         layout.addWidget(self.map_mode_stack, 1)
         self.map_mode_selector.currentIndexChanged.connect(self._map_mode_changed)
         self.map_mode_selector.setCurrentIndex(2)
@@ -832,13 +867,15 @@ class MainWindow(QMainWindow):
 
     def _map_mode_changed(self, index: int) -> None:
         self.map_mode_stack.setCurrentIndex(index)
-        project_mode = self.map_mode_selector.currentData() == "project"
+        project_mode = self.map_mode_selector.currentData() in {"project", "switches"}
         self.map_result_selector.setVisible(not project_mode)
         self.map_result_label.setVisible(not project_mode)
         self.map_sources_button.setVisible(not project_mode)
         self.map_network_status.setVisible(not project_mode)
         self.map_sources_panel.setVisible(not project_mode and self.map_sources_button.isChecked())
-        if project_mode:
+        if self.map_mode_selector.currentData() == "switches":
+            self.switch_topology_widget.set_items(self._project_devices())
+        elif project_mode:
             self._refresh_project_map()
 
     def _save_map_zone_labels(self, labels: dict[str, str]) -> None:
@@ -975,6 +1012,8 @@ class MainWindow(QMainWindow):
         finally:
             self.map_result_selector.blockSignals(previous_block)
         self._map_result_selected()
+        if self.current_section_id == "map" and self.map_mode_selector.currentData() == "switches":
+            self.switch_topology_widget.set_items(self._project_devices())
         if self.current_section_id == "map" and self.map_mode_selector.currentData() == "project":
             self._refresh_project_map()
 
@@ -1685,188 +1724,177 @@ class MainWindow(QMainWindow):
 
     def _build_settings(self) -> None:
         _, layout = self._page("Настройки", "Параметры проекта сохраняются для следующих запусков.")
-        body = QHBoxLayout()
-        body.setSpacing(24)
-        menu = QFrame()
-        menu.setObjectName("settingsMenu")
-        menu.setFixedWidth(180)
-        menu_layout = QVBoxLayout(menu)
         self.settings_pages = QStackedWidget()
-        self.settings_nav_buttons: dict[str, QPushButton] = {}
-        for index, (key, title) in enumerate(
-            (("integrations", "Интеграции"), ("rules", "Правила"))
-        ):
-            button = _button(title, partial(self._select_settings_tab, key, index))
-            button.setCheckable(True)
-            self.settings_nav_buttons[key] = button
-            menu_layout.addWidget(button)
-        menu_layout.addStretch()
-        body.addWidget(menu)
-        body.addWidget(self.settings_pages, 1)
-        layout.addLayout(body, 1)
+        layout.addWidget(self.settings_pages, 1)
+        from PySide6.QtGui import QIcon
+
         integrations = QWidget()
         integrations_layout = QVBoxLayout(integrations)
         integrations_layout.setContentsMargins(0, 0, 0, 0)
         self.integration_pages = QStackedWidget()
-        integrations_layout.addWidget(self.integration_pages)
+        self.integration_pages.setMaximumWidth(980)
+        integrations_layout.addWidget(self.integration_pages, 1, Qt.AlignmentFlag.AlignLeft)
         catalog = QWidget()
         catalog_layout = QVBoxLayout(catalog)
         catalog_layout.setContentsMargins(0, 0, 0, 0)
+        catalog_layout.setSpacing(16)
         catalog_layout.addWidget(_label("Интеграции", heading=True))
-        catalog_layout.addWidget(
-            _label("Выберите платформу для просмотра способов подключения.", muted=True)
-        )
         self.integration_pages.addWidget(catalog)
         self.integration_buttons: dict[str, QPushButton] = {}
         self.integration_grids: list[QGridLayout] = []
+        assets = Path(__file__).parent / "assets"
+        solution_icons = {
+            "aruba": "hp_aruba.png", "usergate": "usergate.png",
+            "pt": "positive technologies.png", "ideco": "ideco.png", "cloud_ru": "cloud_ru.png",
+        }
         groups = (
-            ("Серверное оборудование", (("aruba", "Aruba", False),)),
-            (
-                "NGFW",
-                (("usergate", "UserGate", False), ("pt", "PT NGFW", True), ("ideco", "Ideco", False)),
-            ),
-            ("Платформы виртуализации", (("cloud_ru", "Cloud.ru", False),)),
+            ("Серверное оборудование", assets / "integrations/server.svg", (("aruba", "Aruba", False),)),
+            ("NGFW", assets / "integrations/wall.svg",
+             (("usergate", "UserGate", False), ("pt", "PT NGFW", True), ("ideco", "Ideco", False))),
+            ("Платформы виртуализации", assets / "integrations/cloud.svg", (("cloud_ru", "Cloud.ru", False),)),
         )
-        for title, platforms in groups:
+        for title, icon_path, platforms in groups:
             group = QFrame()
             group.setObjectName("integrationGroup")
             group_layout = QVBoxLayout(group)
-            group_layout.setContentsMargins(18, 16, 18, 18)
-            group_layout.addWidget(_label(title))
+            group_layout.setContentsMargins(16, 14, 16, 16)
+            heading = QHBoxLayout()
+            category_icon = QLabel()
+            category_icon.setPixmap(QIcon(str(icon_path)).pixmap(24, 24))
+            heading.addWidget(category_icon)
+            heading.addWidget(_label(title))
+            heading.addStretch()
+            group_layout.addLayout(heading)
             grid = QGridLayout()
             grid.setSpacing(12)
-            for column in range(5):
-                grid.setColumnStretch(column, 1)
-                grid.setColumnMinimumWidth(column, 72)
+            grid.setColumnStretch(3, 1)
             self.integration_grids.append(grid)
             for position, (key, name, planned) in enumerate(platforms):
-                button = _button(
-                    name + ("\nЗапланировано" if planned else ""),
-                    partial(self._open_integration, key),
-                )
+                button = _button(name, partial(self._open_integration, key))
                 button.setObjectName("integrationCard")
-                button.setMinimumHeight(86)
-                button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+                button.setIcon(QIcon(str(assets / "integrations" / solution_icons[key])))
+                button.setIconSize(QSize(40, 40))
+                button.setFixedSize(188, 78)
                 button.setCursor(Qt.CursorShape.PointingHandCursor)
-                button.setToolTip(
-                    "Посмотреть статус и ограничения планируемой интеграции"
-                    if planned
-                    else f"Открыть {name}"
+                button.setToolTip("Запланировано" if planned else f"Открыть {name}")
+                button.setStyleSheet(
+                    'QPushButton[configured="true"] { background: #173b2e; '
+                    'border: 1px solid #39815c; color: #bce9cd; }'
                 )
                 self.integration_buttons[key] = button
-                grid.addWidget(button, position // 5, position % 5)
+                grid.addWidget(button, position // 3, position % 3)
             group_layout.addLayout(grid)
             catalog_layout.addWidget(group)
         catalog_layout.addStretch()
         self.integration_detail_indices: dict[str, int] = {}
+        self.integration_form_layouts: dict[str, QVBoxLayout] = {}
+        self.integration_editors: dict[str, tuple[str, QDialog]] = {}
         descriptions = (
-            (
-                "aruba",
-                "Aruba",
-                "Доступен импорт файлов конфигурации Aruba. "
-                "Прямое подключение к устройству ещё не реализовано.",
-            ),
-            (
-                "usergate",
-                "UserGate",
-                "Чтение конфигурации по API: UserGate 6.1.5+ и 7.x через TCP/HTTP, "
-                "UserGate 7.3.3+ через HTTPS с проверкой сертификата. "
-                "Укажите адрес устройства и учётные данные в форме подключения. "
-                "Изменение конфигурации NGFW через приложение запрещено. "
-                "Снимок сохраняется в JSON для импорта и анализа правил. "
-                "NAT и неподдержанные условия сохраняются с ограничениями анализа; "
-                "карта и расчёт сетевой доступности для UserGate пока недоступны.",
-            ),
-            (
-                "pt",
-                "PT NGFW",
-                "Запланировано. Импорт конфигураций и подключение по API не реализованы. "
-                "Проверки политик, карта и расчёт доступности недоступны. "
-                "Для разработки требуется подтвердить версию продукта, формат выгрузки "
-                "и область политики: менеджер, опубликованная политика или узел. "
-                "Карточка описывает план и не выполняет подключение.",
-            ),
-            (
-                "ideco",
-                "Ideco",
-                "Чтение конфигурации Ideco NGFW v23, классический VCE, по HTTPS "
-                "с проверкой сертификата, порт 8443. "
-                "Укажите адрес устройства, учётные данные и при необходимости файл CA "
-                "в форме подключения. Снимок правил, объектов, зон и настроек firewall "
-                "сохраняется в JSON для импорта и анализа. "
-                "NAT сохраняется без расчёта трансляций; полнота эффективной политики "
-                "не подтверждена. Поддержка VPP/BPF и переключение VCE недоступны.",
-            ),
-            (
-                "cloud_ru",
-                "Cloud.ru",
-                "Подключение облачных платформ и получение данных через API.",
-            ),
+            ("aruba", "Aruba", "Импорт конфигураций. Прямое подключение пока недоступно."),
+            ("usergate", "UserGate", "6.1.5+ / 7.x · TCP/HTTP; 7.3.3+ · HTTPS. NAT и карта имеют ограничения."),
+            ("pt", "PT NGFW", "Запланировано. Импорт и API пока недоступны."),
+            ("ideco", "Ideco", "NGFW v23 · классический VCE · HTTPS :8443. VPP/BPF не поддерживаются."),
+            ("cloud_ru", "Cloud.ru", ""),
         )
         for key, name, description in descriptions:
             detail = QWidget()
+            detail.setMaximumWidth(820)
             detail_layout = QVBoxLayout(detail)
             detail_layout.setContentsMargins(0, 0, 0, 0)
-            detail_layout.addWidget(
-                _button("← Все интеграции", lambda: self.integration_pages.setCurrentIndex(0))
-            )
+            back = _button("← Все интеграции", self._show_integrations)
+            detail_layout.addWidget(back, 0, Qt.AlignmentFlag.AlignLeft)
             detail_layout.addWidget(_label(name, heading=True))
-            detail_layout.addWidget(_label(description, muted=True))
+            if description:
+                detail_layout.addWidget(_label(description, muted=True))
             if key == "cloud_ru":
                 detail_layout.addWidget(self.cloud_panel.settings_widget)
-            if key == "usergate":
+            if key in ("usergate", "ideco"):
+                form_layout = QVBoxLayout()
+                detail_layout.addLayout(form_layout)
+                self.integration_form_layouts[key] = form_layout
                 detail_layout.addWidget(
-                    _button(
-                        "Настроить подключение и прочитать конфигурацию",
-                        self.choose_usergate,
-                        primary=True,
-                    )
-                )
-                detail_layout.addWidget(
-                    _button("Импортировать сохранённый снимок", self._import_integration_files)
-                )
-            if key == "ideco":
-                detail_layout.addWidget(
-                    _button(
-                        "Настроить подключение и прочитать конфигурацию",
-                        self.choose_ideco,
-                        primary=True,
-                    )
-                )
-                detail_layout.addWidget(
-                    _button("Импортировать сохранённый снимок", self._import_integration_files)
+                    _button("Импортировать сохранённый снимок", self._import_integration_files),
+                    0, Qt.AlignmentFlag.AlignLeft,
                 )
             if key == "aruba":
                 detail_layout.addWidget(
-                    _button(
-                        "Импортировать конфигурации", self._import_integration_files, primary=True
-                    )
+                    _button("Импортировать конфигурации", self._import_integration_files, primary=True),
+                    0, Qt.AlignmentFlag.AlignLeft,
                 )
             detail_layout.addStretch()
             self.integration_detail_indices[key] = self.integration_pages.addWidget(detail)
         self.settings_pages.addWidget(self._settings_scroll_area(integrations))
         rules = QWidget()
-        layout = QVBoxLayout(rules)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(_label("Правила", heading=True))
-        layout.addWidget(_label("Требования к правилам и состав выполняемых проверок.", muted=True))
+        rules_layout = QVBoxLayout(rules)
+        rules_layout.setContentsMargins(0, 0, 0, 0)
+        rules_layout.addWidget(_label("Проверки", heading=True))
+        self.check_settings_groups = (
+            ("policy", "Правила firewall"),
+            ("management", "Управление устройствами"),
+            ("parameters", "Параметры проверок"),
+        )
+        self.check_settings_pages = QStackedWidget()
+        self.check_settings_indices: dict[str, int] = {}
+        self.check_boxes: dict[str, QCheckBox] = {}
+        policy_groups = (
+            ("Доступ и сетевые сервисы", (
+                "FW-ANY-ANY", "FW-DANGEROUS-SERVICES", "FW-ADMIN-UNTRUSTED",
+                "FW-EXCESSIVE-ACCESS", "FW-ACL-ATTACHMENT",
+            )),
+            ("Структура правил", (
+                "FW-DUPLICATE", "FW-SHADOWED", "FW-PARTIAL-SHADOWED",
+                "FW-UNION-SHADOWED", "FW-MERGE-CANDIDATE", "FW-DISABLED",
+            )),
+            ("Оформление и аудит", ("FW-LOGGING", "FW-COMMENTS")),
+        )
+        management_groups = (
+            ("Доступ к управлению", (
+                "MGMT-TELNET", "MGMT-HTTP", "MGMT-ADMIN-SOURCES",
+                "MGMT-IDLE-TIMEOUT", "MGMT-BANNER",
+            )),
+            ("SNMP", ("MGMT-SNMP-LEGACY", "MGMT-SNMP-WRITE", "MGMT-SNMP-SOURCES")),
+            ("Журналирование", ("MGMT-SYSLOG-MISSING", "MGMT-SYSLOG-UNAPPROVED")),
+            ("Синхронизация времени", ("MGMT-NTP-MISSING", "MGMT-NTP-UNAPPROVED")),
+        )
+        for key, groups in (("policy", policy_groups), ("management", management_groups)):
+            tree = CheckSelection(CHECKS, groups, OPTIONAL_SCOPE_CHECKS)
+            self.check_settings_indices[key] = self.check_settings_pages.addWidget(tree)
+            self.check_boxes.update(tree.check_boxes)
+        for checkbox in self.check_boxes.values():
+            checkbox.toggled.connect(self._save_analysis_settings)
+            checkbox.toggled.connect(self._refresh_staged)
+        parameters = QWidget()
+        parameters_layout = QVBoxLayout(parameters)
+        parameters_layout.setContentsMargins(0, 0, 0, 0)
+
+        def parameter_group(title: str) -> QVBoxLayout:
+            frame = QFrame()
+            frame.setObjectName("integrationGroup")
+            group_layout = QVBoxLayout(frame)
+            group_layout.setContentsMargins(18, 16, 18, 18)
+            group_layout.addWidget(_label(title, heading=True))
+            parameters_layout.addWidget(frame)
+            return group_layout
+
+        policy_layout = parameter_group("Требования к правилам")
         self.logging_check = QCheckBox("Требовать логирование разрешающих правил")
         self.logging_check.setChecked(True)
         self.comments_check = QCheckBox("Требовать комментарии правил")
         self.comments_check.setChecked(True)
-        layout.addWidget(self.logging_check)
-        layout.addWidget(self.comments_check)
+        policy_layout.addWidget(self.logging_check)
+        policy_layout.addWidget(self.comments_check)
         self.logging_check.toggled.connect(self._save_analysis_settings)
         self.comments_check.toggled.connect(self._save_analysis_settings)
         self.management_settings = ManagementSettings()
-        layout.addWidget(self.management_settings)
+        parameter_group("Управление устройствами").addWidget(self.management_settings)
         self.management_settings.changed.connect(self._save_analysis_settings)
         self.policy_exposure_settings = PolicyExposureSettings()
-        layout.addWidget(self.policy_exposure_settings)
+        parameter_group("Сетевые сервисы").addWidget(self.policy_exposure_settings)
         self.policy_exposure_settings.changed.connect(self._save_analysis_settings)
         self.policy_scope_settings = PolicyScopeSettings()
-        layout.addWidget(self.policy_scope_settings)
+        parameter_group("Область доступа и привязки ACL").addWidget(self.policy_scope_settings)
         self.policy_scope_settings.changed.connect(self._save_analysis_settings)
+        thresholds_layout = parameter_group("Изменение состава данных")
         self.rule_drop_threshold = QSpinBox()
         self.inventory_drop_threshold = QSpinBox()
         for title, widget in (
@@ -1878,44 +1906,109 @@ class MainWindow(QMainWindow):
             widget.setRange(1, 100)
             widget.setValue(30)
             widget.setSuffix(" %")
+            widget.setMaximumWidth(110)
             widget.setAccessibleName(title)
             widget.valueChanged.connect(self._save_analysis_settings)
             row.addWidget(widget)
-            layout.addLayout(row)
-        layout.addWidget(_label("Выполняемые проверки", muted=True))
-        self.check_boxes: dict[str, QCheckBox] = {}
-        for check_id, title in CHECKS.items():
-            checkbox = QCheckBox(title)
-            checkbox.setChecked(check_id not in OPTIONAL_SCOPE_CHECKS)
-            self.check_boxes[check_id] = checkbox
-            checkbox.toggled.connect(self._save_analysis_settings)
-            checkbox.toggled.connect(self._refresh_staged)
-            layout.addWidget(checkbox)
-        layout.addWidget(
-            _label(
-                "Хотя бы одна проверка должна быть включена. "
-                "Изменения не меняют сохранённые результаты.",
-                muted=True,
-            )
+            row.addStretch()
+            thresholds_layout.addLayout(row)
+        parameters_layout.addStretch()
+        self.check_settings_indices["parameters"] = self.check_settings_pages.addWidget(
+            self._settings_scroll_area(parameters)
         )
-        layout.addStretch()
-        self.settings_pages.addWidget(self._settings_scroll_area(rules))
+        rules_layout.addWidget(self.check_settings_pages, 1)
+        self.settings_pages.addWidget(rules)
         self._select_settings_tab("integrations", 0)
+
+    def _select_check_settings_group(self, key: str) -> None:
+        self.check_settings_pages.setCurrentIndex(self.check_settings_indices[key])
 
     def _settings_scroll_area(self, content: QWidget) -> QScrollArea:
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        content.setMaximumWidth(1060)
         scroll.setWidget(content)
         return scroll
 
     def _select_settings_tab(self, key: str, index: int) -> None:
         self.settings_pages.setCurrentIndex(index)
-        for tab_key, button in self.settings_nav_buttons.items():
-            button.setChecked(tab_key == key)
+        if index == 0:
+            self._refresh_integration_status()
+        if self.current_section_id == "settings":
+            item = self.settings_tree_items[key]
+            self.navigation.blockSignals(True)
+            self.navigation.setCurrentItem(item)
+            self.navigation.blockSignals(False)
 
     def _open_integration(self, key: str) -> None:
+        if key in ("usergate", "ideco"):
+            if not self._ensure_project():
+                return
+            assert self.project_id is not None
+            existing = self.integration_editors.get(key)
+            if existing is not None and existing[0] != self.project_id:
+                self._reset_integration_editors()
+                existing = None
+            if existing is None:
+                from firewall_compliance.interfaces.desktop.qt_ngfw_sources import (
+                    create_ngfw_source_editor,
+                )
+
+                project_id = self.project_id
+
+                def saved(path: Path) -> None:
+                    if self.project_id == project_id:
+                        self.stage_paths([path])
+
+                editor = create_ngfw_source_editor(
+                    self, self.runner, self.store, project_id, key, saved,
+                    self._refresh_integration_status,
+                )
+                self.integration_form_layouts[key].addWidget(editor)
+                self.integration_editors[key] = (project_id, editor)
         self.integration_pages.setCurrentIndex(self.integration_detail_indices[key])
+
+    def _reset_integration_editors(self) -> None:
+        for key, (_, editor) in self.integration_editors.items():
+            editor.reject()
+            self.integration_form_layouts[key].removeWidget(editor)
+            editor.deleteLater()
+        self.integration_editors.clear()
+        self.integration_pages.setCurrentIndex(0)
+
+    def _show_integrations(self) -> None:
+        self.integration_pages.setCurrentIndex(0)
+        self._refresh_integration_status()
+
+    def _refresh_integration_status(self) -> None:
+        for button in self.integration_buttons.values():
+            button.setProperty("configured", False)
+            button.style().unpolish(button)
+            button.style().polish(button)
+        project_id = self.project_id
+        if not project_id:
+            return
+
+        def loaded(value: object) -> None:
+            if self.project_id != project_id or not isinstance(value, list):
+                return
+            configured: set[str] = set()
+            for connection in value:
+                if not connection.get("config"):
+                    continue
+                provider = connection["provider"]
+                if provider.startswith("cloud_ru_"):
+                    configured.add("cloud_ru")
+                elif provider.startswith("ngfw:"):
+                    configured.add(provider.split(":")[1])
+            for key, button in self.integration_buttons.items():
+                button.setProperty("configured", key in configured)
+                button.style().unpolish(button)
+                button.style().polish(button)
+
+        self.runner.submit(lambda: self.store.list_source_connections(project_id), loaded)
 
     def _import_integration_files(self) -> None:
         self.navigate("staging")
@@ -1955,8 +2048,9 @@ class MainWindow(QMainWindow):
             "весь проект / выбранный полный запуск. Для сбора выбираются назначенные источники и файлы площадки; "
             "общий источник нескольких площадок обновляется целиком."
             if active
-            else "Все площадки выбранного проекта. Назначения не меняют исходные результаты."
+            else ""
         )
+        self.site_selector.setToolTip(self.site_scope_note.text())
         self._refresh_all()
 
     def _populate_site_selector(self, snapshot: ProjectSnapshot | None) -> None:
@@ -2192,11 +2286,12 @@ class MainWindow(QMainWindow):
         self._import_error_items: list[dict[str, Any]] = []
         layout.addWidget(self.import_errors_button)
         self.device_table, self.device_model, self.device_proxy = self._table(
-            ("Устройство", "Платформа / версия", "Тип", "Правил"),
+            ("Устройство", "Платформа / версия", "Тип", "Политики / состав"),
             "devicesTable",
             search_payload=True,
         )
         self.resource_search.textChanged.connect(self.device_proxy.setFilterFixedString)
+        layout.addWidget(_button("Структура и политики выбранного устройства", self._open_switch_details))
         self.device_detail = QTextBrowser()
         self.device_detail.setOpenLinks(False)
         self.device_detail.anchorClicked.connect(self.resource_details.open_device_link)
@@ -2246,7 +2341,7 @@ class MainWindow(QMainWindow):
         self.resource_source_detail = QTextBrowser()
         sources_layout.addWidget(self.resource_source_detail, 1)
         self.device_tabs.addTab(sources_page, "Источники")
-        for column, width in enumerate((220, 180, 140, 75)):
+        for column, width in enumerate((220, 180, 140, 350)):
             self.device_table.setColumnWidth(column, width)
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(self.device_table)
@@ -2293,6 +2388,12 @@ class MainWindow(QMainWindow):
         self.rule_scope.addItem("Выбранный запуск", "run")
         self.rule_scope.currentIndexChanged.connect(self._refresh_rules)
         layout.addWidget(self.rule_scope)
+        self.rule_category = QComboBox()
+        self.rule_category.addItem("Все назначения правил и объекты", "")
+        for key, title in PURPOSE_LABELS.items():
+            self.rule_category.addItem(title, key)
+        self.rule_category.currentIndexChanged.connect(self._refresh_rules)
+        layout.addWidget(self.rule_category)
         self.rule_inventory_status = _label("")
         layout.addWidget(self.rule_inventory_status)
         search = self.rule_search = QLineEdit()
@@ -2819,10 +2920,12 @@ class MainWindow(QMainWindow):
                 self.section_tabs.setTabData(tab_index, key)
                 if key == section_id:
                     self.section_tabs.setCurrentIndex(tab_index)
-        self.section_tabs.setVisible(bool(section and len(section.pages) > 1))
+        self.section_tabs.setVisible(section_id in ("findings", "staging", "scans", "advanced", "history", "reports"))
         self.section_tabs.blockSignals(False)
-        self.settings_button.setChecked(section_id == "settings")
-        item = self.nav_items.get(section_id)
+        item = (
+            self.settings_tree_items.get("integrations" if self.settings_pages.currentIndex() == 0 else "rules")
+            if section_id == "settings" else self.nav_items.get(section_id)
+        )
         self.navigation.blockSignals(True)
         if item is not None:
             parent = item.parent()
@@ -2943,6 +3046,9 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _retry_task_operation(self, kind: str, task_id: str) -> None:
+        if any(editor.property("operationActive") for _, editor in self.integration_editors.values()):
+            self.progress_label.setText("Дождитесь завершения операции подключения.")
+            return
         if self._batch_active or self._restore_busy or not self.project_id or self.cloud_panel.busy:
             self.progress_label.setText("Дождитесь текущей операции перед повтором.")
             return
@@ -2977,19 +3083,35 @@ class MainWindow(QMainWindow):
 
     def _run_context(self) -> str:
         if not self.run:
-            return "Проверка не выбрана · откройте запуск в Операциях"
+            return "Проверка не выбрана · откройте Историю"
         return f"Проверка {self.run_id} · {self.run.get('created_at', '')}"
 
     def _navigation_changed(self, item: QTreeWidgetItem | None, *_: Any) -> None:
-        if item is not None:
-            section_id = item.data(0, Qt.ItemDataRole.UserRole)
-            if section_id:
-                self.navigate(section_id)
+        if item is not None and item.data(0, Qt.ItemDataRole.UserRole):
+            self._activate_navigation_item(item)
+
+    def _activate_navigation_item(self, item: QTreeWidgetItem) -> None:
+        target = item.data(0, Qt.ItemDataRole.UserRole)
+        if not target:
+            return
+        if str(target).startswith("settings:"):
+            key = str(target).split(":", 1)[1]
+            self._select_settings_tab(key, 0 if key == "integrations" else 1)
+            self.navigate("settings")
+        elif str(target).startswith("checks:"):
+            self._select_settings_tab("rules", 1)
+            self._select_check_settings_group(str(target).split(":", 1)[1])
+            self.navigate("settings")
+            self.navigation.blockSignals(True)
+            self.navigation.setCurrentItem(item)
+            self.navigation.blockSignals(False)
+        else:
+            self.navigate(str(target))
 
     def _navigation_clicked(self, item: QTreeWidgetItem, *_: Any) -> None:
-        section_id = item.data(0, Qt.ItemDataRole.UserRole)
-        if section_id:
-            self.navigate(section_id)
+        if item.data(0, Qt.ItemDataRole.UserRole):
+            if item is not self.navigation.currentItem():
+                self._activate_navigation_item(item)
         elif item.childCount():
             item.setExpanded(not item.isExpanded())
 
@@ -3061,6 +3183,8 @@ class MainWindow(QMainWindow):
             self.create_project(name.strip())
 
     def _project_changed(self, *_: Any, load_immediately: bool = False) -> None:
+        if hasattr(self, "integration_editors"):
+            self._reset_integration_editors()
         project_id = self.project_combo.currentData()
         ticket = object()
         self._project_load_ticket = ticket
@@ -3069,7 +3193,6 @@ class MainWindow(QMainWindow):
         self._set_controls_busy(True)
         self.pages.setEnabled(False)
         self.navigation.setEnabled(False)
-        self.settings_button.setEnabled(False)
         self.add_data_button.setEnabled(False)
         self.prepare_button.setEnabled(False)
         self.progress.setRange(0, 0)
@@ -3095,7 +3218,6 @@ class MainWindow(QMainWindow):
             self._set_controls_busy(False)
             self.pages.setEnabled(True)
             self.navigation.setEnabled(True)
-            self.settings_button.setEnabled(True)
             self.add_data_button.setEnabled(True)
             self.prepare_button.setEnabled(True)
             self.progress.hide()
@@ -3121,7 +3243,6 @@ class MainWindow(QMainWindow):
                 self._restore_busy = True
                 self.pages.setEnabled(False)
                 self.navigation.setEnabled(False)
-                self.settings_button.setEnabled(False)
                 self.add_data_button.setEnabled(False)
                 self.prepare_button.setEnabled(False)
                 self.project_combo.blockSignals(True)
@@ -3215,28 +3336,16 @@ class MainWindow(QMainWindow):
     def choose_usergate(self) -> None:
         if not self._ensure_project() or self._batch_active or self._restore_busy:
             return
-        from firewall_compliance.interfaces.desktop.usergate_dialog import collect_usergate
-
-        project_id = self.project_id
-
-        def saved(path: Path) -> None:
-            if self.project_id == project_id:
-                self.stage_paths([path])
-
-        collect_usergate(self, self.runner, saved, store=self.store, project_id=project_id)
+        self.navigate("settings")
+        self._select_settings_tab("integrations", 0)
+        self._open_integration("usergate")
 
     def choose_ideco(self) -> None:
         if not self._ensure_project() or self._batch_active or self._restore_busy:
             return
-        from firewall_compliance.interfaces.desktop.ideco_dialog import collect_ideco
-
-        project_id = self.project_id
-
-        def saved(path: Path) -> None:
-            if self.project_id == project_id:
-                self.stage_paths([path])
-
-        collect_ideco(self, self.runner, saved, store=self.store, project_id=project_id)
+        self.navigate("settings")
+        self._select_settings_tab("integrations", 0)
+        self._open_integration("ideco")
 
     def choose_folder(self) -> None:
         if not self._ensure_project():
@@ -3391,6 +3500,9 @@ class MainWindow(QMainWindow):
 
     def update_and_check(self) -> None:
         """Discover configured sources without blocking the interface."""
+        if any(editor.property("operationActive") for _, editor in self.integration_editors.values()):
+            self.progress_label.setText("Дождитесь завершения операции подключения.")
+            return
         if self._batch_active or self._restore_busy or not self._ensure_project():
             return
         if self.cloud_panel.busy:
@@ -3444,6 +3556,9 @@ class MainWindow(QMainWindow):
     def _start_source_cycle(
         self, sources: tuple, *, file_inputs: tuple[FileCycleInput, ...] | None = None
     ) -> None:
+        if any(editor.property("operationActive") for _, editor in self.integration_editors.values()):
+            self.progress_label.setText("Дождитесь завершения операции подключения.")
+            return
         from firewall_compliance.interfaces.desktop.source_cycle import SourceCycleResult, run_source_cycle
 
         try:
@@ -3588,6 +3703,9 @@ class MainWindow(QMainWindow):
 
     def start_analysis(self) -> None:
         """Capture inputs once; collection, analysis and persistence run in a worker."""
+        if any(editor.property("operationActive") for _, editor in self.integration_editors.values()):
+            self.progress_label.setText("Дождитесь завершения операции подключения.")
+            return
         if not self.run_button.isEnabled() or not self.project_id:
             return
         try:
@@ -4673,12 +4791,56 @@ class MainWindow(QMainWindow):
             rows.append(
                 (
                     name,
-                    configuration.get("platform", "—") + " · версия не определена",
+                    configuration.get("platform", "—") + " · " + str(
+                        (parsed.get("switch_facts") or {}).get("os_version")
+                        or "версия не определена"
+                    ),
                     "Сетевое устройство" if report else "Источник без результата",
-                    len(parsed.get("rules", [])) if parsed else "—",
+                    (
+                        switch_summary(parsed) if parsed.get("switch_policies")
+                        else len(parsed.get("rules", [])) if parsed else "—"
+                    ),
                 )
             )
         self.device_model.replace(rows, items)
+
+    def _open_switch_details(self) -> None:
+        """Открыть факты сохранённой ревизии, не меняя исторические результаты."""
+        items = self._selected_payloads(self.device_table, self.device_proxy, self.device_model)
+        if len(items) != 1:
+            QMessageBox.information(self, "Сведения об устройстве", "Выберите один снимок устройства.")
+            return
+        item = items[0]
+        parsed = item.get("parse_result") or {}
+        if not parsed.get("switch_facts") and not parsed.get("switch_policies"):
+            QMessageBox.information(
+                self, "Сведения об устройстве",
+                "В этой ревизии факты коммутатора не сохранены. Импортируйте конфигурацию заново для новой ревизии.",
+            )
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Структура и политики устройства")
+        dialog.resize(1100, 720)
+        layout = QVBoxLayout(dialog)
+        panel = SwitchDetailsPanel(dialog)
+        panel.set_item(item)
+
+        def show_source(location: object) -> None:
+            session = self.sessions.get(str(item.get("id")))
+            if session is None:
+                panel.show_source("Подключите исходник с совпадающим SHA-256 в карточке источника.")
+                return
+            if not isinstance(location, dict):
+                return
+            try:
+                preview = source_preview(session, SourceLocation.model_validate(location))
+                panel.show_source(safe_switch_source(preview))
+            except ValueError:
+                panel.show_source("Фрагмент недоступен: проверьте источник и диапазон строк.")
+
+        panel.source_requested.connect(show_source)
+        layout.addWidget(panel)
+        dialog.exec()
 
     def _device_selected(self, *_: Any) -> None:
         items = self._selected_payloads(self.device_table, self.device_proxy, self.device_model)
@@ -4850,6 +5012,11 @@ class MainWindow(QMainWindow):
             parsed = item.get("parse_result") or {}
             device = (item.get("report") or {}).get("device_id", "")
             for rule in parsed.get("rules", []):
+                if (
+                    self.rule_category.currentData()
+                    and rule_category(rule) != self.rule_category.currentData()
+                ):
+                    continue
                 condition_match = self.rule_conditions.match(rule)
                 if not self.rule_conditions.accepts(condition_match):
                     continue
@@ -4859,7 +5026,7 @@ class MainWindow(QMainWindow):
                     (
                         device,
                         rule["sequence"],
-                        rule["name"],
+                        rule["name"] + " · " + PURPOSE_LABELS[rule_category(rule)],
                         dict(rule_details(rule)).get("Действие", rule["action"]),
                         rule_endpoint_summary(rule, "sources"),
                         rule_endpoint_summary(rule, "destinations"),
@@ -4874,7 +5041,7 @@ class MainWindow(QMainWindow):
                     }
                 )
             for group in ("endpoints", "services"):
-                if self.rule_conditions.query.active:
+                if self.rule_conditions.query.active or self.rule_category.currentData():
                     continue
                 for value in parsed.get(group, []):
                     rows.append(
@@ -4895,7 +5062,10 @@ class MainWindow(QMainWindow):
                             "search_text": "\n".join(text for _, text in object_details(value)),
                         }
                     )
-        if self.rule_scope.currentData() == "project":
+        if (
+            self.rule_scope.currentData() == "project"
+            and self.rule_category.currentData() in {"", "unknown"}
+        ):
             for item in cloud_resources(self._cloud_scans()):
                 device = item["record"].get("name") or item["record"].get("id", "Cloud.ru")
                 for value in cloud_rule_values(item["record"]):
@@ -4957,6 +5127,7 @@ class MainWindow(QMainWindow):
                 f"<p>Источник: {html.escape(item.get('source_name', '—'))}; "
                 f"SHA-256: {html.escape(item.get('content_sha256') or 'не определён')}</p>"
                 + _fields_html(fields)
+                + (acl_rule_html(item.get("parse_result") or {}, value) if "rule_id" in value else "")
             )
 
     def _refresh_summary(self) -> None:
@@ -5346,6 +5517,9 @@ class MainWindow(QMainWindow):
             self.progress_label.setText("Укажите существующий диапазон не более 200 строк.")
 
     def attach_source(self, item_id: str, path: Path) -> None:
+        if any(editor.property("operationActive") for _, editor in self.integration_editors.values()):
+            self.progress_label.setText("Дождитесь завершения операции подключения.")
+            return
         """Восстановить только проверенный снимок; изменившийся файл добавить в новую очередь."""
         self._restore_busy = True
         self._set_controls_busy(True)
@@ -5390,6 +5564,9 @@ class MainWindow(QMainWindow):
         self.runner.submit(work, done)
 
     def repeat_selected(self) -> None:
+        if any(editor.property("operationActive") for _, editor in self.integration_editors.values()):
+            self.progress_label.setText("Дождитесь завершения операции подключения.")
+            return
         selected = self._selected_payloads(self.device_table, self.device_proxy, self.device_model)
         if not selected or self._batch_active or self._restore_busy:
             return
@@ -5457,6 +5634,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Отключить поздние callbacks без ожидания выполняющегося worker."""
+        if hasattr(self, "integration_editors"):
+            self._reset_integration_editors()
         self._closed = True
         self._cycle_cancel.set()
         self._cycle_epoch = None

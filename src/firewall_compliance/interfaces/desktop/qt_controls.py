@@ -91,7 +91,7 @@ class ControlsPanel(QWidget):
         self._closed = False
         layout = QVBoxLayout(self)
         layout.addWidget(_label(DISCLAIMER))
-        layout.addWidget(_label("Вход для новой оценки — ранее сохранённый общий результат:"))
+        layout.addWidget(_label("Результат для оценки"))
         source_row = QHBoxLayout()
         self.source_selector = QComboBox()
         self.source_selector.setAccessibleName("Общий результат для оценки контролей")
@@ -126,7 +126,7 @@ class ControlsPanel(QWidget):
         self.cancel_button.clicked.connect(self.cancel_current)
         operation_row.addWidget(self.cancel_button)
         layout.addLayout(operation_row)
-        layout.addWidget(_label("Сохранённые оценки текущего проекта:"))
+        layout.addWidget(_label("История оценок"))
         self.assessment_selector = QComboBox()
         self.assessment_selector.setAccessibleName("История оценок внутренних контролей")
         self.assessment_selector.currentIndexChanged.connect(self.load_selected_assessment)

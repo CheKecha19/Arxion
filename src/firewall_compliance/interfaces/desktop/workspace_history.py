@@ -22,6 +22,7 @@ class WorkspaceHistory:
         "severity_filter",
         "status_filter",
         "rule_scope",
+        "rule_category",
     )
     searches = ("resource_search", "finding_search", "rule_search")
     tables = ("device", "finding", "rules", "history", "resource_findings", "resource_history")
@@ -79,6 +80,7 @@ class WorkspaceHistory:
                 "collection_tab": view.cloud_panel.collection_tabs.currentIndex(),
                 "settings": view.settings_pages.currentIndex(),
                 "integration": view.integration_pages.currentIndex(),
+                "check_group": view.check_settings_pages.currentIndex(),
             }
         )
         self.locations = self.locations[-50:]
@@ -137,4 +139,5 @@ class WorkspaceHistory:
             "integrations" if settings_index == 0 else "rules", settings_index
         )
         view.integration_pages.setCurrentIndex(location["integration"])
+        view.check_settings_pages.setCurrentIndex(location["check_group"])
         view.back_button.setEnabled(bool(self.locations))

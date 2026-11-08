@@ -15,13 +15,7 @@ class ManagementSettings(QWidget):
     def __init__(self) -> None:
         super().__init__()
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Требования к управлению устройствами"))
-        note = QLabel(
-            "Списки через запятую. Пустое поле — список не задан; «[]» — запретить все. "
-            "Без списка соответствующая проверка покажет недостаток данных."
-        )
-        note.setWordWrap(True)
-        layout.addWidget(note)
+        layout.setContentsMargins(0, 0, 0, 0)
         self.fields: dict[str, QLineEdit] = {}
         for key, title in {
             "approved_admin_networks": "Разрешённые сети администраторов (CIDR)",
@@ -31,6 +25,9 @@ class ManagementSettings(QWidget):
         }.items():
             layout.addWidget(QLabel(title))
             field = QLineEdit()
+            field.setAccessibleName(title)
+            field.setPlaceholderText("Значения через запятую")
+            field.setToolTip("Пусто — не задано; [] — запретить все значения.")
             self.fields[key] = field
             layout.addWidget(field)
             field.editingFinished.connect(self.changed.emit)

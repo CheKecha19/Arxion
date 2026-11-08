@@ -1,5 +1,9 @@
 # Контекст пересылки одного Cisco ASA
 
+Дополнение 08.11.2026: SwitchFacts/SwitchPolicies не расширяют область ASA
+forwarding context. L2-связность и control-plane ограничения коммутаторов не
+доказывают транзитную IP-достижимость. Требования — SWITCH_CONFIG_IMPORT.md.
+
 Дата: 2026-10-11.
 Статус: подготовка, ForwardingContext 0.1.0, конфигурационный ASA forwarding adapter, application binding и условный evaluator политик 0.1.0 реализованы. Оркестрация с маршрутом, effective NAT вход и итоговая достижимость ещё не реализованы.
 

@@ -60,6 +60,7 @@ def parse_management(source: SourceDocument, platform: str) -> ManagementInvento
     # unresolved ACLs are not approximated by their permit lines.
     acls: dict[str, list[tuple[int, str, IPv4Network, int]]] = {}
     bad_acls: set[str] = set()
+    banner_lines: set[int] = set()
     acl: str | None = None
     acl_skip_until = 0
     for number, raw in enumerate(lines, 1):
@@ -76,6 +77,7 @@ def parse_management(source: SourceDocument, platform: str) -> ManagementInvento
                     acl_skip_until += 1
             else:
                 acl_skip_until = len(lines)
+            banner_lines.update(range(number, acl_skip_until + 1))
             continue
         match = re.fullmatch(r"acl (?:number |basic )?(\d+)", line)
         if match:
@@ -144,10 +146,174 @@ def parse_management(source: SourceDocument, platform: str) -> ManagementInvento
         evidence = tuple(loc(e[3]) for e in entries)
         put(kind, scope, ",".join(map(str, allowed)), number, evidence)
 
+    cx_consumed: set[int] = set()
+    if platform == "aos-cx":
+        # A source whitelist is proven only by a complete, simple IPv4 ACL.
+        # Service-specific/extended predicates cannot become an admin allowlist.
+        cx_acls: dict[str, list[tuple[int, IPv4Network, int]]] = {}
+        cx_bad_acls: set[str] = set()
+        cx_bad_lines: dict[str, list[int]] = {}
+        cx_acl: str | None = None
+        for number, raw in enumerate(lines, 1):
+            if number in banner_lines:
+                continue
+            line = raw.strip()
+            header = re.fullmatch(r"access-list ip (\S+)", line)
+            if header:
+                cx_acl = header[1]
+                cx_acls.setdefault(cx_acl, [])
+                continue
+            if not raw[:1].isspace() or line.startswith("!"):
+                cx_acl = None
+            if cx_acl is None or not line:
+                continue
+            if re.fullmatch(r"\d+ (?:comment|remark) .+", line):
+                continue
+            entry = re.fullmatch(r"(\d+) permit any (\S+) any", line)
+            if entry is None:
+                cx_bad_acls.add(cx_acl)
+                cx_bad_lines.setdefault(cx_acl, []).append(number)
+                continue
+            try:
+                network = IPv4Network(entry[2], strict=False)
+                cx_acls[cx_acl].append((int(entry[1]), network, number))
+            except ValueError:
+                cx_bad_acls.add(cx_acl)
+                cx_bad_lines.setdefault(cx_acl, []).append(number)
+
+        def cx_sources(
+            kind: ManagementKind, reference: str, scope: str, number: int
+        ) -> None:
+            entries = cx_acls.get(reference, [])
+            if (
+                not source.configuration_complete
+                or not entries
+                or reference in cx_bad_acls
+                or len({entry[0] for entry in entries}) != len(entries)
+            ):
+                issue(kind, number)
+                for invalid_line in cx_bad_lines.get(reference, []):
+                    issue(kind, invalid_line)
+                return
+            # This narrow shape contains permits only. The documented CX
+            # implicit deny is not fabricated as an explicit ACE/source line.
+            networks = tuple(dict.fromkeys(str(entry[1]) for entry in sorted(entries)))
+            put(kind, scope, ",".join(networks), number, tuple(loc(e[2]) for e in entries))
+
+        control_bindings: dict[str, tuple[str, int]] = {}
+        bad_control_vrfs: set[str] = set()
+        admin_services: list[tuple[str, int]] = []
+        community: tuple[int, str | None, int | None, str | None, int | None] | None = None
+        cli_session = False
+
+        def finish_community() -> None:
+            if community is None:
+                return
+            start, level, level_line, reference, reference_line = community
+            scope = f"community-line:{start}"
+            put("snmp_legacy", "global", "true", start)
+            if level in {"ro", "rw"} and level_line is not None:
+                put("snmp_write", scope, str(level == "rw").lower(), level_line)
+            else:
+                # Omitted access-level is not treated as an observed explicit ro.
+                issue("snmp_write", start)
+            if reference is not None and reference_line is not None:
+                cx_sources("snmp_sources", reference, scope, reference_line)
+            else:
+                issue("snmp_sources", start)
+
+        for number, raw in enumerate(lines, 1):
+            if number in banner_lines:
+                continue
+            line = raw.strip()
+            if not line:
+                continue
+            if not raw[:1].isspace():
+                finish_community()
+                community = None
+                cli_session = False
+            if line.startswith("snmp-server community ") and not raw[:1].isspace():
+                # The community value is deliberately never retained in a fact.
+                try:
+                    tokens = shlex.split(line)
+                except ValueError:
+                    tokens = []
+                if len(tokens) == 3:
+                    community = (number, None, None, None, None)
+                else:
+                    issue("snmp_write", number)
+                    issue("snmp_sources", number)
+                cx_consumed.add(number)
+                continue
+            if community is not None and raw[:1].isspace():
+                start, level, level_line, reference, reference_line = community
+                if line in {"access-level ro", "access-level rw"}:
+                    if level is not None:
+                        issue("snmp_write", number)
+                    community = (start, line.split()[1], number, reference, reference_line)
+                elif re.fullmatch(r"access-list ipv4 \S+", line):
+                    if reference is not None:
+                        issue("snmp_sources", number)
+                    community = (start, level, level_line, line.split()[2], number)
+                else:
+                    issue("snmp_sources", number)
+                    issue("snmp_write", number)
+                cx_consumed.add(number)
+                continue
+            binding = re.fullmatch(
+                r"apply access-list ip (\S+) control-plane vrf (\S+)", line
+            )
+            if binding:
+                if binding[2] in control_bindings:
+                    issue("admin_sources", number)
+                    bad_control_vrfs.add(binding[2])
+                control_bindings[binding[2]] = (binding[1], number)
+                cx_consumed.add(number)
+                continue
+            service = re.fullmatch(r"(?:ssh server|https-server) vrf (\S+)", line)
+            if service:
+                admin_services.append((service[1], number))
+                cx_consumed.add(number)
+                continue
+            if re.fullmatch(r"snmp-server vrf \S+", line):
+                cx_consumed.add(number)
+                continue
+            if line == "cli-session":
+                cli_session = True
+                cx_consumed.add(number)
+                continue
+            if cli_session and raw[:1].isspace():
+                timeout = re.fullmatch(r"timeout (\d+)", line)
+                if timeout:
+                    put("timeout", "cli-session", str(int(timeout[1]) * 60), number)
+                else:
+                    issue("timeout", number)
+                cx_consumed.add(number)
+                continue
+            ntp = re.fullmatch(r"ntp server (\S+)(?: prefer| iburst)?", line)
+            if ntp:
+                try:
+                    server = normalize_server(ntp[1])
+                    put("ntp", server, server, number)
+                except ValueError:
+                    issue("ntp", number)
+                cx_consumed.add(number)
+            elif re.fullmatch(r"ntp vrf \S+", line):
+                cx_consumed.add(number)
+        finish_community()
+        for vrf, number in admin_services:
+            selected_binding = control_bindings.get(vrf)
+            if selected_binding is None or vrf in bad_control_vrfs:
+                # No mgmt-VRF whitelist is projected onto another VRF.
+                issue("admin_sources", number)
+            else:
+                reference, binding_line = selected_binding
+                cx_sources("admin_sources", reference, f"vrf:{vrf}", binding_line)
+
     context = "global"
     skip_until = 0
     for number, raw in enumerate(lines, 1):
-        if number <= skip_until:
+        if number <= skip_until or number in cx_consumed:
             continue
         line = raw.strip()
         if not line or line.startswith(("!", ";")):
@@ -250,6 +416,15 @@ def parse_management(source: SourceDocument, platform: str) -> ManagementInvento
             match = re.fullmatch(r"acl (\d+) inbound", line)
             if match:
                 acl_sources("admin_sources", match[1], context, number)
+                continue
+        if platform == "comware" and is_global:
+            match = re.fullmatch(r"ssh server acl (\d+)", line)
+            if match:
+                acl_sources("admin_sources", match[1], "ssh", number)
+                continue
+            if line == "ssh server enable" or re.fullmatch(
+                r"ssh server authentication-retries \d+", line
+            ):
                 continue
         if platform == "aos-switch" and line.startswith("ip authorized-managers "):
             match = re.fullmatch(

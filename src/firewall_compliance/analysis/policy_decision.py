@@ -15,6 +15,7 @@ from firewall_compliance.domain.policy_decision import (
 from firewall_compliance.domain.reachability import AnalysisReason, ReachabilityQuery
 from firewall_compliance.domain.revision import DeviceRevision
 from firewall_compliance.domain.source import SourceLocation
+from firewall_compliance.domain.switch_policy import is_transit_rule
 
 _ACTIONS: dict[str, Literal["allow", "deny", "drop", "reject"]] = {
     "allow": "allow",
@@ -127,6 +128,13 @@ def evaluate_policy(
     if len({rule.rule_id for rule in rules}) != len(rules):
         reason("duplicate_rule_id", "contradiction", "Идентификаторы ACL повторяются.")
     for rule in rules:
+        if not is_transit_rule(rule):
+            reason(
+                "non_transit_policy",
+                "unsupported",
+                "Управляющая, непривязанная или неизвестная ACL не определяет транзитный доступ.",
+            )
+            break
         zone = rule.source_zone if binding.direction == "in" else rule.destination_zone
         opposite_zone = rule.destination_zone if binding.direction == "in" else rule.source_zone
         if (

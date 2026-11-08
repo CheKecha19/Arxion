@@ -2,10 +2,16 @@
 
 from datetime import datetime
 from ipaddress import ip_address
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import (
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from firewall_compliance.domain.base import DomainModel
 from firewall_compliance.domain.enums import DataStatus, RuleAction
@@ -73,6 +79,7 @@ class Rule(DomainModel):
     policy_id: str | None = Field(default=None, min_length=1)
     policy_direction: Literal["in", "out", "global"] | None = None
     policy_semantics: Literal["first_match"] | None = None
+    policy_purpose: Literal["transit", "management", "unbound", "unknown"] | None = None
     match_status: DataStatus = DataStatus.UNKNOWN
     description_status: DataStatus = DataStatus.UNKNOWN
     source_location: SourceLocation
@@ -81,6 +88,13 @@ class Rule(DomainModel):
     service_status: DataStatus = DataStatus.KNOWN
     zone_status: DataStatus = DataStatus.UNKNOWN
     logging_status: DataStatus = DataStatus.UNKNOWN
+
+    @model_serializer(mode="wrap")
+    def serialize_purpose(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        payload: dict[str, Any] = handler(self)
+        if self.policy_purpose is None:
+            payload.pop("policy_purpose", None)
+        return payload
 
     @model_validator(mode="after")
     def validate_known_matches(self) -> "Rule":
