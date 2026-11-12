@@ -1,4 +1,5 @@
 ---
+description: Помощь и решение проблем
 icon: life-ring
 layout:
   width: wide
@@ -22,108 +23,36 @@ layout:
     visible: false
 ---
 
-# Help Center
+# Помощь и решение проблем
 
-{% columns %}
-{% column width="16.666666666666664%" %}
+Начните с сообщения конкретной операции, версии приложения и времени данных. Сбой сбора, ошибка импорта и неполный аналитический вывод требуют разных действий.
 
-{% endcolumn %}
+| Симптом                                    | Что проверить и сделать                                                                                            |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| EXE не запускается после переноса          | Перенесена ли вся папка с `_internal` и `README.txt`; не смешаны ли файлы разных версий                            |
+| Проект не виден                            | Выбран ли нужный пользователь Windows и сохранена ли база в его профиле                                            |
+| Файл не распознан                          | Совпадают ли платформа и формат с поддержанным срезом; для UserGate/Ideco нужен собственный JSON-снимок коллектора |
+| Устройство определено неоднозначно         | Прочитайте признаки распознавания; не выбирайте формат только по hostname или расширению                           |
+| Данные старые                              | Сравните последнюю попытку с последним успешным сбором и временем наблюдения                                       |
+| Нет находок                                | Проверьте состав выполненных проверок, профиль, число разобранных правил и ограничения                             |
+| Результат partial/unknown                  | Получите полный экспорт или недостающий контекст; неизвестное не означает разрешение или запрет                    |
+| Счётчики резко уменьшились                 | Проверьте права API, состав ресурсов и исходные файлы до вывода об устранении проблем                              |
+| Не открывается источник старого результата | Выберите неизменный файл с тем же SHA-256; изменённый файл анализируйте заново                                     |
+| Секрет недоступен после переноса           | Введите и сохраните его заново: DPAPI привязан к контексту пользователя Windows                                    |
+| Ошибка TLS                                 | Проверьте адрес, цепочку сертификата и доверенный PEM CA; не подменяйте протокол ради обхода ошибки                |
+| Нет ответа от облачного ресурса            | Проверьте платформу, область токена, доступность отдельных API и диагностику каждого элемента                      |
+| VLAN отсутствует в старой ревизии          | Повторно импортируйте конфигурацию; новые сведения не дописываются в старые снимки                                 |
+| Матрица не сверяется                       | Выберите пригодный снимок, проверьте структуру, разрешение групп и сохраните текущий черновик новой версией        |
+| CLI не принимает JSON                      | Уточните вид документа; Firewall Assurance, AnalysisResult, карта и оценка контролей не взаимозаменяемы            |
+| Отмена не мгновенная                       | Дождитесь завершения текущего участка; отмена обрабатывается между элементами                                      |
+| Результат сравнения неожиданный            | Сопоставьте профили, версии парсера, состав устройств и полноту двух запусков                                      |
 
-{% column width="66.66666666666667%" %}
-{% hint style="success" %}
-**All systems operational** — No known issues. [View status page](https://status.gitbook.com)
-{% endhint %}
-{% endcolumn %}
+## Как подготовить обращение
 
-{% column width="16.666666666666657%" %}
+Укажите версию, способ запуска, раздел приложения, последовательность действий, ожидаемый и фактический результат. Добавьте текст ошибки, платформу и версию устройства, тип экспорта, сведения о полноте и время сбора.
 
-{% endcolumn %}
-{% endcolumns %}
+При необходимости приложите минимальный синтетический пример, воспроизводящий проблему. Не отправляйте пароли, токены, приватные ключи или клиентские конфигурации. Перед передачей отчёта проверьте адреса, имена и доказательства: маскирование секретов не делает весь отчёт обезличенным.
 
-<h2 align="center">What can we help you find?</h2>
+Используйте согласованный с сопровождающим канал поддержки. Эта документация не устанавливает SLA и не объявляет статус внешних сервисов.
 
-<p align="center">Browse the topics below or use the GitBook Assistant to ask anything you need help with.</p>
-
-<p align="center"><button type="button" class="button primary" data-action="ask" data-icon="gitbook-assistant">How can we help?</button><a href="https://gitbook.com/" class="button secondary" data-icon="paper-plane">Contact support</a></p>
-
-&#x20;
-
-<table data-view="cards"><thead><tr><th></th><th></th><th></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><h3><i class="fa-leaf" style="color:$primary;">:leaf:</i></h3></td><td><h4><strong>Getting started</strong></h4></td><td>Get help with the basics</td><td><a href="https://app.gitbook.com/s/Jg8oHMFbovzQHuBt3bDI/getting-started">Getting started</a></td></tr><tr><td><h3><i class="fa-money-bill-wave" style="color:$primary;">:money-bill-wave:</i></h3></td><td><h4><strong>Plans and billing</strong></h4></td><td>Get help with your billing</td><td><a href="https://app.gitbook.com/s/Jg8oHMFbovzQHuBt3bDI/plans-billing">Plans and billing</a></td></tr><tr><td><h3><i class="fa-computer-mouse" style="color:$primary;">:computer-mouse:</i></h3></td><td><h4><strong>Admin</strong></h4></td><td>Manage your account</td><td><a href="https://app.gitbook.com/s/Jg8oHMFbovzQHuBt3bDI/admin">Admin</a></td></tr><tr><td><h3><i class="fa-plug" style="color:$primary;">:plug:</i></h3></td><td><h4><strong>Integrations</strong></h4></td><td>Extend your workflow</td><td><a href="https://app.gitbook.com/s/Jg8oHMFbovzQHuBt3bDI/integrations">Integrations</a></td></tr><tr><td><h3><i class="fa-bullhorn" style="color:$primary;">:bullhorn:</i></h3></td><td><h4><strong>Product updates</strong></h4></td><td>See what’s new</td><td><a href="https://app.gitbook.com/s/CZbDdkP8vJPnHt6CYpzP/">Changelog</a></td></tr><tr><td><h3><i class="fa-heart" style="color:$danger;">:heart:</i></h3></td><td><h4><strong>Community</strong></h4></td><td>Join our community</td><td><a href="https://app.gitbook.com/s/Jg8oHMFbovzQHuBt3bDI/community">Community</a></td></tr></tbody></table>
-
-&#x20;
-
-&#x20;
-
-{% columns %}
-{% column %}
-### Featured
-
-{% hint style="info" icon="right-to-bracket" %}
-Log in to see articles recommended based on your plan and recent activity.
-
-<a href="https://gitbook.com" class="button primary">Sign up</a><a href="https://gitbook.com" class="button secondary">Log in</a>
-{% endhint %}
-
-{% content-ref url="getting-started/getting-started-checklist.md" %}
-[getting-started-checklist.md](getting-started/getting-started-checklist.md)
-{% endcontent-ref %}
-
-{% content-ref url="getting-started/whats-the-difference-between-a-workspace-and-a-project.md" %}
-[whats-the-difference-between-a-workspace-and-a-project.md](getting-started/whats-the-difference-between-a-workspace-and-a-project.md)
-{% endcontent-ref %}
-
-{% content-ref url="admin/managing-api-keys.md" %}
-[managing-api-keys.md](admin/managing-api-keys.md)
-{% endcontent-ref %}
-{% endcolumn %}
-
-{% column %}
-### Popular articles
-
-{% content-ref url="admin/inviting-team-members-to-your-workspace.md" %}
-[inviting-team-members-to-your-workspace.md](admin/inviting-team-members-to-your-workspace.md)
-{% endcontent-ref %}
-
-{% content-ref url="integrations/why-isnt-my-integration-syncing.md" %}
-[why-isnt-my-integration-syncing.md](integrations/why-isnt-my-integration-syncing.md)
-{% endcontent-ref %}
-
-{% content-ref url="plans-billing/how-do-i-change-my-plan.md" %}
-[how-do-i-change-my-plan.md](plans-billing/how-do-i-change-my-plan.md)
-{% endcontent-ref %}
-
-{% content-ref url="getting-started/whats-the-difference-between-a-workspace-and-a-project.md" %}
-[whats-the-difference-between-a-workspace-and-a-project.md](getting-started/whats-the-difference-between-a-workspace-and-a-project.md)
-{% endcontent-ref %}
-
-{% content-ref url="getting-started/setting-up-a-custom-domain.md" %}
-[setting-up-a-custom-domain.md](getting-started/setting-up-a-custom-domain.md)
-{% endcontent-ref %}
-{% endcolumn %}
-
-{% column %}
-### Recently updated
-
-{% content-ref url="integrations/connecting-a-third-party-app.md" %}
-[connecting-a-third-party-app.md](integrations/connecting-a-third-party-app.md)
-{% endcontent-ref %}
-
-{% content-ref url="integrations/api-rate-limits-and-quotas.md" %}
-[api-rate-limits-and-quotas.md](integrations/api-rate-limits-and-quotas.md)
-{% endcontent-ref %}
-
-{% content-ref url="admin/sso-configuration-guide.md" %}
-[sso-configuration-guide.md](admin/sso-configuration-guide.md)
-{% endcontent-ref %}
-
-{% content-ref url="plans-billing/billing-faq.md" %}
-[billing-faq.md](plans-billing/billing-faq.md)
-{% endcontent-ref %}
-
-{% content-ref url="admin/sso-configuration-guide.md" %}
-[sso-configuration-guide.md](admin/sso-configuration-guide.md)
-{% endcontent-ref %}
-{% endcolumn %}
-{% endcolumns %}
-
-&#x20;
+[Первая проверка](https://app.gitbook.com/s/lo32lFq5iChWTEH1YNOx/nachalo-raboty/first-analysis) · [Хранение и восстановление](https://app.gitbook.com/s/lo32lFq5iChWTEH1YNOx/rabochee-prostranstvo/storage) · [Полное руководство](https://app.gitbook.com/s/lo32lFq5iChWTEH1YNOx/)
