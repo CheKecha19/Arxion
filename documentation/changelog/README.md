@@ -1,5 +1,5 @@
 ---
-description: New updates and improvements
+description: Версии и изменения
 icon: clock-rotate-left
 layout:
   width: wide
@@ -23,128 +23,39 @@ layout:
     visible: true
 ---
 
-# Changelog
+# Версии и изменения
 
+Сведения проверены 13 ноября 2026 года. Опубликованный выпуск и версия рабочего дерева различаются.
 
+## Опубликованный предварительный выпуск 0.10.0
 
-{% updates format="full" %}
-{% update date="2025-12-03" tags="feature,improvement,fix" %}
-## Product update
+[FirewallComplience v0.10.0](https://github.com/CheKecha19/Arxion/releases/tag/v0.10.0), опубликован 8 ноября 2026 года.
 
-See what’s new and improved in our latest update.
+Выпуск расширяет импорт коммутаторов: определение поддержанных семейств, разделение объявлений ACL и их применений, конфигурационные сведения об интерфейсах, VLAN, агрегатах, маршрутах и управлении. Добавлены карточка структуры устройства, представление коммутаторов на карте и экспорт каталога.
 
-<div align="left"><figure><img src="https://gitbookio.github.io/onboarding-template-images/placeholder.png" alt=""><figcaption></figcaption></figure></div>
+Ограничения: конфигурация порта не подтверждает link up, маршрут не доказывает рабочий RIB, описание соседа не является подтверждением физической связи. Автоматическая сквозная проверка всей сети этим выпуском не обеспечивается.
 
-### Product feature
+Бинарные вложения к GitHub Release отсутствуют; локальная сборка, описанная в заметках, не является опубликованным скачиваемым дистрибутивом.
 
-* Feature description
-* Feature description
+### Проверки выпуска
 
-### Product feature
+Основной [Engineering Harness](https://github.com/CheKecha19/Arxion/actions/runs/42498470242) для базового коммита завершился с ошибками Code quality, CLI and Qt smoke, Static security and dependencies и Automated tests. Packaging и Project maps and architecture завершились успешно. Поздний успешный CodeQL — отдельная проверка и не отменяет ошибки основного набора. Полная приёмка не заявлена.
 
-* Feature description
-* Feature description
+## Рабочие изменения после 0.10.0
 
-<a href="2026/product-update.md" class="button primary">Read full update</a><a href="https://gitbook.com/" class="button secondary">Documentation</a>
+Следующие возможности описываются по исходникам и не объявляются опубликованными выпусками:
 
-<details>
+| Обозначение в документации         | Изменения                                                                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------- |
+| 0.11.0                             | Реестр наблюдений VLAN из сохранённых снимков коммутаторов                            |
+| 0.12.0                             | Каталог ArubaOS Controller, анализ объявлений и запрос политики роли                  |
+| 0.13.0                             | Логические сети, ожидаемые подсети, подтверждаемые привязки VLAN и сравнение          |
+| Текущая разработка в дереве 0.13.0 | Сохранённые файловые источники, переработанная навигация и матрица требований доступа |
 
-<summary>Improved</summary>
+Сборка и выполнение этих изменений не проверялись в ходе подготовки руководства. Не используйте номер рабочего дерева как доказательство наличия соответствующего бинарного выпуска.
 
-* Product improvement
-* Product improvement
-* Product improvement
-* Product improvement
-* Product improvement
+## Обновление
 
-</details>
+Сначала сохраните базу и исходники, затем установите полную папку согласованной версии. Старые ревизии не получают новые сетевые сведения без повторного импорта. Подробности: [установка и обновление](https://app.gitbook.com/s/lo32lFq5iChWTEH1YNOx/nachalo-raboty/installation).
 
-<details>
-
-<summary>Fixed</summary>
-
-* Product fix
-* Product fix
-* Product fix
-* Product fix
-* Product fix
-
-</details>
-{% endupdate %}
-
-{% update date="2026-05-08" tags="feature,fix" %}
-## Product update
-
-See what’s new and improved in our latest update.
-
-<div align="left"><figure><img src="https://gitbookio.github.io/onboarding-template-images/placeholder.png" alt=""><figcaption></figcaption></figure></div>
-
-### Product feature
-
-* Feature description
-* Feature description
-
-<a href="2026/product-update-1.md" class="button primary">Read full update</a><a href="https://gitbook.com/" class="button secondary">Documentation</a>
-
-<details>
-
-<summary>Fixed</summary>
-
-* Product fix
-* Product fix
-* Product fix
-* Product fix
-* Product fix
-
-</details>
-{% endupdate %}
-
-{% update date="2025-11-18" tags="improvement,fix" %}
-## Product update
-
-See what’s new and improved in our latest update.
-
-<a href="2025/product-update.md" class="button primary">Read full update</a><a href="https://gitbook.com/" class="button secondary">Documentation</a>
-
-<details>
-
-<summary>Improved</summary>
-
-* Product improvement
-* Product improvement
-* Product improvement
-* Product improvement
-* Product improvement
-
-</details>
-
-<details>
-
-<summary>Fixed</summary>
-
-* Product fix
-* Product fix
-* Product fix
-* Product fix
-* Product fix
-
-</details>
-{% endupdate %}
-
-{% update date="2025-06-09" tags="feature" %}
-## Product update
-
-See what’s new and improved in our latest update.
-
-
-
-<div align="left"><figure><img src="https://gitbookio.github.io/onboarding-template-images/placeholder.png" alt=""><figcaption></figcaption></figure></div>
-
-### Product feature
-
-* Feature description
-* Feature description
-
-<a href="2025/product-update-1.md" class="button primary">Read full update</a><a href="https://gitbook.com/" class="button secondary">Documentation</a>
-{% endupdate %}
-{% endupdates %}
+Более ранняя история доступна в [GitHub Releases](https://github.com/CheKecha19/Arxion/releases). Шаблонные новости GitBook не являются историей Arxion.
