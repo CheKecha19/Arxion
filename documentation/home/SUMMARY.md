@@ -1,3 +1,3 @@
 # Table of contents
 
-* [Developer Platform](README.md)
+* [Arxion — анализ сетевых конфигураций](README.md)
