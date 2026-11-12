@@ -1,30 +1,91 @@
 ---
-description: >-
-  Everything you need to build, deploy, and manage your projects on the
-  platform.
+description: 'Руководство Arxion: Об Arxion'
 icon: hand-wave
 ---
 
-# Welcome
+# Об Arxion
 
-Welcome to the platform. These docs cover everything from your first project to advanced workflows — pick a starting point below or ask the Assistant to jump straight to what you need.
+Arxion — локальное приложение для анализа конфигураций сетевого оборудования, межсетевых экранов и облачных правил. Оно помогает инженеру собрать сведения об инфраструктуре, разобраться в политиках доступа, проверить технические требования и подготовить отчёт с доказательствами.
 
-<button type="button" class="button primary" data-action="ask" data-icon="gitbook-assistant">Ask a question…</button>
+В окне приложения и файлах поставки пока используется название **Firewall Compliance**. Это то же приложение: имя исполняемого файла начинается с `FirewallComplience`.
 
-<button type="button" class="button secondary" data-action="ask" data-query="How do I deploy my first project" data-icon="rocket-launch">Deploy your first project</button><button type="button" class="button secondary" data-action="ask" data-query="How do I set up a custom domain" data-icon="globe">Set up a custom domain</button><button type="button" class="button secondary" data-action="ask" data-query="How do I invite my team" data-icon="user-group">Invite your team</button>
+## Кому полезно приложение
 
-***
+* Сетевому инженеру — для инвентаризации устройств, интерфейсов и VLAN, просмотра ACL и поиска правил.
+* Специалисту ИБ — для выявления широких разрешений, проблем порядка правил и несоответствий профилю проверки.
+* Аудитору — для фиксации результатов, исходных доказательств, ограничений и изменений между запусками.
+* Администратору — для повторяемого сбора данных и подготовки отчётов по проекту.
 
-{% hint style="success" icon="sparkles" %}
-**New: scheduled deploys and team-level audit logs.** Schedule deploys for any future date and review every action taken in your workspace.
+## Основной процесс
 
-<a href="https://app.gitbook.com/s/CZbDdkP8vJPnHt6CYpzP/" class="button secondary">See what's new</a>
-{% endhint %}
+1. Создать проект и определить площадки.
+2. Добавить файлы конфигураций или настроить поддержанную интеграцию.
+3. Проверить распознавание, состав и полноту данных.
+4. Выполнить анализ с нужным профилем.
+5. Изучить находки и связанные правила, сопоставить требования доступа с конфигурацией.
+6. Сохранить решения, сравнить повторный запуск и экспортировать отчёт.
 
-## Where to start
+Исходные конфигурации приложение автоматически не исправляет. Решение об изменении сетевой политики принимает инженер и выполняет его штатными средствами управления оборудованием.
 
-<table data-card-size="large" data-view="cards"><thead><tr><th></th><th></th><th></th><th data-hidden data-card-target data-type="content-ref"></th></tr></thead><tbody><tr><td><h4><i class="fa-rocket-launch" style="color:$primary;">:rocket-launch:</i></h4></td><td><h4>Getting started</h4></td><td>Set up your account and ship your first project in minutes.</td><td><a href="getting-started/getting-started.md">getting-started.md</a></td></tr><tr><td><h4><i class="fa-book" style="color:$primary;">:book:</i></h4></td><td><h4>Core concepts</h4></td><td>Understand workspaces, projects, and how permissions work.</td><td><a href="core-concepts/core-concepts.md">core-concepts.md</a></td></tr><tr><td><h4><i class="fa-graduation-cap" style="color:$primary;">:graduation-cap:</i></h4></td><td><h4>Guides</h4></td><td>Walkthroughs for common tasks like custom domains and automations.</td><td><a href="guides/guides.md">guides.md</a></td></tr><tr><td><h4><i class="fa-book-open" style="color:$primary;">:book-open:</i></h4></td><td><h4>Reference</h4></td><td>Detailed configuration options, limits, and terminology.</td><td><a href="reference/reference.md">reference.md</a></td></tr></tbody></table>
+## Что означает результат
 
-## Popular tasks
+Вывод Arxion относится к полученным данным и поддержанной модели платформы. Найденное разрешение в ACL не доказывает, что сервис достижим по всему сетевому пути. Отсутствие находок не означает полного соответствия требованиям или отсутствия рисков. Диагностика неполноты — часть результата, которую следует включать в оценку.
 
-<table data-view="cards"><thead><tr><th></th><th data-type="content-ref"></th><th data-type="content-ref"></th><th data-type="content-ref"></th></tr></thead><tbody><tr><td><h4>For builders</h4></td><td><a href="getting-started/quickstart.md">quickstart.md</a></td><td><a href="getting-started/your-first-project.md">your-first-project.md</a></td><td><a href="guides/custom-domains.md">custom-domains.md</a></td></tr><tr><td><h4>For admins</h4></td><td><a href="core-concepts/permissions.md">permissions.md</a></td><td><a href="reference/configuration.md">configuration.md</a></td><td><a href="core-concepts/workspaces-and-projects.md">workspaces-and-projects.md</a></td></tr><tr><td><h4>For developers</h4></td><td><a href="guides/automations.md">automations.md</a></td><td><a href="reference/glossary.md">glossary.md</a></td><td><a href="reference/configuration.md">configuration.md</a></td></tr></tbody></table>
+## Версия этого руководства
+
+Руководство подготовлено 13 ноября 2026 года по рабочим исходникам **0.13.0**, включая изменения в разработке. Последний подтверждённый опубликованный предварительный выпуск — **v0.10.0** от 8 ноября 2026 года. Разделы про реестр VLAN, контроллеры, логические сети и обновлённую матрицу могут отсутствовать или отличаться в опубликованной сборке.
+
+Наличие функции в исходниках не подтверждает её приёмку или совместимость со всеми устройствами. В этом руководстве проверены описания и исходный код; аппаратные испытания, замеры производительности и повторный запуск приложения не выполнялись.
+
+## Начать работу
+
+* [Установка и обновление](nachalo-raboty/installation.md)
+* [Первая проверка](nachalo-raboty/first-analysis.md)
+* [Навигация](rabochee-prostranstvo/navigation.md)
+* [Проекты и площадки](rabochee-prostranstvo/projects-sites.md)
+* [Хранение и защита данных](rabochee-prostranstvo/storage.md)
+* [Термины](spravochnik/glossary.md)
+
+## Полное оглавление
+
+### Начало работы
+
+* [Установка и обновление](nachalo-raboty/installation.md)
+* [Первая проверка](nachalo-raboty/first-analysis.md)
+* [Практические сценарии](nachalo-raboty/workflows.md)
+
+### Рабочее пространство
+
+* [Интерфейс и навигация](rabochee-prostranstvo/navigation.md)
+* [Проекты и площадки](rabochee-prostranstvo/projects-sites.md)
+* [Хранение, защита и восстановление](rabochee-prostranstvo/storage.md)
+
+### Практические руководства
+
+* [Источники данных](prakticheskie-rukovodstva/data-sources.md)
+* [UserGate](prakticheskie-rukovodstva/usergate.md)
+* [Ideco](prakticheskie-rukovodstva/ideco.md)
+* [Cloud.ru](prakticheskie-rukovodstva/cloud-ru.md)
+* [Ресурсы и устройства](prakticheskie-rukovodstva/resources.md)
+* [VLAN и логические сети](prakticheskie-rukovodstva/vlan-networks.md)
+* [ArubaOS Controller](prakticheskie-rukovodstva/aruba-controller.md)
+* [Проверки и результаты](prakticheskie-rukovodstva/checks-and-results.md)
+* [История и решения по находкам](prakticheskie-rukovodstva/history-and-decisions.md)
+* [Матрица доступа](prakticheskie-rukovodstva/access-matrix.md)
+* [Правила и запросы](prakticheskie-rukovodstva/rules-and-queries.md)
+* [Карты](prakticheskie-rukovodstva/maps.md)
+* [Отчёты и экспорт](prakticheskie-rukovodstva/reports-and-export.md)
+
+### Справочник
+
+* [Поддерживаемые платформы](spravochnik/supported-platforms.md)
+* [Справочник policy-проверок](spravochnik/policy-check-reference.md)
+* [Справочник проверок управления](spravochnik/management-check-reference.md)
+* [Командная строка](spravochnik/cli.md)
+* [Форматы и профили](spravochnik/formats-and-profiles.md)
+* [Термины](spravochnik/glossary.md)
+
+### Версии и помощь
+
+* [Версии и изменения](https://app.gitbook.com/s/CZbDdkP8vJPnHt6CYpzP/)
+* [Помощь и решение проблем](https://app.gitbook.com/s/Jg8oHMFbovzQHuBt3bDI/)
