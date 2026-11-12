@@ -25,3 +25,8 @@ uv run firewall-compliance analysis-export "C:\ArxionDemo\analysis.json" -o "C:\
 Первый шаг сохраняет общий результат, второй экспортирует его без нового анализа. Нулевой код выхода не означает отсутствия находок: изучите статус полноты и содержимое результата.
 
 Полный справочник команд и форматов размещён в [руководстве](https://app.gitbook.com/s/lo32lFq5iChWTEH1YNOx/). Не отправляйте конфигурации на демонстрационные endpoints из сторонних шаблонов.
+
+## Справочники
+
+* [Все команды CLI](https://app.gitbook.com/s/lo32lFq5iChWTEH1YNOx/spravochnik/cli)
+* [Форматы результатов и JSON-профили](https://app.gitbook.com/s/lo32lFq5iChWTEH1YNOx/spravochnik/formats-and-profiles)
