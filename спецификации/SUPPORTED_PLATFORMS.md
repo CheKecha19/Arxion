@@ -38,11 +38,11 @@ Management Assurance добавляет отдельный ограниченн�
 | HP/Aruba AOS-Switch | экспериментальная | UTF-8 Configuration Editor/ArubaOS-Switch exports: ограниченные standard/extended IPv4 ACL, numbered ACL, `ip access-group` на interface/VLAN, отдельный `ip authorized-managers` management-инвентарь | Нет |
 | Aruba AOS-CX | экспериментальная | UTF-8 AOS-CX exports: ограниченный `access-list ip`, `apply access-list ip` для interface/VLAN и отдельной control-plane области; исходные строки ACE и bindings | Нет |
 | HP/H3C Comware | экспериментальная | Ограниченные IPv4 `acl number/basic/advanced` и `rule`, wildcard masks, явные destination-port eq/range, logging/comment; SNMP ACL отдельно маркируется как management | Нет |
-| ArubaOS controllers | экспериментальная разработка вне каталога | Есть отдельный parser для ограниченного ArubaOS 8.10 session ACL/user-role; основной импорт по-прежнему отклоняет controller-синтаксис | Нет |
-| UserGate NGFW | экспериментальная | API-сбор UGOS 6.1.5+/7 по выбранному профилю; импорт `arxion-usergate-v1`, ограниченные статические адреса/сервисы/зоны; NAT сохраняется без анализа трансляций; реальная firmware-совместимость не подтверждена | Нет |
-| Ideco classic NGFW v23 | экспериментальная | Read-only API и импорт `arxion-ideco-v1`; ограниченные правила/статические объекты; VPP/BPF и Center исключены; реальное устройство не проверено | Нет |
-| Cloud.ru VMware NSX-T Edge | экспериментальная | API-инвентарь, Edge Firewall и его анализ, NAT/static routes как отдельные данные; DFW/NSX-V/effective NAT не поддержаны | Нет |
-| Cloud.ru Advanced/Evolution | экспериментальная | Сбор ресурсов и Security Groups; автоматический анализ качества SG-правил не подключён | Нет |
+| ArubaOS Controller 8.x | ограниченная | Общий импорт session ACL IPv4/IPv6, ролей и связанных объектов. Оценка явных совпадений только в поддержанном срезе 8.6/8.10 при полном effective-экспорте. Другие minor имеют диагностируемый частичный импорт. | Нет |
+| UserGate NGFW | экспериментальная | API-сбор UGOS 6.1.5+/7, импорт `arxion-usergate-v1`, статические адреса/сервисы и сверка объявлений для заданной пары зон. Расчёт NAT и реальная firmware-совместимость не подтверждены | Нет |
+| Ideco classic NGFW v23 | экспериментальная | Read-only API и импорт `arxion-ideco-v1`, ограниченные правила/статические объекты и сверка объявлений для заданной пары зон. VPP/BPF и Center исключены, реальное устройство не проверено | Нет |
+| Cloud.ru VMware NSX-T Edge | экспериментальная | API-инвентарь, анализ Edge Firewall, сверка объявлений сохранённой Edge-политики с матрицей, NAT/static routes как отдельные данные; DFW/NSX-V/effective NAT не поддержаны | Нет |
+| Cloud.ru Advanced/Evolution | экспериментальная | Сбор ресурсов и Security Groups, сверка объявлений выбранной SG с матрицей; автоматические проверки качества SG и эффективный доступ не поддержаны | Нет |
 | Juniper Junos/SRX | кандидат | Конфигурационный адаптер в новом продукте не подключён; текущий этап выполняется без Juniper | Нет |
 | Остальные платформы | кандидат | Parser adapter отсутствует | Нет |
 
@@ -58,9 +58,8 @@ Legacy-парсеры при этом не включаются. Juniper в ка
 
 ## Граница HP/Aruba и Comware
 
-Текущие версии адаптеров: `hp-aruba-acl 0.2.0` и `hp-h3c-comware 0.1.0`.
-Это срезы конфигурационного IPv4 ACL-инвентаря, а не полный vendor configuration
-parser, аппаратный forwarding evaluator или коммерческое обещание поддержки.
+Версии адаптеров `hp-aruba-acl` и `hp-h3c-comware` сохраняются в ревизиях.
+Адаптеры извлекают поддержанные конфигурационные IPv4 ACL и их привязки.
 
 HP/Aruba различает AOS-Switch, AOS-CX и controller-синтаксис. Поддерживаемые
 conditions включают явные адреса/префиксы, host/any, contiguous wildcard masks
@@ -87,8 +86,11 @@ Comware. Basic/advanced rules сохраняют rule IDs, строки и яв�
 Неизвестный номер ACL не доказывает тип или область; masked addresses/wildcards
 не разрешаются. Использование номера ACL в `snmp-agent ... acl` отмечает назначение
 SNMP management, но не вычисляет фактический управляющий или транзитный доступ.
-Применение packet-filter, порядок auto, QoS и полная vendor-семантика не вычисляются;
-направление и область не подставляются из предположений.
+Для подтверждённых FlexFabric 5944/5945 Release 6622 поддержан входящий IPv4
+`packet-filter` на маршрутизируемом VLAN-интерфейсе с установленным порядком
+`config`. Область привязки и порядок сохраняются со строками источника.
+Неподтверждённые применения отображаются отдельно. QoS, `auto` и L2-фильтрация
+остаются за пределами расчёта этого профиля. [Руководство HPE](https://arubanetworking.hpe.com/techdocs/Switches/FlexFabric/5944/5200-7938.pdf)
 
 Оба адаптера выдают постоянное предупреждение об ограниченной области
 (`HP_ARUBA_SCOPE_LIMITED`, `LIMITED_COMWARE_SCOPE`). Для HP/Aruba предупреждение о платформе
@@ -102,16 +104,17 @@ SNMP management, но не вычисляет фактический управ�
 Coverage измеряет обработку конструкций внутри ACL-среза, а не долю всего
 конфигурационного файла. Исходные warnings нужно читать независимо от ratio.
 
-Изменение полноты и попарного анализа относится только к HP/Aruba. Comware 0.1.0
-сохраняет прежние ограничения и общий partial; его adapter здесь не расширялся.
+Проверки качества правил используют подтверждённые транзитные применения и
+отдельно показывают неполные области. Смена версии парсера ограничивает
+сопоставимость сохранённых выводов.
 Синтаксис проверен по официальным руководствам:
 [AOS-S remark](https://arubanetworking.hpe.com/techdocs/AOS-S/16.10/ASG/WC/content/common%20files/att-rem-ace.htm),
 [AOS-S logging](https://arubanetworking.hpe.com/techdocs/AOS-S/16.10/ASG/KB/content/asg%20kb/ena-acl-den-per-log.htm),
 [CX IPv4 ACL](https://arubanetworking.hpe.com/techdocs/AOS-CX/10.13/HTML/acls_6300-6400-8100-8360/Content/Chp_ACLs/ACLs_cmds/acc-lis-ip.htm).
 
-NAT, маршруты, topology, operational state, implicit actions и итоговая
-reachable/blocked для HP/Aruba/Comware не вычисляются. Сетевой и forwarding
-экран нового desktop остаётся в экспериментальной границе ASA 9.16.
+Для HP/Aruba/Comware доступны настроенные сетевые факты и разбор возможного
+пути на одном сохранённом снимке. Для вывода о рабочем пути, NAT и состоянии
+портов нужны соответствующие наблюдения.
 
 Оригинальные предоставленные конфигурации, включая файлы из `masked_cofigs`,
 не копируются в репозиторий, fixtures и отчёты разработки. Проверочные fixtures

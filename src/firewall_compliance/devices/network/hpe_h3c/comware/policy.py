@@ -3,6 +3,7 @@
 import re
 from ipaddress import IPv4Address, ip_address, ip_network
 
+from firewall_compliance.devices.network.hpe_h3c.comware.configured_acl import configured_bindings
 from firewall_compliance.domain import (
     Configuration,
     DataStatus,
@@ -32,9 +33,9 @@ from firewall_compliance.parsers.platform_detection import detect_switch_platfor
 
 
 class ComwareParser:
-    """Сохраняет ACL и management scope; не вычисляет транзитную достижимость."""
+    """Сохраняет объявления ACL, управление и подтверждённые конфигурационные применения."""
 
-    _metadata = ParserMetadata(parser_id="hp-h3c-comware", version="0.2.0", vendor="hp-h3c")
+    _metadata = ParserMetadata(parser_id="hp-h3c-comware", version="0.3.0", vendor="hp-h3c")
 
     @property
     def metadata(self) -> ParserMetadata:
@@ -155,8 +156,9 @@ class ComwareParser:
             ParseIssue(
                 code="LIMITED_COMWARE_SCOPE",
                 level=ParseIssueLevel.WARNING,
-                message="Разобраны IPv4 ACL и назначения SSH/SNMP. Порядок auto, "
-                "effective-применение, QoS и транзитная достижимость не вычисляются. "
+                message="Область импорта включает IPv4 ACL, назначения SSH/SNMP и подтверждаемые "
+                "конфигурационные применения FlexFabric. Порядок auto, применение в оборудовании, "
+                "QoS и транзитная достижимость не вычисляются. "
                 "Coverage относится к ACL-входу.",
             )
         ]
@@ -373,4 +375,4 @@ class ComwareParser:
                 unsupported_constructs=len(unsupported),
             ),
         )
-        return enrich_switch_result(request.source, result)
+        return enrich_switch_result(request.source, result, read_configured_bindings=configured_bindings)

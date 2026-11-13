@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import html
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -33,6 +33,9 @@ PURPOSE_LABELS = {
     "management": "Управление",
     "unbound": "Без привязки",
     "unknown": "Назначение неизвестно",
+}
+_CONFIGURED_PROFILE_LABELS = {
+    "hpe-flexfabric-5944-5945-r6622": "HPE FlexFabric 5944/5945 · Release 6622",
 }
 
 
@@ -66,6 +69,45 @@ def _text(value: Any) -> str:
     return str(value)
 
 
+def _bindings_by_acl(bindings: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for binding in bindings:
+        if isinstance(identifier := binding.get("acl_id"), str):
+            result[identifier].append(binding)
+    return result
+
+
+def _acl_order(acl: Mapping[str, Any]) -> str | None:
+    order = acl.get("match_order")
+    if order == "config":
+        return "По возрастанию номера ACE (config)"
+    if order == "auto":
+        return "Автоматический порядок (auto)"
+    return None
+
+
+def _binding_scope(binding: Mapping[str, Any]) -> str:
+    if binding.get("configured_profile") in _CONFIGURED_PROFILE_LABELS:
+        subject = _text(binding.get("subject"))
+        vlan = subject.removeprefix("interface:vlan:")
+        interface = f"VLAN {vlan}" if vlan.isdecimal() else subject
+        parts = [interface, "входящий IPv4 при маршрутизации"]
+        if vrf := binding.get("vrf"):
+            parts.append(f"VRF {vrf}")
+        return " · ".join(parts)
+    return " · ".join(_text(binding.get(field)) for field in ("subject", "service", "vrf", "direction"))
+
+
+def _binding_semantics(binding: Mapping[str, Any]) -> str:
+    profile = _CONFIGURED_PROFILE_LABELS.get(binding.get("configured_profile"))
+    implicit = "Неявное действие: " + _text(binding.get("implicit_action"))
+    if profile is not None:
+        if binding.get("implicit_action") == "unknown":
+            implicit = "Действие без совпадения неизвестно"
+        return f"{profile} · решение по конфигурации · {implicit}"
+    return implicit
+
+
 def source_anchor(value: Mapping[str, Any]) -> str:
     """Показать позицию без чтения исходного файла или секретной команды."""
     locations = _items(value.get("source_locations", []))
@@ -87,7 +129,7 @@ def safe_switch_source(text: str) -> str:
     for line in text.splitlines():
         line = re.sub(r"(?i)(\bcommunity\b).*", r"\1 [скрыто]", line)
         line = re.sub(
-            r"(?i)(\b(?:securityname|password|key|ciphertext|cipher|hash)\b).*",
+            r"(?i)(\b(?:securityname|password|key|ciphertext|cipher|hash|pre-share|pre-shared-key)\b).*",
             r"\1 [скрыто]", line,
         )
         lines.append(line)
@@ -123,6 +165,7 @@ def acl_rule_html(parsed: Mapping[str, Any], rule: Mapping[str, Any]) -> str:
     parts = [f"<p>Назначение: {html.escape(PURPOSE_LABELS[rule_category(rule)])}</p>"]
     if not isinstance(policy, Mapping):
         return "".join(parts)
+    bindings_by_acl = _bindings_by_acl(_items(policy.get("bindings", [])))
     for acl in _items(policy.get("declarations", [])):
         entries = [
             entry for entry in _items(acl.get("entries", []))
@@ -131,20 +174,18 @@ def acl_rule_html(parsed: Mapping[str, Any], rule: Mapping[str, Any]) -> str:
         if not entries:
             continue
         parts.append(f"<h4>ACL {html.escape(str(acl.get('name', acl.get('acl_id', ''))))}</h4>")
+        if order := _acl_order(acl):
+            parts.append(f"<p>Порядок ACE · {html.escape(order)}</p>")
         for entry in entries:
             parts.append(
                 f"<p>Исходная ACE: {html.escape(source_anchor(entry))}; "
                 f"корректность: {_text(entry.get('valid'))}</p>"
             )
-        for binding in _items(policy.get("bindings", [])):
-            if binding.get("acl_id") != acl.get("acl_id"):
-                continue
-            parts.append(
-                "<p>Применение: " + html.escape(" · ".join(
-                    _text(binding.get(field))
-                    for field in ("purpose", "subject", "service", "vrf", "direction")
-                )) + "<br>" + html.escape(source_anchor(binding)) + "</p>"
-            )
+        for binding in bindings_by_acl.get(acl.get("acl_id"), ()):
+            description = f"{_text(binding.get('purpose'))} · {_binding_scope(binding)}"
+            if binding.get("configured_profile") in _CONFIGURED_PROFILE_LABELS:
+                description += f" · {_binding_semantics(binding)}"
+            parts.append(f"<p>Применение: {html.escape(description)}<br>{html.escape(source_anchor(binding))}</p>")
     return "".join(parts)
 
 
@@ -257,22 +298,33 @@ class SwitchDetailsPanel(QTabWidget):
         facts = parsed.get("switch_facts") or {}
         policies = parsed.get("switch_policies") or {}
         configuration = parsed.get("configuration") or {}
+        declarations = _items(policies.get("declarations", []))
+        bindings = _items(policies.get("bindings", []))
+        managers = _items(policies.get("managers", []))
+        bindings_by_acl = _bindings_by_acl(bindings)
+        declarations_by_id: dict[str, dict[str, Any]] = {}
+        for acl in declarations:
+            if isinstance(identifier := acl.get("acl_id"), str):
+                declarations_by_id.setdefault(identifier, acl)
         self._locations = []
         source_links = []
+        seen_locations: set[frozenset[tuple[str, Any]]] = set()
         source_values = [
             value
             for group in ("interfaces", "vlans", "aggregates", "stack", "routes", "management", "features", "hardware")
             for value in _items(facts.get(group, []))
         ]
-        source_values.extend(_items(policies.get("bindings", [])))
-        source_values.extend(_items(policies.get("managers", [])))
-        for acl in _items(policies.get("declarations", [])):
+        source_values.extend(bindings)
+        source_values.extend(managers)
+        for acl in declarations:
             source_values.append(acl)
             source_values.extend(_items(acl.get("entries", [])))
         for value in source_values:
             for location in _items(value.get("source_locations", [])):
-                if location in self._locations:
+                key = frozenset(location.items())
+                if key in seen_locations:
                     continue
+                seen_locations.add(key)
                 index = len(self._locations)
                 self._locations.append(location)
                 source_links.append(f"<p><a href='source:{index}'>{html.escape(source_anchor({'source_locations': [location]}))}</a></p>")
@@ -290,12 +342,18 @@ class SwitchDetailsPanel(QTabWidget):
             ("Основания определения", policies.get("detection_reasons")),
             ("Политики", switch_summary(parsed)),
         ]
+        transit_note = ""
+        if policies and not any(binding.get("purpose") == "transit" for binding in bindings):
+            if configuration.get("platform") == "comware" and any(binding.get("purpose") == "unknown" for binding in bindings):
+                transit_note = "<p>Обнаружены фильтры с неподтверждённой привязкой. Основания приведены в диагностике.</p>"
+            else:
+                transit_note = "<p>Транзитные ACL в представленном файле не обнаружены.</p>"
         self.overview.setHtml(
             "<h3>Конфигурационные сведения</h3>"
             + "".join(f"<p><b>{html.escape(label)}:</b> {html.escape(_text(value))}</p>" for label, value in overview)
             + "<p>Настройки не подтверждают состояние каналов, установленную таблицу маршрутизации или сквозную доступность. "
             "Отсутствующие в старых ревизиях сведения не восстановлены.</p>"
-            + ("<p>Транзитные ACL в представленном файле не обнаружены.</p>" if policies and not any(binding.get("purpose") == "transit" for binding in _items(policies.get("bindings", []))) else "")
+            + transit_note
             + "<h4>Охват областей</h4>"
             + "".join(f"<p>{html.escape(_text(area))}</p>" for area in _items(facts.get("coverage", [])))
             + (
@@ -315,12 +373,12 @@ class SwitchDetailsPanel(QTabWidget):
         self._tables["stack"].replace([(_text(v.get("member")), _text(v.get("hardware_type")), _text(v.get("priority")), _text(v.get("links")), source_anchor(v)) for v in _items(facts.get("stack", []))])
         self._tables["routes"].replace([(_text(v.get("prefix") or v.get("raw_prefix")), _text(v.get("next_hop") or v.get("raw_next_hop")), _text(v.get("vrf")), _text(v.get("kind")) + " · " + _text(v.get("status")), source_anchor(v)) for v in _items(facts.get("routes", []))])
         management_rows = [(_text(v.get("service") or v.get("kind")), _text(v.get("vrf") or v.get("scope")), _text(v.get("value") or v.get("address") or v.get("raw_address")) + "; включён: " + _text(v.get("enabled")) + "; " + _text(v.get("status")), source_anchor(v)) for v in _items(facts.get("management", []))]
-        for binding in _items(policies.get("bindings", [])):
+        for binding in bindings:
             if binding.get("purpose") == "management":
-                declaration = next((acl for acl in _items(policies.get("declarations", [])) if acl.get("acl_id") == binding.get("acl_id")), {})
+                declaration = declarations_by_id.get(binding.get("acl_id"), {})
                 sources = [entry.get("raw_source") for entry in _items(declaration.get("entries", []))]
                 management_rows.append((_text(binding.get("service") or binding.get("subject")), _text(binding.get("vrf")), "ACL " + _text(declaration.get("name")) + "; источники: " + _text(sources), source_anchor(binding)))
-        management_rows.extend((_text(v.get("method")), "authorized manager", _text(v.get("source_cidr") or v.get("source_raw")) + "; " + _text(v.get("privilege")), source_anchor(v)) for v in _items(policies.get("managers", [])))
+        management_rows.extend((_text(v.get("method")), "authorized manager", _text(v.get("source_cidr") or v.get("source_raw")) + "; " + _text(v.get("privilege")), source_anchor(v)) for v in managers)
         self._tables["management"].replace(management_rows)
         self._tables["matrix"].replace(management_matrix(facts, policies))
         self._tables["features"].replace([
@@ -329,13 +387,27 @@ class SwitchDetailsPanel(QTabWidget):
             for value in _items(facts.get("features", []))
         ])
         policy_rows: list[tuple[Any, ...]] = []
-        for acl in _items(policies.get("declarations", [])):
-            policy_rows.append(("Объявление", acl.get("name"), f"Явных ACE: {len(_items(acl.get('entries', [])))}", "—", source_anchor(acl)))
-            for entry in _items(acl.get("entries", [])):
+        for acl in declarations:
+            entries = _items(acl.get("entries", []))
+            policy_rows.append((
+                "Объявление", acl.get("name"), f"Явных ACE: {len(entries)}",
+                _acl_order(acl) or "—", source_anchor(acl),
+            ))
+            for entry in entries:
                 policy_rows.append(("ACE", entry.get("sequence"), " · ".join(_text(entry.get(key)) for key in ("action", "protocol", "raw_source", "raw_destination")), "Корректна" if entry.get("valid") else "Не подтверждена", source_anchor(entry)))
-            for binding in _items(policies.get("bindings", [])):
-                if binding.get("acl_id") == acl.get("acl_id"):
-                    policy_rows.append((PURPOSE_LABELS.get(str(binding.get("purpose")), "Неизвестно"), acl.get("name"), " · ".join(_text(binding.get(key)) for key in ("subject", "service", "vrf", "direction")), "Неявное действие: " + _text(binding.get("implicit_action")), source_anchor(binding)))
+            for binding in bindings_by_acl.get(acl.get("acl_id"), ()):
+                policy_rows.append((
+                    PURPOSE_LABELS.get(str(binding.get("purpose")), "Неизвестно"), acl.get("name"),
+                    _binding_scope(binding), _binding_semantics(binding), source_anchor(binding),
+                ))
+        if configuration.get("platform") == "comware":
+            for binding in bindings:
+                acl_identifier = binding.get("acl_id")
+                if binding.get("purpose") == "unknown" and acl_identifier not in declarations_by_id:
+                    policy_rows.append((
+                        PURPOSE_LABELS["unknown"], _text(acl_identifier), _binding_scope(binding),
+                        "Объявление ACL отсутствует среди разобранных", source_anchor(binding),
+                    ))
         self._tables["policies"].replace(policy_rows)
         issues = [* _items(facts.get("issues", [])), * _items(policies.get("issues", []))]
         self._tables["issues"].replace([(_text(v.get("code") or v.get("area")), _text(v.get("message")), source_anchor(v)) for v in issues])

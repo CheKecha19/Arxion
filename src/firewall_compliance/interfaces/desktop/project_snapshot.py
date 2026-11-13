@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from firewall_compliance.application.source_health import build_source_health
+from firewall_compliance.interfaces.desktop.workspace_models import cloud_inventory
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,9 @@ class ProjectSnapshot:
     site_assignments: dict[str, str] = field(default_factory=dict)
     sites: tuple[dict[str, str], ...] = ()
     source_health: tuple[dict[str, Any], ...] = ()
+    compact_history: bool = False
+    cloud_resources: list[dict[str, Any]] = field(default_factory=list)
+    cloud_resource_history: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 def scoped_project_snapshot(
@@ -79,11 +83,14 @@ def scoped_project_snapshot(
         snapshot.site_assignments,
         snapshot.sites,
         snapshot.source_health,
+        snapshot.compact_history,
+        snapshot.cloud_resources,
+        snapshot.cloud_resource_history,
     )
 
 
 def read_project_snapshot(store: Any, project_id: str) -> ProjectSnapshot:
-    """Load saved evidence once and derive the existing desktop list projections.
+    """Load desktop projections without copying historical rule and network data.
 
     History supplies runs in descending creation/rowid order and each run's items
     in ascending rowid order. Reversing items therefore preserves the latest-device
@@ -92,13 +99,18 @@ def read_project_snapshot(store: Any, project_id: str) -> ProjectSnapshot:
     can run in a desktop worker without transferring a SQLite connection or Qt object.
     """
     project = store.get_project(project_id)
-    history = store.project_history(project_id)
-    scans = store.list_cloud_scans(project_id)
+    workspace_reader = getattr(store, "project_workspace_history", None)
+    workspace = workspace_reader(project_id) if callable(workspace_reader) else None
+    compact = workspace is not None
+    history, devices = workspace if workspace is not None else (store.project_history(project_id), [])
+    cloud_reader = getattr(store, "project_cloud_scan_summaries", None)
+    scans = cloud_reader(project_id) if callable(cloud_reader) else store.list_cloud_scans(project_id)
+    cloud_resources, cloud_resource_history = cloud_inventory(scans)
     metadata = getattr(store, "workspace_metadata", None)
     assignments = metadata.device_sites(project_id) if metadata is not None else {}
     sites = tuple(metadata.list_sites()) if metadata is not None else ()
+    source_sites = metadata.source_sites(project_id) if hasattr(metadata, "source_sites") else {}
     runs: list[dict[str, Any]] = []
-    devices: list[dict[str, Any]] = []
     seen: set[str] = set()
     run_by_id: dict[str, dict[str, Any]] = {}
     for run in history:
@@ -117,6 +129,8 @@ def read_project_snapshot(store: Any, project_id: str) -> ProjectSnapshot:
                 "finding_count": finding_count,
             }
         )
+        if compact:
+            continue
         for item in reversed(items):
             report = item.get("report")
             if not report:
@@ -143,6 +157,9 @@ def read_project_snapshot(store: Any, project_id: str) -> ProjectSnapshot:
         site_assignments=assignments,
         sites=sites,
         source_health=build_source_health(
-            store.list_source_connections(project_id), history, scans
+            store.list_source_connections(project_id), history, scans, site_memberships=source_sites,
         ) if hasattr(store, "list_source_connections") else (),
+        compact_history=compact,
+        cloud_resources=cloud_resources,
+        cloud_resource_history=cloud_resource_history,
     )

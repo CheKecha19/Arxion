@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from ipaddress import ip_address, ip_interface
 from typing import Any
 
 from firewall_compliance.interfaces.desktop.check_presentation import check_execution_status
+from firewall_compliance.interfaces.desktop.project_map import resource_addresses
 from firewall_compliance.interfaces.desktop.workspace_models import cloud_resource_key
 
 # Match cloud_resource_key/dashboard identity without copying credentials or request options.
@@ -54,6 +56,20 @@ def _vdc(inventory: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _observed_addresses(values: object, *, interface_prefixes: bool = False) -> list[str]:
+    if not isinstance(values, (tuple, list)):
+        return []
+    addresses = set()
+    for value in values:
+        if isinstance(value, str) and "%" not in value:
+            try:
+                address = ip_interface(value).ip if interface_prefixes else ip_address(value)
+                addresses.add(str(address))
+            except ValueError:
+                continue
+    return sorted(addresses)
 
 
 def _category(config: dict[str, Any]) -> str:
@@ -127,6 +143,9 @@ def project_observations(
                 continue
             stamp = _date(record.get("collected_at")) or _date(scan.get("created_at"))
             inventory = _mapping(record.get("inventory"))
+            addresses = _observed_addresses(
+                record["observed_addresses"] if "observed_addresses" in record else resource_addresses(record)
+            )
             resource_type = str(record.get("type", "unknown"))
             if resource_type == "vms" and str(inventory.get("isVAppTemplate", "false")).lower() in {
                 "true",
@@ -145,6 +164,7 @@ def project_observations(
                     "last_scan": stamp,
                     "last_check": None,
                     "vdc": _vdc(inventory),
+                    "observed_addresses": addresses,
                     "source": {
                         "kind": "cloud",
                         "scan_id": scan["id"],
@@ -225,10 +245,27 @@ def project_observations(
                     or _date(run.get("created_at"))
                 )
                 metadata = {**device, **configuration}
+                switch = _mapping(parsed.get("switch_facts"))
+                addresses = [device.get("management_ip")]
+                stored = item.get("observed_interface_addresses")
+                if isinstance(stored, list):
+                    addresses.extend(stored)
+                else:
+                    for interface in revision.get("interfaces", []):
+                        if isinstance(interface, dict) and isinstance(interface.get("addresses"), list):
+                            addresses.extend(interface["addresses"])
+                    for interface in switch.get("interfaces", []):
+                        addresses.extend(
+                            address.get("cidr") for address in _mapping(interface).get("addresses", [])
+                            if isinstance(address, dict) and address.get("status") == "known"
+                        )
                 observe(
                     {
                         "identity": identity,
-                        "name": str(device.get("hostname") or device_id),
+                        "name": str(
+                            device.get("hostname") or switch.get("hostname")
+                            or item.get("observed_switch_hostname") or device_id
+                        ),
                         "platform": str(metadata.get("platform", "unknown")),
                         "resource_type": "device",
                         "category": _category(metadata),
@@ -239,10 +276,13 @@ def project_observations(
                         "last_scan": imported,
                         "last_check": None,
                         "vdc": None,
+                        "observed_addresses": _observed_addresses(addresses, interface_prefixes=True),
                         "source": {
                             "kind": "device",
                             "device_id": device_id,
                             "content_sha256": configuration.get("content_sha256"),
+                            "observation_run_id": run["id"],
+                            "observation_item_id": item.get("id"),
                         },
                     },
                     imported,

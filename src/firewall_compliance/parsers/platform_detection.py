@@ -86,14 +86,14 @@ def detect_switch_platform(text: str) -> SwitchPlatformDetection:
     comware_aaa = match(r"^[ \t]*radius scheme[ \t]+\S+")
     comware_shape = any((comware_sysname, comware_acl, comware_interface, comware_irf, comware_aaa))
     if (comware_version or comware_banner) and comware_shape:
-        reasons = ["Версия 5.20/7.1 либо заголовок Comware и характерный контекст конфигурации."]
+        comware_reasons = ["Версия 5.20/7.1 либо заголовок Comware и характерный контекст конфигурации."]
         if comware_sysname:
-            reasons.append("Директива sysname.")
+            comware_reasons.append("Директива sysname.")
         if comware_irf:
-            reasons.append("Настройки IRF.")
+            comware_reasons.append("Настройки IRF.")
         signals["comware"] = (
             0.96 if comware_version and comware_sysname else 0.90,
-            tuple(reasons),
+            tuple(comware_reasons),
             comware_version[1] if comware_version else None,
         )
         comware_generations = {
@@ -112,12 +112,27 @@ def detect_switch_platform(text: str) -> SwitchPlatformDetection:
 
     session_acl = match(r"^[ \t]*ip access-list session[ \t]+\S+")
     controller_role = match(r"^[ \t]*(?:user-role|wlan)[ \t]+\S+")
-    if session_acl and controller_role:
+    controller_version = match(r"^[ \t]*[!]?[ \t]*(?:arubaos[ \t]+)?version[ \t]+(8\.\d+(?:\.\d+){0,3})[ \t]*$")
+    controller_profile = match(r"^[ \t]*(?:controller-ip[ \t]+vlan|controller[ \t]+config|aaa derivation-rules user|crypto-local pki|ap-group)[ \t]+\S+")
+    controller_objects = match(r"^[ \t]*(?:netdestination6?|netservice|aaa profile)[ \t]+\S+")
+    if session_acl and controller_role or controller_version and (
+        controller_profile or controller_role and controller_objects
+    ):
         signals["arubaos-controller"] = (
-            0.95,
-            ("Session ACL и user-role/WLAN ArubaOS Controller; этот профиль здесь не поддержан.",),
-            None,
+            0.98 if controller_version else 0.95,
+            ("Характерный синтаксис ArubaOS Controller; профиль AOS 8.x.",),
+            controller_version[1] if controller_version else None,
         )
+        controller_generations = {
+            value for value in re.findall(
+                r"^[ \t]*[!]?[ \t]*(?:arubaos[ \t]+)?version[ \t]+(8\.\d+)(?:\.\d+){0,3}[ \t]*$",
+                text, re.IGNORECASE | re.MULTILINE,
+            )
+        }
+        if len(controller_generations) > 1:
+            signals["controller-version-conflict"] = (
+                0.99, ("В одном документе заданы разные minor-версии ArubaOS Controller.",), None,
+            )
 
     # Не допускаем выбора switch adapter по фрагменту смешанного документа.
     for platform, pattern in (

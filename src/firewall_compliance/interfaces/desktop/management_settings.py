@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QCheckBox, QLabel, QLineEdit, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QLabel, QLineEdit, QSpinBox, QVBoxLayout, QWidget
 
 from firewall_compliance.domain.management import ManagementProfile
 
@@ -53,6 +53,19 @@ class ManagementSettings(QWidget):
             "Следующий импорт: подтверждаю полноту всех выбранных конфигураций"
         )
         layout.addWidget(self.complete)
+        layout.addWidget(QLabel("Следующий импорт Controller: вид конфигурации"))
+        self.configuration_view = QComboBox()
+        for title, value in (
+            ("Не установлен", "unknown"), ("Локальная", "local"),
+            ("Результирующая effective", "effective"),
+            ("Effective с наследованием", "effective_detail"),
+            ("Не применённые изменения pending", "pending"),
+        ):
+            self.configuration_view.addItem(title, value)
+        layout.addWidget(self.configuration_view)
+        self.configuration_node_path = QLineEdit()
+        self.configuration_node_path.setPlaceholderText("Узел иерархии, если известен, например /md/site/device")
+        layout.addWidget(self.configuration_node_path)
         self.error = QLabel()
         self.error.setWordWrap(True)
         layout.addWidget(self.error)
@@ -95,3 +108,5 @@ class ManagementSettings(QWidget):
             checkbox.setChecked(getattr(profile, key))
         self.timeout.setValue(profile.max_idle_seconds)
         self.complete.setChecked(False)
+        self.configuration_view.setCurrentIndex(0)
+        self.configuration_node_path.clear()

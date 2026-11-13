@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass as dataclass
 from datetime import datetime as datetime
+from functools import cached_property
 from typing import Any
 from typing import Literal as Literal
 from typing import Protocol as CheckProtocol
@@ -21,7 +22,12 @@ from firewall_compliance.analysis.policy_matching import (
     resolve_rule,
     scope_key,
 )
-from firewall_compliance.checks.common.transit import transit_limitations
+from firewall_compliance.checks.common.transit import (
+    ConfiguredComwarePolicy,
+    configured_comware_policies,
+    configured_comware_policy_id,
+    transit_limitations,
+)
 from firewall_compliance.domain import (
     DataStatus,
     Evidence,
@@ -42,6 +48,7 @@ ARUBA_CHECK_VERSION = "1.1.0"
 PLATFORM_SCOPE_WARNINGS = {"HP_ARUBA_SCOPE_LIMITED"}
 ARUBA_METADATA_WARNINGS = {"HP_ARUBA_LOGGING_VERSION_UNKNOWN", "HP_ARUBA_COMMENT_LIMITED"}
 TERMINAL_ACTIONS = {RuleAction.ALLOW, RuleAction.DENY, RuleAction.DROP, RuleAction.REJECT}
+CONFIGURED_COMWARE_CHECKS = frozenset({"FW-DUPLICATE", "FW-SHADOWED", "FW-MERGE-CANDIDATE"})
 
 
 @dataclass(frozen=True)
@@ -53,6 +60,10 @@ class PolicyCheckContext:
     require_logging: bool = True
     require_comments: bool = True
     max_pair_rules: int = 1000
+
+    @cached_property
+    def comware_policies(self) -> dict[str, ConfiguredComwarePolicy]:
+        return configured_comware_policies(self.revision.parse_result)
 
 
 def check_version(context: PolicyCheckContext) -> str:
@@ -84,9 +95,13 @@ def _result(
     limitations: list[CheckLimitation],
 ) -> CheckResult:
     parsed = context.revision.parse_result
-    limitations.extend(transit_limitations(parsed))
+    comware = context.comware_policies if check_id in CONFIGURED_COMWARE_CHECKS else {}
+    aliases = frozenset(alias for policy in comware.values() for alias in policy.alias_ids)
+    limitations.extend(transit_limitations(parsed, represented_alias_ids=aliases))
     aruba = parsed.configuration.vendor == "hp-aruba"
     scope_warnings = PLATFORM_SCOPE_WARNINGS | ARUBA_METADATA_WARNINGS if aruba else set()
+    if comware:
+        scope_warnings = {"LIMITED_COMWARE_SCOPE"}
     relevant_warnings = [issue for issue in parsed.warnings if issue.code not in scope_warnings]
     relevant_unsupported = [
         issue
@@ -164,12 +179,26 @@ def _finding(
     configuration = revision.parse_result.configuration
     rule_ids = tuple(rule.rule_id for rule in rules)
     locations = [rule.source_location for rule in rules]
+    facts: dict[str, Any] = {
+        "revision_id": str(revision.revision_id),
+        "check_version": check_version(context),
+        "rules": [rule.model_dump(mode="json") for rule in rules],
+    }
     if configuration.vendor == "hp-aruba":
         for rule in rules:
             for prefix in ("binding", "description"):
                 location = revision.parse_result.source_map.get(f"{prefix}:{rule.rule_id}")
                 if location is not None and location not in locations:
                     locations.append(location)
+    elif check_id in CONFIGURED_COMWARE_CHECKS and (
+        policy := context.comware_policies.get(rules[0].policy_id or "")
+    ) is not None:
+        locations.extend(loc for loc in policy.binding.source_locations if loc not in locations)
+        facts.update(
+            configured_profile=policy.binding.configured_profile,
+            binding_id=policy.binding.binding_id,
+            vrf=policy.binding.vrf,
+        )
     return Finding(
         finding_id=uuid5(
             NAMESPACE_URL, f"{revision.revision_id}:{check_version(context)}:{check_id}:{rule_ids}"
@@ -187,11 +216,7 @@ def _finding(
             summary=title,
             source_locations=tuple(locations),
             related_rule_ids=rule_ids,
-            facts={
-                "revision_id": str(revision.revision_id),
-                "check_version": check_version(context),
-                "rules": [rule.model_dump(mode="json") for rule in rules],
-            },
+            facts=facts,
             limitations=(
                 "Вывод относится к нормализованным условиям политики; "
                 "достижимость и влияние NAT не вычислялись.",
@@ -260,8 +285,49 @@ def _aruba_blocked_acls(context: PolicyCheckContext) -> tuple[set[str], bool]:
     return blocked, bool(parsed.errors) or unexplained
 
 
-def _pair_groups(context: PolicyCheckContext) -> tuple[list[list[Rule]], list[CheckLimitation]]:
+def _comware_pair_groups(
+    context: PolicyCheckContext, *, enforce_pair_limit: bool,
+) -> tuple[list[list[Rule]], list[CheckLimitation]]:
+    policies = context.comware_policies
+    inventory = context.revision.parse_result.switch_policies
+    candidates = {
+        key for binding in inventory.bindings
+        if (key := configured_comware_policy_id(binding)) is not None
+    } if inventory is not None else set()
+    limitations = [
+        _limitation(
+            "INCOMPLETE_ACL",
+            f"Для {policy_id} не подтверждена полная связь настроенного ACL с его правилами.",
+        )
+        for policy_id in sorted(candidates - policies.keys())
+    ]
+    groups = []
+    for policy in policies.values():
+        if enforce_pair_limit and len(policy.rules) > context.max_pair_rules:
+            limitations.append(
+                _limitation("PAIR_LIMIT", "Превышен лимит правил для попарного анализа области.")
+            )
+        else:
+            groups.append(list(policy.rules))
+    if not groups:
+        limitations.append(
+            _limitation(
+                "CHECK_NOT_EXECUTED",
+                "Для Comware требуется полностью разобранный ACL с подтверждённым "
+                "порядком config и входящим маршрутизируемым применением к VLAN-интерфейсу.",
+            )
+        )
+    return groups, limitations
+
+
+def _pair_groups(
+    context: PolicyCheckContext,
+    *,
+    enforce_pair_limit: bool = True,
+) -> tuple[list[list[Rule]], list[CheckLimitation]]:
     parsed = context.revision.parse_result
+    if (parsed.configuration.vendor, parsed.configuration.platform) == ("hp-h3c", "comware"):
+        return _comware_pair_groups(context, enforce_pair_limit=enforce_pair_limit)
     aruba = parsed.configuration.vendor == "hp-aruba"
     if not aruba and (
         parsed.errors
@@ -315,7 +381,7 @@ def _pair_groups(context: PolicyCheckContext) -> tuple[list[list[Rule]], list[Ch
                     *rules,
                 )
             )
-        elif len(rules) > context.max_pair_rules:
+        elif enforce_pair_limit and len(rules) > context.max_pair_rules:
             limitations.append(
                 _limitation("PAIR_LIMIT", "Превышен лимит правил для попарного анализа области.")
             )

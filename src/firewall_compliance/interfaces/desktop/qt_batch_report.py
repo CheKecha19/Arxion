@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QIODevice, QSaveFile
+from PySide6.QtCore import QIODevice, QSaveFile, QUrl
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -50,7 +50,6 @@ class BatchReportDialog(QDialog):
         self._runner = runner
         self._context_valid = context_valid or (lambda: True)
         self._package: dict[str, Any] | None = None
-        self._html = ""
         self._closed = False
         self._ticket: object | None = None
         self.saved_path: Path | None = None
@@ -66,6 +65,7 @@ class BatchReportDialog(QDialog):
         self.browser = QTextBrowser()
         self.browser.setOpenLinks(False)
         self.browser.setOpenExternalLinks(False)
+        self.browser.anchorClicked.connect(self._open_report_anchor)
         layout.addWidget(self.browser, 1)
         actions = QHBoxLayout()
         self.exports: list[QPushButton] = []
@@ -84,18 +84,14 @@ class BatchReportDialog(QDialog):
             package = build_batch_report(store, run_id, include_fragments=include_fragments)
             if package["project"]["id"] != project_id:
                 raise ValueError("Report run belongs to another project")
-            content = render_batch_html(package)
             if target is not None:
                 kind, path = target
-                if kind not in {"html", "json"}:
-                    raise ValueError("Unsupported report format")
-                text = content if kind == "html" else json.dumps(package, ensure_ascii=False, indent=2)
-                write_report_file(path, text)
-            return package, content
+                self._write_export(kind, path, package)
+                return package, ""
+            return package, render_batch_html(package, scope_preview_limit=100)
 
         def done(value: Any) -> None:
-            self._package, self._html = value
-            self.browser.setHtml(self._html)
+            self._package, preview = value
             self.status.setText(
                 f"Запуск: {run_id}; сформировано: {self._package['generated_at']}. "
                 "HTML и JSON будут сохранены из этого пакета. "
@@ -104,12 +100,18 @@ class BatchReportDialog(QDialog):
             if target is not None:
                 self.saved_path = target[1]
                 self.accept()
+            else:
+                self.browser.setHtml(preview)
 
         self._job(work, done)
 
     def _finish(self, _result: int) -> None:
         self._closed = True
         self._ticket = None
+
+    def _open_report_anchor(self, url: QUrl) -> None:
+        if url.isRelative() and not url.path() and not url.hasQuery() and url.hasFragment():
+            self.browser.scrollToAnchor(url.fragment())
 
     def _job(self, work: Callable[[], object], done: Callable[[Any], None]) -> None:
         if self._closed or not self._context_valid():
@@ -148,13 +150,17 @@ class BatchReportDialog(QDialog):
         if not filename:
             return
         destination = Path(filename)
-        content = self._html
-
-        def work() -> None:
-            text = content if kind == "html" else json.dumps(package, ensure_ascii=False, indent=2)
-            write_report_file(destination, text)
-
         self._job(
-            work,
+            lambda: self._write_export(kind, destination, package),
             lambda _value: self.status.setText("Отчёт сохранён: " + destination.name),
         )
+
+    @staticmethod
+    def _write_export(kind: str, path: Path, package: dict[str, Any]) -> None:
+        if kind == "html":
+            content = render_batch_html(package)
+        elif kind == "json":
+            content = json.dumps(package, ensure_ascii=False, indent=2)
+        else:
+            raise ValueError("Unsupported report format")
+        write_report_file(path, content)

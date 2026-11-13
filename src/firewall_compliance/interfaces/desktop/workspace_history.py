@@ -8,6 +8,16 @@ from weakref import ref
 from PySide6.QtCore import QItemSelectionModel, Qt
 
 
+def rule_row_key(payload: dict[str, Any]) -> tuple[Any, ...]:
+    item, value = payload["item"], payload["value"]
+    if value.get("cloud_rule"):
+        return item["id"], item["scan"]["id"], value["group"], value["sequence"]
+    for field in ("rule_id", "endpoint_id", "service_id"):
+        if field in value:
+            return item["id"], field, value[field]
+    return item["id"], "object", value.get("name"), value.get("kind")
+
+
 class WorkspaceHistory:
     """Восстановить фильтры и выбранные объекты по идентификаторам при возврате."""
 
@@ -25,6 +35,7 @@ class WorkspaceHistory:
         "rule_category",
     )
     searches = ("resource_search", "finding_search", "rule_search")
+    queries = ("finding_conditions", "rule_conditions")
     tables = ("device", "finding", "rules", "history", "resource_findings", "resource_history")
 
     def __init__(self, window: Any) -> None:
@@ -40,13 +51,12 @@ class WorkspaceHistory:
         return window
 
     @staticmethod
-    def payload_key(payload: dict[str, Any]) -> str:
+    def payload_key(payload: dict[str, Any]) -> tuple[Any, ...]:
         if "finding" in payload:
-            return str(payload["finding"]["finding_id"])
+            return "finding", str(payload["finding"]["finding_id"])
         if "value" in payload:
-            value = payload["value"]
-            return str((payload["item"]["id"], value.get("rule_id") or value.get("name"), value))
-        return str(payload.get("id", ""))
+            return "value", *rule_row_key(payload)
+        return "item", str(payload.get("id", ""))
 
     def remember(self) -> None:
         if not self.ready:
@@ -70,9 +80,15 @@ class WorkspaceHistory:
             {
                 "page": view.current_section_id,
                 "project": view.project_id,
+                "site": view._site_selection,
                 "run": view.run_id,
                 "combos": {name: getattr(view, name).currentData() for name in self.combos},
                 "searches": {name: getattr(view, name).text() for name in self.searches},
+                "queries": {
+                    name: (widget.query, widget.include_unknown)
+                    for name in self.queries
+                    if (widget := getattr(view, name, None)) is not None
+                },
                 "selection": selection,
                 "device_tab": view.device_tabs.currentIndex(),
                 "finding_tab": view.finding_detail_tabs.currentIndex(),
@@ -104,6 +120,8 @@ class WorkspaceHistory:
         if location["project"] != view.project_id:
             self.clear()
             return
+        site_index = view.site_selector.findData(location["site"])
+        view.site_selector.setCurrentIndex(max(0, site_index))
         if location["run"] and location["run"] != view.run_id:
             view.load_run(location["run"])
         elif not location["run"]:
@@ -115,6 +133,8 @@ class WorkspaceHistory:
             combo.setCurrentIndex(max(0, combo.findData(value)))
         for name, value in location["searches"].items():
             getattr(view, name).setText(value)
+        for name, (query, include_unknown) in location["queries"].items():
+            getattr(view, name).restore_query(query, include_unknown)
         if location["scan"]:
             view.cloud_panel._refresh_history(location["scan"])
         view.cloud_panel.collection_tabs.setCurrentIndex(location["collection_tab"])
@@ -124,10 +144,12 @@ class WorkspaceHistory:
             )
             table.sortByColumn(saved["column"], Qt.SortOrder(saved["order"]))
             table.clearSelection()
-            for row, payload in enumerate(model.payloads):
-                if self.payload_key(payload) in saved["keys"]:
+            keys = set(saved["keys"])
+            for row, payload in enumerate(model.payloads if keys else ()):
+                index = proxy.mapFromSource(model.index(row, 0)) if self.payload_key(payload) in keys else None
+                if index is not None and index.isValid():
                     table.selectionModel().select(
-                        proxy.mapFromSource(model.index(row, 0)),
+                        index,
                         QItemSelectionModel.SelectionFlag.Select
                         | QItemSelectionModel.SelectionFlag.Rows,
                     )

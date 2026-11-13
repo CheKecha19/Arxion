@@ -1,8 +1,15 @@
 """Канонические модели сетевых объектов и сервисов."""
 
 from ipaddress import ip_address, ip_network
+from typing import Any
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import (
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from firewall_compliance.domain.base import DomainModel
 from firewall_compliance.domain.enums import DataStatus, EndpointKind, Protocol
@@ -69,8 +76,8 @@ class Endpoint(DomainModel):
 class PortRange(DomainModel):
     """Включительный диапазон TCP или UDP портов."""
 
-    start: int = Field(ge=1, le=65535)
-    end: int = Field(ge=1, le=65535)
+    start: int = Field(ge=0, le=65535)
+    end: int = Field(ge=0, le=65535)
 
     @model_validator(mode="after")
     def validate_range(self) -> "PortRange":
@@ -86,13 +93,37 @@ class Service(DomainModel):
     service_id: str = Field(min_length=1)
     name: str = Field(min_length=1)
     protocol: Protocol
+    protocol_number: int | None = Field(default=None, ge=0, le=255)
     port_ranges: tuple[PortRange, ...] = ()
+    source_port_ranges: tuple[PortRange, ...] = ()
+    alg: str | None = None
     description: str | None = None
     resolution_status: DataStatus = DataStatus.KNOWN
 
     @model_validator(mode="after")
     def validate_ports(self) -> "Service":
         """Разрешить порты только для TCP и UDP."""
-        if self.port_ranges and self.protocol not in {Protocol.TCP, Protocol.UDP}:
+        if (
+            self.port_ranges or self.source_port_ranges
+        ) and self.protocol not in {Protocol.TCP, Protocol.UDP}:
             raise ValueError("диапазоны портов допустимы только для TCP и UDP")
+        expected = {Protocol.TCP: 6, Protocol.UDP: 17, Protocol.ICMP: 1}
+        if (
+            self.protocol_number is not None and self.protocol in expected
+            and self.protocol_number != expected[self.protocol]
+        ):
+            raise ValueError("номер IP-протокола противоречит типу сервиса")
+        if self.protocol == Protocol.IP and self.protocol_number is not None:
+            raise ValueError("IP ANY не может содержать конкретный номер протокола")
         return self
+
+    @model_serializer(mode="wrap")
+    def omit_extended_defaults(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        payload: dict[str, Any] = handler(self)
+        if self.protocol_number is None:
+            payload.pop("protocol_number", None)
+        if not self.source_port_ranges:
+            payload.pop("source_port_ranges", None)
+        if self.alg is None:
+            payload.pop("alg", None)
+        return payload

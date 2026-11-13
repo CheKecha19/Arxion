@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -11,8 +11,16 @@ import json
 from typing import Any
 
 from firewall_compliance.analysis.revision_diff import compare_device_revisions
+from firewall_compliance.application.collection_integrity import count_drop_warning
 from firewall_compliance.application.policy_comparison import compare_policy_revisions
 from firewall_compliance.application.workspace_profile import ProfileVersion, analysis_settings
+from firewall_compliance.checks.common.policy import CONFIGURED_COMWARE_CHECKS
+from firewall_compliance.checks.common.transit import (
+    ConfiguredComwarePolicy,
+    configured_comware_policies,
+)
+from firewall_compliance.domain.enums import RuleAction
+from firewall_compliance.domain.policy_matching import RuleMatch, ScopeKey, resolve_rule, scope_key
 from firewall_compliance.domain.revision import DeviceRevision
 from firewall_compliance.interfaces.desktop.check_presentation import check_execution_status
 
@@ -25,6 +33,9 @@ CHANGE_LABELS = {
     "normalization_dependent": "Различие зависит от нормализации",
     "availability_changed": "Изменилась доступность данных", "scope_incomparable": "Несопоставимые области",
 }
+
+type _SwitchCondition = tuple[ScopeKey, str | None, str | None, int, RuleAction, RuleMatch]
+type _ConfiguredPolicies = dict[str, ConfiguredComwarePolicy]
 
 
 def _profile(run: Mapping[str, Any]) -> dict[str, Any]:
@@ -65,7 +76,9 @@ def _device_items(run: Mapping[str, Any]) -> tuple[dict[str, list[dict[str, Any]
 
 def _input_scope(run: Mapping[str, Any]) -> dict[str, Any]:
     settings = run.get("settings") or {}
-    if settings.get("source_id"):
+    source_id = settings.get("source_id", "")
+    saved_files = isinstance(source_id, str) and source_id.startswith("files:")
+    if source_id and not saved_files:
         fingerprint = settings.get("source_config_fingerprint")
         if not isinstance(fingerprint, str) or not fingerprint or settings.get("source_collection_state") != "completed":
             return {"known": False, "fingerprint": None, "mode": "api", "reason": "Область или завершение сбора не подтверждены"}
@@ -77,6 +90,8 @@ def _input_scope(run: Mapping[str, Any]) -> dict[str, Any]:
     elif settings.get("analysis_source"):
         return {"known": False, "fingerprint": None, "mode": "derived", "reason": "Нет сохранённого общего идентификатора области сбора"}
     else:
+        if saved_files and settings.get("source_collection_state") != "completed":
+            return {"known": False, "fingerprint": None, "mode": "files", "reason": "Не все файлы получены"}
         devices, unresolved = _device_items(run)
         if unresolved or not devices:
             return {"known": False, "fingerprint": None, "mode": "files", "reason": "Область файлов определена не полностью"}
@@ -91,18 +106,337 @@ def _input_scope(run: Mapping[str, Any]) -> dict[str, Any]:
                 return {"known": False, "fingerprint": None, "mode": "files", "reason": "Источник файла не зафиксирован"}
             members.append((identifier, source, sites.get(source)))
         payload = {"mode": "files", "members": members}
+        if saved_files:
+            payload.update({
+                "source_id": source_id,
+                "sites": sorted(settings.get("source_site_ids") or []),
+            })
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return {"known": True, "fingerprint": sha256(encoded).hexdigest(), "mode": payload["mode"]}
 
 
-def _complete(item: Mapping[str, Any]) -> bool:
+def _complete(item: Mapping[str, Any], *, allow_partial_checks: bool = False) -> bool:
     parsed = item.get("parse_result") or {}
     coverage = parsed.get("coverage") or (item.get("report") or {}).get("parse_coverage") or {}
+    valid_status = {"complete", "partial"} if allow_partial_checks else {"complete"}
     return bool(
-        item.get("status") == "complete" and not item.get("collection_warnings")
+        item.get("status") in valid_status and not item.get("collection_warnings")
         and not parsed.get("errors") and not parsed.get("unsupported_constructs")
         and coverage.get("recognized_constructs") is not None
         and coverage.get("recognized_constructs") == coverage.get("discovered_constructs")
+    )
+
+
+def _captured_file_scope(
+    run: Mapping[str, Any], devices: Mapping[str, list[dict[str, Any]]],
+) -> tuple[tuple[str, str, str | None], ...] | None:
+    settings = run.get("settings") or {}
+    source_id = settings.get("source_id")
+    if (
+        run.get("state") not in {"completed", "interrupted"}
+        or not isinstance(source_id, str) or not source_id.startswith("files:")
+        or settings.get("source_collection_state") != "completed"
+    ):
+        return None
+    sites = settings.get("workspace_input_sites") or {}
+    files = []
+    for identifier, items in sorted(devices.items()):
+        if len(items) != 1:
+            return None
+        path = items[0].get("path") or items[0].get("source_path")
+        if not isinstance(path, str) or not path:
+            return None
+        files.append((identifier, path, sites.get(path)))
+    return tuple(files) if files else None
+
+
+def _switch_finding_rule_pairs(
+    before: DeviceRevision, after: DeviceRevision,
+    old_checks: Mapping[str, Any], new_checks: Mapping[str, Any], *,
+    comware_policies: tuple[_ConfiguredPolicies, _ConfiguredPolicies] | None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Сопоставить известные условия на одной позиции настроенного ACL."""
+    def by_condition(
+        revision: DeviceRevision, checks: Mapping[str, Any], policies: _ConfiguredPolicies | None,
+    ) -> dict[_SwitchCondition, list[str]]:
+        referenced = {
+            rule_id for check in checks.values() for finding in check.get("findings", [])
+            for rule_id in finding.get("affected_rule_ids", [])
+        }
+        if not referenced:
+            return {}
+        bindings = {
+            rule.rule_id: policy.binding
+            for policy in policies.values()
+            for rule in policy.rules
+        } if policies is not None else {}
+        scoped = [(scope, rule) for rule in revision.parse_result.rules if (scope := scope_key(rule)) is not None]
+        positions = Counter((scope, rule.sequence) for scope, rule in scoped)
+        rules: dict[_SwitchCondition, list[str]] = defaultdict(list)
+        for scope, rule in scoped:
+            if rule.rule_id not in referenced or not rule.enabled or positions[scope, rule.sequence] != 1:
+                continue
+            binding = bindings.get(rule.rule_id)
+            if policies is not None and binding is None:
+                continue
+            match = resolve_rule(rule)
+            if match is not None and rule.action != RuleAction.UNKNOWN:
+                profile, vrf = (binding.configured_profile, binding.vrf) if binding else (None, None)
+                rules[scope, profile, vrf, rule.sequence, rule.action, match].append(rule.rule_id)
+        return rules
+
+    old_policies, new_policies = comware_policies if comware_policies is not None else (None, None)
+    old = by_condition(before, old_checks, old_policies)
+    new = by_condition(after, new_checks, new_policies)
+    pairs = {
+        old[key][0]: new[key][0] for key in old.keys() & new.keys()
+        if len(old[key]) == len(new[key]) == 1
+    }
+    return {key: key for key in pairs}, {value: key for key, value in pairs.items()}
+
+
+def _compare_finding_rows(
+    old_item: Mapping[str, Any], new_item: Mapping[str, Any],
+    old: DeviceRevision, new: DeviceRevision, *,
+    profile_comparable: bool, inputs_comparable: bool, configured_scope_comparable: bool = False,
+    source_limitations: tuple[str, ...] | None = None,
+) -> tuple[dict[str, Any], ...]:
+    rows: list[dict[str, Any]] = []
+    identifier = old.device.device_id
+
+    def add(channel: str, change: str, entity: str, details: dict[str, Any]) -> None:
+        rows.append({"device": identifier, "channel": channel, "change": change, "entity": entity, "details": details})
+
+    old_checks = {value["check_id"]: value for value in (old_item.get("report") or {}).get("checks", [])}
+    new_checks = {value["check_id"]: value for value in (new_item.get("report") or {}).get("checks", [])}
+    if source_limitations is not None and (source_limitations or not (old_checks or new_checks)):
+        add("Полнота проверок", "Несопоставимые основания", "Снимки устройства", {
+            "reasons": source_limitations or ("В обоих снимках нет сохранённых результатов проверок.",),
+        })
+    old_config, new_config = old.parse_result.configuration, new.parse_result.configuration
+    changed_aruba = (
+        old.device.vendor == "hp-aruba" and old.device.platform in {"aos-cx", "aos-switch"}
+        and old_config.content_sha256 != new_config.content_sha256
+    )
+    comware = (old.device.vendor, old.device.platform) == ("hp-h3c", "comware")
+    changed_comware = (
+        comware and (old_config.content_sha256, old_config.parser_version)
+        != (new_config.content_sha256, new_config.parser_version)
+    )
+    comware_policies = (
+        configured_comware_policies(old.parse_result), configured_comware_policies(new.parse_result)
+    ) if comware else None
+    same_parser = old_config.parser_version == new_config.parser_version
+    rule_pairs: tuple[dict[str, str], dict[str, str]] = ({}, {})
+    if (changed_aruba or changed_comware) and same_parser:
+        rule_pairs = _switch_finding_rule_pairs(
+            old, new, old_checks, new_checks, comware_policies=comware_policies,
+        )
+    configured_checks_comparable = bool(configured_scope_comparable and comware_policies and all(comware_policies))
+    for check_id in sorted(old_checks.keys() | new_checks.keys()):
+        old_check, new_check = old_checks.get(check_id), new_checks.get(check_id)
+        if source_limitations is not None and old_check and new_check and (
+            check_execution_status(old_check) == check_execution_status(new_check) == "not_applicable"
+            and old_check.get("check_version")
+            and old_check.get("check_version") == new_check.get("check_version")
+            and not (old_check.get("findings") or new_check.get("findings"))
+        ):
+            continue
+        configured_check = check_id in CONFIGURED_COMWARE_CHECKS
+        check_limit = _check_comparison_limit(old_check, new_check)
+        comparable = bool(
+            (inputs_comparable or (configured_check and configured_checks_comparable))
+            and check_limit is None
+        )
+        before_check = _check_summary(old_check)
+        after_check = _check_summary(new_check)
+        reasons = source_limitations
+        if source_limitations is not None and check_limit is not None:
+            reasons = (*source_limitations, check_limit)
+        if not comparable:
+            diagnostics: dict[str, Any] = {
+                "profile_comparable": profile_comparable,
+                "before": before_check, "after": after_check,
+            }
+            if reasons is not None:
+                diagnostics["reasons"] = reasons
+            add("Полнота проверок", "Несопоставимые основания", check_id, diagnostics)
+        comware_check = changed_comware and configured_check
+        if changed_comware and not comware_check:
+            check_pairs: tuple[dict[str, str], dict[str, str]] = ({}, {})
+        else:
+            check_pairs = rule_pairs
+        buckets = []
+        for side, check, mapped in zip(
+            ("before", "after"), (old_check, new_check), check_pairs, strict=True,
+        ):
+            values: dict[tuple[str, tuple[tuple[str, str], ...]], list[dict[str, Any]]] = defaultdict(list)
+            # Исходный ID коммутатора может совпасть после замены содержимого строки.
+            switch_scope_changed = comware_check or (source_limitations is not None and changed_aruba)
+            fallback = side if switch_scope_changed else "id"
+            for finding in (check or {}).get("findings", []):
+                rules = tuple(sorted(
+                    ("condition", mapped[key]) if key in mapped else (fallback, key)
+                    for key in finding.get("affected_rule_ids", [])
+                ))
+                signature = finding["title"], rules
+                values[signature].append(finding)
+            buckets.append(values)
+        left, right = buckets
+        ambiguous_titles = (
+            {title for title, _ in left.keys() - right.keys()}
+            & {title for title, _ in right.keys() - left.keys()}
+            if changed_aruba or comware_check else set()
+        )
+        for signature in sorted(left.keys() | right.keys()):
+            old_findings, new_findings = left.get(signature, []), right.get(signature, [])
+            paired = bool(old_findings and new_findings)
+            comparable_rules = paired and bool(signature[1]) and all(kind == "condition" for kind, _ in signature[1])
+            uncertain = not paired and signature[0] in ambiguous_titles
+            change = (
+                "Неоднозначная сигнатура" if len(old_findings) > 1 or len(new_findings) > 1
+                else "Сохраняется на сопоставленных условиях" if comparable and comparable_rules
+                else "Сходная сигнатура" if paired
+                else "Сопоставление правил не подтверждено" if uncertain
+                else "Есть во втором результате" if new_findings and source_limitations is not None and not comparable
+                else "Появилась в результатах" if new_findings
+                else "Более не обнаружена" if comparable
+                else "Отсутствие не подтверждено"
+            )
+            details: dict[str, Any] = {
+                "before": old_findings, "after": new_findings, "comparable": comparable and not uncertain,
+                "limitation": (
+                    "Сопоставлены область, номер позиции, действие и нормализованные условия ACL. "
+                    "Исходные привязки сохранены в обоих результатах."
+                    if comparable_rules and (comparable or source_limitations is None) else
+                    "Условия сопоставлены. Полнота или происхождение проверки требуют уточнения."
+                    if source_limitations is not None and comparable_rules else
+                    "Сигнатура не доказывает стабильную идентичность правила. Отсутствие не подтверждает исправление."
+                ),
+            }
+            if reasons is not None:
+                details.update({"before_check": before_check, "after_check": after_check, "reasons": reasons})
+            add("Находки", change, check_id + " · " + signature[0], details)
+    return tuple(rows)
+
+
+def _check_summary(check: dict[str, Any] | None) -> dict[str, Any] | None:
+    return {key: check.get(key) for key in ("status", "check_version", "limitations")} if check else None
+
+
+def _check_comparison_limit(before: dict[str, Any] | None, after: dict[str, Any] | None) -> str | None:
+    if not before or not after:
+        return "Одна сторона не содержит результата этой проверки."
+    if check_execution_status(before) != "complete" or check_execution_status(after) != "complete":
+        return "Для подтверждения изменения нужна завершённая проверка в обоих снимках."
+    if not before.get("check_version") or before["check_version"] != after.get("check_version"):
+        return "Версии проверки различаются или отсутствуют."
+    return None
+
+
+def compare_saved_device_findings(
+    before_item: Mapping[str, Any], after_item: Mapping[str, Any],
+    old: DeviceRevision, new: DeviceRevision, *,
+    before_run: Mapping[str, Any], after_run: Mapping[str, Any],
+    source_limitations: Sequence[str] = (),
+) -> tuple[dict[str, Any], ...]:
+    """Сопоставить результаты точных снимков одного устройства из сверок матрицы."""
+    if not before_run.get("project_id") or before_run["project_id"] != after_run.get("project_id"):
+        raise ValueError("Снимки должны принадлежать одному проекту.")
+    if _device_identity(old) != _device_identity(new):
+        raise ValueError("Снимки должны принадлежать одному устройству, платформе и контексту.")
+    old_config, new_config = old.parse_result.configuration, new.parse_result.configuration
+    reasons = list(source_limitations)
+    if before_run.get("id") == after_run.get("id"):
+        reasons.append("Оба снимка получены в одном запуске. Последовательность независимых проверок не подтверждена.")
+    if new_config.captured_at < old_config.captured_at or (
+        new_config.captured_at == old_config.captured_at and new_config.content_sha256 != old_config.content_sha256
+    ):
+        reasons.append("Время снимков устройства не подтверждает порядок сравнения.")
+    if old_config.parser_version != new_config.parser_version:
+        reasons.append("Версии парсера различаются.")
+    before_profile, after_profile = _profile(before_run), _profile(after_run)
+    profile_comparable = bool(
+        before_profile["known"] and after_profile["known"]
+        and before_profile["fingerprint"] == after_profile["fingerprint"]
+    )
+    if not profile_comparable:
+        reasons.append("Профили проверок различаются или их происхождение не подтверждено.")
+    _device_source_limitations(before_item, after_item, old, new, before_run, after_run, reasons)
+    threshold = (after_profile["settings"] or {}).get("rule_count_drop_percent", 30)
+    drop = count_drop_warning(
+        len(old.parse_result.rules), len(new.parse_result.rules),
+        threshold_percent=threshold, before_reference=str(old.revision_id), unit="правила",
+    )
+    if drop is not None:
+        reasons.append(drop.message)
+    return _compare_finding_rows(
+        before_item, after_item, old, new, profile_comparable=profile_comparable,
+        inputs_comparable=not reasons, source_limitations=tuple(dict.fromkeys(reasons)),
+    )
+
+
+def _device_identity(revision: DeviceRevision) -> tuple[str, str, str, str | None]:
+    device = revision.device
+    return device.device_id, device.vendor, device.platform, device.context
+
+
+def _device_source_limitations(
+    before_item: Mapping[str, Any], after_item: Mapping[str, Any], old: DeviceRevision, new: DeviceRevision,
+    before_run: Mapping[str, Any], after_run: Mapping[str, Any], reasons: list[str],
+) -> None:
+    settings = [(run.get("settings") or {}) for run in (before_run, after_run)]
+    for label, item, revision, run, run_settings in (
+        ("Первый снимок", before_item, old, before_run, settings[0]),
+        ("Второй снимок", after_item, new, after_run, settings[1]),
+    ):
+        if not run.get("id") or item.get("run_id") != run["id"]:
+            raise ValueError("Элемент снимка не принадлежит указанному запуску.")
+        parsed = revision.parse_result
+        report = item.get("report") or {}
+        if report and (
+            report.get("revision_id") != str(revision.revision_id)
+            or report.get("configuration_id") != str(parsed.configuration.configuration_id)
+            or report.get("device_id") != revision.device.device_id
+            or report.get("parser_version") != parsed.configuration.parser_version
+        ):
+            raise ValueError("Сохранённый отчёт не соответствует указанному снимку устройства.")
+        if not report:
+            reasons.append(f"{label}: сохранённый результат проверок недоступен.")
+        if (
+            run.get("state") not in {"completed", "interrupted"}
+            or run_settings.get("source_collection_state") not in {None, "completed"}
+            or (run_settings.get("source_id") and run_settings.get("source_collection_state") != "completed")
+        ):
+            reasons.append(f"{label}: завершение сбора источника не подтверждено.")
+        if item.get("collection_warnings"):
+            reasons.append(f"{label}: есть предупреждение о полноте сбора.")
+        if (
+            item.get("status") not in {"complete", "partial"}
+            or parsed.errors or parsed.unsupported_constructs or parsed.coverage.coverage_ratio < 1
+            or report.get("parse_errors") or report.get("unsupported_constructs")
+        ):
+            reasons.append(f"{label}: полнота разбора конфигурации не подтверждена.")
+    if _device_configuration_scope(old, settings[0]) != _device_configuration_scope(new, settings[1]):
+        reasons.append("Область входной конфигурации различается.")
+    if any(
+        run_settings.get("source_id") and not str(run_settings["source_id"]).startswith("files:")
+        or run_settings.get("analysis_source")
+        for run_settings in settings
+    ):
+        scopes = _input_scope(before_run), _input_scope(after_run)
+        if not all(scope["known"] and scope["mode"] == "api" for scope in scopes) or (
+            scopes[0]["fingerprint"] != scopes[1]["fingerprint"]
+        ):
+            reasons.append("Область получения исходных политик различается или не подтверждена.")
+
+
+def _device_configuration_scope(revision: DeviceRevision, settings: Mapping[str, Any]) -> tuple[object, ...]:
+    facts = revision.parse_result.switch_facts
+    return (
+        facts.configuration_complete if facts is not None else settings.get("configuration_complete", False),
+        settings.get("configuration_view", "unknown"),
+        settings.get("configuration_node_path"),
     )
 
 
@@ -188,6 +522,8 @@ def compare_saved_runs(before: Mapping[str, Any], after: Mapping[str, Any]) -> d
     )
     old_scope, new_scope = _input_scope(before), _input_scope(after)
     scope_comparable = bool(old_scope["known"] and new_scope["known"] and old_scope["fingerprint"] == new_scope["fingerprint"])
+    old_file_scope = _captured_file_scope(before, first) if scope_comparable else None
+    same_file_scope = old_file_scope is not None and old_file_scope == _captured_file_scope(after, second)
     rows: list[dict[str, Any]] = []
     devices = []
 
@@ -277,48 +613,28 @@ def compare_saved_runs(before: Mapping[str, Any], after: Mapping[str, Any]) -> d
             add(identifier, "Ограничения", limitation.code, ", ".join(limitation.entity_ids), limitation.model_dump(mode="json"))
         for limitation in network.limitations if network else ():
             add(identifier, "Ограничения", "Сетевое сравнение", identifier, limitation)
-        old_checks = {value["check_id"]: value for value in (old_item.get("report") or {}).get("checks", [])}
-        new_checks = {value["check_id"]: value for value in (new_item.get("report") or {}).get("checks", [])}
+        same_parser = old.parse_result.configuration.parser_version == new.parse_result.configuration.parser_version
         inputs_comparable = bool(
             before.get("state") == after.get("state") == "completed"
             and profile_comparable and scope_comparable and _complete(old_item) and _complete(new_item)
-            and old.parse_result.configuration.parser_version == new.parse_result.configuration.parser_version
+            and same_parser
         )
-        for check_id in sorted(old_checks.keys() | new_checks.keys()):
-            old_check, new_check = old_checks.get(check_id), new_checks.get(check_id)
-            comparable = bool(
-                inputs_comparable and old_check and new_check
-                and check_execution_status(old_check) == check_execution_status(new_check) == "complete"
-                and old_check.get("check_version") == new_check.get("check_version")
-                and old_check.get("check_version")
+        # В файловом цикле частичная посторонняя проверка не отменяет уже завершившийся сбор.
+        configured_scope_comparable = bool(
+            (old.device.vendor, old.device.platform) == ("hp-h3c", "comware") and profile_comparable and scope_comparable
+            and same_parser and same_file_scope
+            and _complete(old_item, allow_partial_checks=True)
+            and _complete(new_item, allow_partial_checks=True)
+            and all(
+                not revision.parse_result.unsupported_constructs
+                and revision.parse_result.coverage.coverage_ratio == 1
+                for revision in (old, new)
             )
-            if not comparable:
-                add(identifier, "Полнота проверок", "Несопоставимые основания", check_id, {
-                    "profile_comparable": profile_comparable,
-                    "before": {key: old_check.get(key) for key in ("status", "check_version", "limitations")} if old_check else None,
-                    "after": {key: new_check.get(key) for key in ("status", "check_version", "limitations")} if new_check else None,
-                })
-            buckets = []
-            for check in (old_check, new_check):
-                values: dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]] = defaultdict(list)
-                for finding in (check or {}).get("findings", []):
-                    signature = (finding["title"], tuple(sorted(finding.get("affected_rule_ids", []))))
-                    values[signature].append(finding)
-                buckets.append(values)
-            left, right = buckets
-            for signature in sorted(left.keys() | right.keys()):
-                old_findings, new_findings = left.get(signature, []), right.get(signature, [])
-                change = (
-                    "Неоднозначная сигнатура" if len(old_findings) > 1 or len(new_findings) > 1
-                    else "Сходная сигнатура" if old_findings and new_findings
-                    else "Появилась в результатах" if new_findings
-                    else "Более не обнаружена" if comparable
-                    else "Отсутствие не подтверждено"
-                )
-                add(identifier, "Находки", change, check_id + " · " + signature[0], {
-                    "before": old_findings, "after": new_findings, "comparable": comparable,
-                    "limitation": "Сигнатура не доказывает стабильную идентичность правила. Отсутствие не подтверждает исправление.",
-                })
+        )
+        rows.extend(_compare_finding_rows(
+            old_item, new_item, old, new, profile_comparable=profile_comparable,
+            inputs_comparable=inputs_comparable, configured_scope_comparable=configured_scope_comparable,
+        ))
     return {
         "package_type": "firewall-compliance.run-comparison", "schema_version": "1.0.0",
         "project_id": str(before["project_id"]), "before_run_id": str(before["id"]), "after_run_id": str(after["id"]),

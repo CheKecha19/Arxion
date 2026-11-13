@@ -65,7 +65,12 @@ def resolve_services(values: tuple[Service, ...]) -> ServiceSet | None:
         return None
     intervals: dict[str, list[Interval]] = {}
     for value in values:
-        if value.resolution_status != DataStatus.KNOWN or value.protocol == Protocol.OTHER:
+        if (
+            value.resolution_status != DataStatus.KNOWN
+            or value.protocol == Protocol.OTHER
+            or value.source_port_ranges
+            or value.alg is not None
+        ):
             return None
         intervals.setdefault(value.protocol.value, []).extend(
             [(port.start, port.end) for port in value.port_ranges] or [(0, 65535)]

@@ -31,19 +31,36 @@ def cloud_resource_key(scan: dict[str, Any], record: dict[str, Any], index: int)
 
 
 def cloud_resources(scans: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Последнее наблюдение ресурса; отсутствие в новом сборе не означает удаление.
+    """Последнее наблюдение каждого ресурса по сохранённым сборам."""
+    return cloud_inventory(scans)[0]
+
+
+def cloud_inventory(
+    scans: Sequence[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    """Состав инвентаря и операции, в которых наблюдался каждый ресурс.
 
     Каждая строка сохраняет собственное время и исходный сбор. Сеть и секреты
     не используются, сохранённые результаты не изменяются.
     """
     resources: dict[str, dict[str, Any]] = {}
+    history: dict[str, list[dict[str, Any]]] = {}
     for scan in sorted(scans, key=lambda value: value["created_at"], reverse=True):
+        operation = {
+            "id": scan["id"], "created_at": scan["created_at"], "state": scan.get("state", "unknown"),
+            "operation_kind": "collection",
+        }
         for index, record in enumerate(scan.get("result", {}).get("records", [])):
-            identity = cloud_resource_key(scan, record, index)
+            if not isinstance(record, dict):
+                continue
+            identity = "cloud:" + cloud_resource_key(scan, record, index)
+            observations = history.setdefault(identity, [])
+            if not observations or observations[-1]["id"] != scan["id"]:
+                observations.append(operation)
             resources.setdefault(
                 identity,
                 {
-                    "id": "cloud:" + identity,
+                    "id": identity,
                     "kind": "cloud",
                     "scan": scan,
                     "record": record,
@@ -51,7 +68,7 @@ def cloud_resources(scans: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
                     "platform": scan["config"].get("platform", "vmware"),
                 },
             )
-    return list(resources.values())
+    return list(resources.values()), history
 
 
 def project_operations(

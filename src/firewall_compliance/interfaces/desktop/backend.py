@@ -52,6 +52,7 @@ from firewall_compliance.parsers import (
     SourceDocument,
 )
 from firewall_compliance.parsers.catalog import create_default_registry
+from firewall_compliance.parsers.contracts import ConfigurationView
 
 
 @dataclass(frozen=True)
@@ -107,13 +108,19 @@ def analyze_file(
     enabled_check_ids: tuple[str, ...] | None = None,
     management_profile: ManagementProfile | None = None,
     configuration_complete: bool = False,
+    configuration_view: ConfigurationView = "unknown",
+    configuration_node_path: str | None = None,
     policy_exposure_profile: PolicyExposureProfile | None = None,
     policy_scope_profile: PolicyScopeProfile | None = None,
 ) -> AnalysisSession | ParseFailure:
     """Прочитать и разобрать файл один раз; исключения обрабатывает граница задания."""
     source = FileSourceReader().read(path)
     source = SourceDocument.model_validate(
-        {**source.model_dump(), "configuration_complete": configuration_complete}
+        {
+            **source.model_dump(), "configuration_complete": configuration_complete,
+            "configuration_view": configuration_view,
+            "configuration_node_path": configuration_node_path,
+        }
     )
     imported_at = datetime.now(UTC)
     outcome = create_default_registry().parse(ParseRequest(source=source, imported_at=imported_at))

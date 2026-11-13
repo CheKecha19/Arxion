@@ -17,6 +17,10 @@ from firewall_compliance.application.analysis_result import (
     component_revisions,
     component_state,
 )
+from firewall_compliance.application.controller_reports import (
+    controller_report_payload,
+    controller_report_records,
+)
 from firewall_compliance.application.switch_reports import switch_report_payload, switch_report_records
 from firewall_compliance.application.switch_topology import build_switch_topology
 
@@ -179,6 +183,16 @@ def _records(result: AnalysisResult) -> Iterator[dict[str, Any]]:
             }
         if isinstance(component, PolicyComponent):
             report = component.result
+            controller = controller_report_payload(component.revision.parse_result)
+            if controller is not None:
+                for record in controller_report_records(controller):
+                    yield {
+                        **base,
+                        "row_type": "controller_configuration",
+                        "entity_id": record["entity_id"],
+                        "title": record["section"],
+                        "details_json": record["details"],
+                    }
             switch = switch_report_payload(component.revision.parse_result)
             if switch is not None:
                 for record in switch_report_records(switch):

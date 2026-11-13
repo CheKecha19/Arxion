@@ -2,18 +2,23 @@
 
 import re
 import shlex
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv4Network
-from typing import Literal
+from typing import Literal, cast
 
+from firewall_compliance.domain.configuration import Rule
 from firewall_compliance.domain.enums import DataStatus, EndpointKind, ParseIssueLevel, Protocol
 from firewall_compliance.domain.network import Endpoint, PortRange, Service
 from firewall_compliance.domain.parse_result import ParseIssue, ParseResult
 from firewall_compliance.domain.source import SourceLocation
+from firewall_compliance.domain.switch_facts import SwitchFacts
 from firewall_compliance.domain.switch_policy import (
     AceDeclaration,
     AclBinding,
     AclDeclaration,
+    AclMatchOrder,
     ManagerAccess,
     PolicyAreaCoverage,
     PolicyImportIssue,
@@ -23,6 +28,10 @@ from firewall_compliance.parsers.contracts import SourceDocument
 from firewall_compliance.parsers.platform_detection import detect_switch_platform
 
 type _AclKind = Literal["standard", "extended"]
+type _ConfiguredBindingsReader = Callable[
+    [SourceDocument, list[str], tuple[AclDeclaration, ...], tuple[Rule, ...], SwitchFacts, list[AclBinding]],
+    tuple[list[AclBinding], list[PolicyImportIssue]],
+]
 
 
 @dataclass
@@ -176,7 +185,10 @@ def _declared_conditions(
     return result
 
 
-def parse_switch_policies(source: SourceDocument, parsed: ParseResult) -> SwitchPolicies:
+def parse_switch_policies(
+    source: SourceDocument, parsed: ParseResult, *, facts: SwitchFacts | None = None,
+    read_configured_bindings: _ConfiguredBindingsReader | None = None,
+) -> SwitchPolicies:
     """Извлечь независимые объявления и все поддержанные места применения."""
     platform = parsed.configuration.platform
     lines = source.content.decode("utf-8-sig").splitlines()
@@ -185,7 +197,19 @@ def parse_switch_policies(source: SourceDocument, parsed: ParseResult) -> Switch
         r"(?:[A-Z]+\.)?10\.10\.", detection.version or "", re.IGNORECASE,
     ))
     headers: dict[str, tuple[str, int, _AclKind | None]] = {}
+    orders: dict[str, AclMatchOrder] = {}
     entries: dict[str, list[AceDeclaration]] = {}
+    sequences: dict[str, set[int]] = defaultdict(set)
+    largest_sequences: dict[str, int] = {}
+    rules_by_line: dict[int, list[Rule]] = defaultdict(list)
+    for rule in parsed.rules:
+        if rule.source_location.line_start is not None:
+            rules_by_line[rule.source_location.line_start].append(rule)
+    unsupported_lines = {item.source_location.line_start for item in parsed.unsupported_constructs}
+    unsupported_acl_lines = {
+        item.source_location.line_start for item in parsed.unsupported_constructs
+        if item.construct_type not in {"logging", "comment"}
+    }
     bindings: list[AclBinding] = []
     managers: list[ManagerAccess] = []
     issues: list[PolicyImportIssue] = []
@@ -231,12 +255,11 @@ def parse_switch_policies(source: SourceDocument, parsed: ParseResult) -> Switch
         entries.setdefault(name, [])
 
     def entry(name: str, tokens: list[str], number: int) -> None:
-        related = tuple(r for r in parsed.rules if r.source_location.line_start == number)
-        previous = entries.get(name, [])
+        related = rules_by_line.get(number, [])
         sequence = (
             int(tokens[0]) if tokens and tokens[0].isdigit()
             else related[0].sequence if related
-            else max((item.sequence for item in previous), default=0) + 10
+            else largest_sequences.get(name, 0) + 10
         )
         body = tokens[1:] if tokens and tokens[0].isdigit() else tokens
         if not body or body[0] not in {"permit", "deny"}:
@@ -246,18 +269,15 @@ def parse_switch_policies(source: SourceDocument, parsed: ParseResult) -> Switch
         valid = conditions.valid and bool(related) and all(
             r.action.value in {"allow", "deny"} for r in related
         )
-        if any(
-            unsupported.source_location.line_start == number
-            and unsupported.construct_type not in {"logging", "comment"}
-            for unsupported in parsed.unsupported_constructs
-        ):
+        if number in unsupported_acl_lines:
             valid = False
         if not valid:
             issue("ACE_UNRESOLVED", "Условия ACE повреждены, неизвестны или не полностью поддержаны.", number)
-        values = entries.setdefault(name, [])
-        if any(existing.sequence == sequence for existing in values):
+        if sequence in sequences[name]:
             issue("ACE_ORDER_CONFLICT", "Повторный номер ACE не доказывает порядок применения.", number)
-        values.append(AceDeclaration(
+        sequences[name].add(sequence)
+        largest_sequences[name] = max(largest_sequences.get(name, sequence), sequence)
+        entries.setdefault(name, []).append(AceDeclaration(
             entry_id=identifier, sequence=sequence, action=body[0],
             source_locations=(loc(number),), raw_source=conditions.source_raw,
             raw_destination=conditions.destination_raw, protocol=conditions.protocol_raw,
@@ -299,6 +319,12 @@ def parse_switch_policies(source: SourceDocument, parsed: ParseResult) -> Switch
                 or (switch_header and tokens[2] == "extended")
             ) else "standard"
             declare(found[1], number, kind)
+            if platform == "comware" and headers[found[1]][1] == number:
+                order = re.fullmatch(
+                    r"acl (?:number|advanced|basic) [0-9]{4} match-order (config|auto)", " ".join(tokens),
+                )
+                if order is not None:
+                    orders[found[1]] = cast(AclMatchOrder, order[1])
             continue
         if tokens[:2] == ["access-list", "ip"] and len(tokens) == 3:
             declare(tokens[2], number, "extended")
@@ -316,6 +342,8 @@ def parse_switch_policies(source: SourceDocument, parsed: ParseResult) -> Switch
                 entry(current, body, number)
                 continue
             if tokens[0] in {"description", "remark", "comment"}:
+                continue
+            if platform == "comware" and len(tokens) == 2 and tokens[0] == "step" and tokens[1].isdigit():
                 continue
             current = None
         if tokens[0] in {"interface", "vlan"}:
@@ -358,10 +386,7 @@ def parse_switch_policies(source: SourceDocument, parsed: ParseResult) -> Switch
             method = tokens[tokens.index("access-method") + 1] if "access-method" in tokens and tokens.index("access-method") + 1 < len(tokens) else "all"
             privilege = tokens[tokens.index("access") + 1] if "access" in tokens and tokens.index("access") + 1 < len(tokens) else "manager"
             valid_manager = cidr is not None and method in {"all", "ssh", "snmp", "telnet", "web", "tftp"} and privilege in {"manager", "operator"}
-            manager_rules = [rule for rule in parsed.rules if rule.source_location.line_start == number]
-            valid_manager = valid_manager and bool(manager_rules) and not any(
-                item.source_location.line_start == number for item in parsed.unsupported_constructs
-            )
+            valid_manager = valid_manager and bool(rules_by_line.get(number)) and number not in unsupported_lines
             if not valid_manager and cidr is not None:
                 issue("MANAGER_SCOPE_UNRESOLVED", "Метод или права управляющего доступа не поддержаны.", number)
             managers.append(ManagerAccess(
@@ -369,9 +394,21 @@ def parse_switch_policies(source: SourceDocument, parsed: ParseResult) -> Switch
                 source_cidr=cidr, method=method, privilege=privilege, valid=valid_manager,
                 source_locations=(loc(number),),
             ))
+    declarations = tuple(AclDeclaration(
+        acl_id=acl_id(name), name=name, entries=tuple(entries.get(name, ())),
+        acl_type=kind, source_locations=(loc(number),), match_order=orders.get(name),
+    ) for name, (_, number, kind) in headers.items())
+    if read_configured_bindings is not None:
+        from firewall_compliance.parsers.switch_facts import parse_switch_facts
+
+        observed, unsupported = read_configured_bindings(
+            source, lines, declarations, parsed.rules, facts or parse_switch_facts(source, platform), bindings,
+        )
+        bindings.extend(observed)
+        issues.extend(unsupported)
+    declared_ids = {item.acl_id for item in declarations}
     for binding in bindings:
-        name = binding.acl_id.removeprefix("ipv4:")
-        if name not in headers:
+        if binding.acl_id.startswith("ipv4:") and binding.acl_id not in declared_ids:
             issue("BINDING_WITHOUT_ACL", "Привязка ссылается на отсутствующее объявление ACL.", binding.source_locations[0].line_start or 1)
     coverage: list[PolicyAreaCoverage] = []
     areas: tuple[tuple[Literal["acl", "bindings", "managers"], int, tuple[SourceLocation, ...]], ...] = (
@@ -392,11 +429,7 @@ def parse_switch_policies(source: SourceDocument, parsed: ParseResult) -> Switch
             source_locations=anchors,
         ))
     return SwitchPolicies(
-        declarations=tuple(AclDeclaration(
-            acl_id=acl_id(name), name=name, entries=tuple(entries.get(name, ())),
-            acl_type=kind,
-            source_locations=(loc(number),),
-        ) for name, (_, number, kind) in headers.items()),
+        declarations=declarations,
         bindings=tuple(bindings), managers=tuple(managers), issues=tuple(issues),
         coverage=tuple(coverage),
         detection_reasons=detection.reasons, source_name=source.source_name,
@@ -404,63 +437,145 @@ def parse_switch_policies(source: SourceDocument, parsed: ParseResult) -> Switch
     )
 
 
-def enrich_switch_result(source: SourceDocument, parsed: ParseResult) -> ParseResult:
+def _project_configured_rules(
+    parsed: ParseResult, policies: SwitchPolicies,
+) -> tuple[tuple[Rule, ...], tuple[Endpoint, ...], SwitchPolicies, dict[str, SourceLocation]]:
+    bindings_by_acl: dict[str, list[AclBinding]] = defaultdict(list)
+    for binding in policies.bindings:
+        if binding.configured_profile is not None:
+            bindings_by_acl[binding.acl_id].append(binding)
+    if not bindings_by_acl:
+        return parsed.rules, parsed.endpoints, policies, parsed.source_map
+
+    rules = {rule.rule_id: rule for rule in parsed.rules}
+    projections = []
+    declarations = []
+    ipv4_endpoints: dict[str, Endpoint] = {}
+    source_map = dict(parsed.source_map)
+
+    def ipv4_only(endpoints: tuple[Endpoint, ...], location: SourceLocation) -> tuple[Endpoint, ...]:
+        result = []
+        for endpoint in endpoints:
+            if endpoint.kind != EndpointKind.ANY:
+                result.append(endpoint)
+                continue
+            key = f"{endpoint.endpoint_id}:ipv4"
+            if key not in ipv4_endpoints:
+                ipv4_endpoints[key] = Endpoint(
+                    endpoint_id=key, name=endpoint.name, kind=EndpointKind.SUBNET, cidrs=("0.0.0.0/0",),
+                )
+                source_map[key] = location
+            result.append(ipv4_endpoints[key])
+        return tuple(result)
+
+    for declaration in policies.declarations:
+        bindings = bindings_by_acl.get(declaration.acl_id)
+        if bindings is None:
+            declarations.append(declaration)
+            continue
+        entries = []
+        for entry in declaration.entries:
+            original = rules[entry.rule_ids[0]]
+            sources = ipv4_only(original.sources, original.source_location)
+            destinations = ipv4_only(original.destinations, original.source_location)
+            identifiers = list(entry.rule_ids)
+            for binding in bindings:
+                zone = f"{binding.subject}:{binding.direction}"
+                identifier = f"{original.rule_id}@{zone}"
+                projections.append(original.model_copy(update={
+                    "rule_id": identifier,
+                    "name": f"ACL {declaration.name} / {entry.sequence} · {binding.subject}",
+                    "policy_id": f"acl:{declaration.name}@{zone}",
+                    "sources": sources, "destinations": destinations,
+                    "policy_direction": "in", "policy_semantics": "first_match", "policy_purpose": "transit",
+                    "source_zone": zone, "zone_status": DataStatus.KNOWN,
+                    "logging_enabled": bool(original.logging_enabled), "logging_status": DataStatus.KNOWN,
+                }))
+                source_map[identifier] = original.source_location
+                source_map[f"binding:{identifier}"] = binding.source_locations[0]
+                identifiers.append(identifier)
+            entries.append(entry.model_copy(update={"rule_ids": tuple(identifiers)}))
+        declarations.append(declaration.model_copy(update={"entries": tuple(entries)}))
+    return (
+        (*parsed.rules, *projections), (*parsed.endpoints, *ipv4_endpoints.values()),
+        policies.model_copy(update={"declarations": tuple(declarations)}), source_map,
+    )
+
+
+def enrich_switch_result(
+    source: SourceDocument, parsed: ParseResult, *,
+    read_configured_bindings: _ConfiguredBindingsReader | None = None,
+) -> ParseResult:
     """Добавить версионированные факты, не меняя исторические ревизии."""
     from firewall_compliance.parsers.switch_facts import parse_switch_facts
 
-    policies = parse_switch_policies(source, parsed)
+    platform = parsed.configuration.platform
+    facts = parse_switch_facts(source, platform)
+    policies = parse_switch_policies(source, parsed, facts=facts, read_configured_bindings=read_configured_bindings)
+    native_rules, endpoints, source_map = parsed.rules, parsed.endpoints, parsed.source_map
+    if read_configured_bindings is not None:
+        native_rules, endpoints, policies, source_map = _project_configured_rules(parsed, policies)
     purposes: dict[int, set[str]] = {}
-    applications: dict[int, tuple[AclBinding, ...]] = {}
+    applications: dict[int, set[tuple[str, str]]] = {}
+    bindings_by_acl: dict[str, list[AclBinding]] = defaultdict(list)
+    for binding in policies.bindings:
+        bindings_by_acl[binding.acl_id].append(binding)
     for acl in policies.declarations:
-        acl_bindings = tuple(b for b in policies.bindings if b.acl_id == acl.acl_id)
+        acl_bindings = bindings_by_acl.get(acl.acl_id, ())
         bound = {b.purpose for b in acl_bindings}
+        transit = {
+            (
+                f"acl:{acl.name}@{binding.subject}:{binding.direction}",
+                "in" if binding.direction in {"in", "routed-in"} else "out",
+            )
+            for binding in acl_bindings if binding.purpose == "transit"
+        }
         for entry in acl.entries:
             for location in entry.source_locations:
                 if location.line_start is not None:
                     purposes[location.line_start] = bound
-                    applications[location.line_start] = acl_bindings
+                    applications[location.line_start] = transit
     rules = []
-    for rule in parsed.rules:
+    for rule in native_rules:
         line_number = rule.source_location.line_start or 0
         bound = purposes.get(line_number, set())
-        transit_application = any(
-            binding.purpose == "transit"
-            and rule.policy_id == (
-                f"acl:{binding.acl_id.removeprefix('ipv4:')}@"
-                f"{binding.subject}:{binding.direction}"
-            )
-            and rule.policy_direction == (
-                "in" if binding.direction in {"in", "routed-in"} else "out"
-            )
-            and rule.policy_semantics == "first_match"
-            for binding in applications.get(line_number, ())
+        transit_application = (
+            rule.policy_semantics == "first_match"
+            and (rule.policy_id, rule.policy_direction) in applications.get(line_number, ())
         )
-        if parsed.configuration.platform == "comware" and len(bound) > 1:
-            # Comware legacy Rule представляет объявление, а не отдельное применение.
-            purpose = "unknown"
-        elif (rule.policy_id or "").startswith("management:"):
+        if (rule.policy_id or "").startswith("management:"):
             purpose = "management"
         elif transit_application:
             purpose = "transit"
         elif bound == {"management"}:
             purpose = "management"
+        elif platform == "comware" and bound == {"transit"}:
+            # Сохраняем прежний ID объявления для старых требований матрицы.
+            purpose = "unbound"
         elif bound:
             purpose = "unknown"
         else:
             purpose = "unbound"
         rules.append(rule.model_copy(update={"policy_purpose": purpose}))
-    facts = parse_switch_facts(source, parsed.configuration.platform)
     warnings = list(parsed.warnings)
     warnings.extend(ParseIssue(
         code=issue.code, level=ParseIssueLevel.WARNING,
         message=issue.message, source_location=issue.source_location,
     ) for issue in policies.issues)
     if not any(binding.purpose == "transit" for binding in policies.bindings):
+        observed_comware = platform == "comware" and any(
+            binding.purpose == "unknown" for binding in policies.bindings
+        )
         warnings.append(ParseIssue(
             code="NO_TRANSIT_ACL", level=ParseIssueLevel.WARNING,
-            message="Транзитные ACL в представленном файле не обнаружены; это не доказательство разрешения всего трафика.",
+            message=(
+                "В файле есть неподтверждённые назначения packet-filter. Подтверждённых транзитных ACL нет."
+                if observed_comware else
+                "Транзитные ACL в представленном файле не обнаружены; "
+                "это не доказательство разрешения всего трафика."
+            ),
         ))
     return ParseResult.model_validate({
-        **parsed.model_dump(mode="python"), "rules": rules,
+        **parsed.model_dump(mode="python"), "rules": rules, "endpoints": endpoints, "source_map": source_map,
         "switch_policies": policies, "switch_facts": facts, "warnings": tuple(warnings),
     })

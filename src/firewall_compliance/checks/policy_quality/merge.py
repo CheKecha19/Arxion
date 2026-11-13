@@ -1,6 +1,11 @@
 """Policy check implementation."""
 
-from firewall_compliance.analysis.policy_matching import RuleMatch, resolve_rule
+from itertools import pairwise
+
+from firewall_compliance.checks.common.ordered_coverage import (
+    CoverageSearchLimit,
+    OrderedCoverageIndex,
+)
 from firewall_compliance.checks.common.policy import (
     PolicyCheckContext,
     _finding,
@@ -19,71 +24,76 @@ class MergeCandidateCheck:
     check_id = "FW-MERGE-CANDIDATE"
 
     def evaluate(self, context: PolicyCheckContext) -> CheckResult:
-        groups, limitations = _pair_groups(context)
+        groups, limitations = _pair_groups(context, enforce_pair_limit=False)
         findings: list[Finding] = []
         for rules in groups:
-            for index, (before, after) in enumerate(zip(rules, rules[1:], strict=False)):
-                left, right = resolve_rule(before), resolve_rule(after)
-                assert isinstance(left, RuleMatch) and isinstance(right, RuleMatch)
-                earlier_matches = [resolve_rule(rule) for rule in rules[:index]]
-                if any(
-                    match is not None and (match.covers(left) or match.covers(right))
-                    for match in earlier_matches
-                ):
+            if len(rules) < 2:
+                continue
+            coverage = OrderedCoverageIndex(rules, context.max_pair_rules)
+            for position, (before, after) in enumerate(pairwise(rules)):
+                if before.action != after.action:
                     continue
-                if before.action == after.action and (
+                metadata_issue = None
+                if (
                     before.logging_status != DataStatus.KNOWN
                     or after.logging_status != DataStatus.KNOWN
                     or before.logging_enabled is None
                     or after.logging_enabled is None
                 ):
-                    limitations.append(
-                        _limitation(
-                            "UNKNOWN_MERGE_METADATA",
-                            "Нет достоверного логирования для объединения.",
-                            before,
-                            after,
-                        )
-                    )
-                if not _same_effect(before, after):
+                    metadata_issue = "Нет достоверного логирования для объединения."
+                elif not _same_effect(before, after):
                     continue
-                if before.description_status not in {
+                elif before.description_status not in {
                     DataStatus.KNOWN,
                     DataStatus.ABSENT,
                 } or after.description_status not in {DataStatus.KNOWN, DataStatus.ABSENT}:
+                    metadata_issue = "Нет достоверных описаний для оценки объединения."
+                if metadata_issue is None:
+                    left, right = coverage.matches[position], coverage.matches[position + 1]
+                    different_axes = sum(
+                        (
+                            left.sources != right.sources,
+                            left.destinations != right.destinations,
+                            left.services != right.services,
+                        )
+                    )
+                    if (
+                        different_axes != 1
+                        or before.description != after.description
+                        or before.owner != after.owner
+                    ):
+                        continue
+                try:
+                    if coverage.first_covering((position, position + 1), before=position) is not None:
+                        continue
+                    if metadata_issue is not None:
+                        limitations.append(
+                            _limitation("UNKNOWN_MERGE_METADATA", metadata_issue, before, after)
+                        )
+                        continue
+                    if coverage.covers(position, position + 1) or coverage.covers(position + 1, position):
+                        continue
+                except CoverageSearchLimit:
                     limitations.append(
                         _limitation(
-                            "UNKNOWN_MERGE_METADATA",
-                            "Нет достоверных описаний для оценки объединения.",
+                            "COVER_CANDIDATE_LIMIT",
+                            "Исчерпан бюджет точных сравнений. Поиск кандидатов на объединение "
+                            "от указанной пары до конца этой области выполнен частично.",
                             before,
                             after,
                         )
                     )
-                    continue
-                different_axes = sum(
-                    (
-                        left.sources != right.sources,
-                        left.destinations != right.destinations,
-                        left.services != right.services,
+                    break
+                findings.append(
+                    _finding(
+                        context,
+                        self.check_id,
+                        (before, after),
+                        "Соседние правила являются кандидатами на объединение "
+                        "по одной оси условий.",
+                        Severity.INFO,
+                        "Вручную проверить возможность объединения значений одной оси "
+                        "без расширения остальных условий.",
                     )
                 )
-                if (
-                    different_axes == 1
-                    and before.description == after.description
-                    and before.owner == after.owner
-                    and not left.covers(right)
-                    and not right.covers(left)
-                ):
-                    findings.append(
-                        _finding(
-                            context,
-                            self.check_id,
-                            (before, after),
-                            "Соседние правила являются кандидатами на объединение "
-                            "по одной оси условий.",
-                            Severity.INFO,
-                            "Вручную проверить возможность объединения значений одной оси "
-                            "без расширения остальных условий.",
-                        )
-                    )
         return _result(self.check_id, context, findings, limitations)

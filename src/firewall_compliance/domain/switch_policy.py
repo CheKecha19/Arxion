@@ -1,8 +1,9 @@
 """Объявления и применения политик коммутаторов без догадок о пути пакета."""
 
-from typing import Literal
+import re
+from typing import Any, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, SerializerFunctionWrapHandler, model_serializer, model_validator
 
 from firewall_compliance.domain.base import DomainModel
 from firewall_compliance.domain.configuration import Rule
@@ -10,6 +11,8 @@ from firewall_compliance.domain.network import Endpoint, Service
 from firewall_compliance.domain.source import SourceLocation
 
 type PolicyPurpose = Literal["transit", "management", "unbound", "unknown"]
+type AclMatchOrder = Literal["config", "auto"]
+type ConfiguredAclProfile = Literal["hpe-flexfabric-5944-5945-r6622"]
 
 
 def rule_purpose(rule: Rule) -> PolicyPurpose:
@@ -60,6 +63,14 @@ class AclDeclaration(DomainModel):
     acl_type: Literal["standard", "extended"] | None = None
     entries: tuple[AceDeclaration, ...] = ()
     source_locations: tuple[SourceLocation, ...]
+    match_order: AclMatchOrder | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_match_order(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        payload: dict[str, Any] = handler(self)
+        if self.match_order is None:
+            payload.pop("match_order", None)
+        return payload
 
 
 class AclBinding(DomainModel):
@@ -74,6 +85,28 @@ class AclBinding(DomainModel):
     implicit_action: Literal["allow", "deny", "unknown"] = "unknown"
     semantics: str | None = None
     implicit_action_reference: str | None = None
+    configured_profile: ConfiguredAclProfile | None = None
+
+    @model_validator(mode="after")
+    def validate_configured_profile(self) -> Self:
+        if self.configured_profile is None:
+            return self
+        vlan = re.fullmatch(r"interface:vlan:([1-9][0-9]{0,3})", self.subject)
+        if (
+            self.purpose != "transit" or self.direction != "routed-in" or self.semantics != "first_match"
+            or vlan is None or int(vlan[1]) > 4094 or not re.fullmatch(r"ipv4:3[0-9]{3}", self.acl_id)
+            or not self.vrf or not self.source_locations or any(loc.line_start is None for loc in self.source_locations)
+            or self.implicit_action != "unknown" or self.implicit_action_reference is not None
+        ):
+            raise ValueError("Подтверждённый профиль Comware требует входящего маршрутизируемого VLAN ACL")
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_configured_profile(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        payload: dict[str, Any] = handler(self)
+        if self.configured_profile is None:
+            payload.pop("configured_profile", None)
+        return payload
 
 
 class ManagerAccess(DomainModel):

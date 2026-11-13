@@ -537,6 +537,8 @@ class TopologyMapWidget(QWidget):
         toolbar.addWidget(self.interface_filter)
         self.zoom_in_button = QPushButton("+", self)
         self.zoom_out_button = QPushButton("−", self)
+        self.zoom_in_button.setFixedWidth(26)
+        self.zoom_out_button.setFixedWidth(26)
         self.fit_button = QPushButton("Вписать", self)
         for button, name, hint, callback in (
             (self.zoom_in_button, "Приблизить топологию", "+ при фокусе карты", self.view.zoom_in),

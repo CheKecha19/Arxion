@@ -63,6 +63,8 @@ class _Collector:
         self.reasons: tuple[str, ...] = ()
         self.context: tuple[str, str] | None = None
         self.oobm_member: str | None = None
+        self._cx_vlan_interfaces: dict[int, SwitchInterface] = {}
+        self._cx_uncertain_vrf: set[int] = set()
 
     def location(self, line: int) -> SourceLocation:
         return SourceLocation(source_name=self.source.source_name, line_start=line)
@@ -181,6 +183,9 @@ class _Collector:
         if header:
             self.version = header[1]
             self.locations.append(self.location(line))
+        if stripped == "!" and self.platform == "aos-cx":
+            self.context = None
+            return
         if stripped.startswith(("!", ";")):
             return
         if stripped == "#":
@@ -189,6 +194,9 @@ class _Collector:
         try:
             words = shlex.split(stripped, posix=True)
         except ValueError:
+            if self.context is not None and self.context[0] == "interface":
+                if re.match(r"(?:(?:no|undo)\s+)?(?:vrf(?:\s|$)|ip\s+binding(?:\s|$))", stripped, re.I):
+                    self._invalidate_cx_vrf(self._cx_svi_number(self.context[1]))
             self.issue("identification", line, "Незакрытая кавычка; строка не разобрана.")
             return
         if not words:
@@ -196,6 +204,12 @@ class _Collector:
         self._consume(words, raw, line)
 
     def _consume(self, words: list[str], raw: str, line: int) -> None:
+        if self.platform == "aos-cx" and words[:2] in (["no", "interface"], ["undo", "interface"]):
+            name = " ".join(words[2:])
+            if (vlan := self._cx_svi_number(name)) is not None:
+                self._invalidate_cx_vrf(vlan)
+                self.context = None
+                return
         if words[0] in {"hostname", "sysname"} and len(words) == 2:
             self.hostname = words[1]
             self.locations.append(self.location(line))
@@ -215,6 +229,12 @@ class _Collector:
             name = " ".join(words[1:])
             self.context = ("interface", name)
             item = self.interface(name, line)
+            if (vlan := self._cx_svi_number(name)) is not None:
+                if vlan in self._cx_vlan_interfaces:
+                    self._invalidate_cx_vrf(vlan)
+                self._cx_vlan_interfaces[vlan] = item
+                if vlan in self._cx_uncertain_vrf:
+                    self._invalidate_cx_vrf(vlan)
             if item.kind == "aggregate":
                 self.aggregate(name, line)
             return
@@ -284,6 +304,11 @@ class _Collector:
             return
         # A non-indented global command ends a nested AOS-CX block.
         if not raw[:1].isspace() and words[0] not in {"member", "type", "link"}:
+            if (
+                self.context is not None and self.context[0] == "interface"
+                and [word.casefold() for word in words[:3]] in (["no", "vrf", "attach"], ["undo", "vrf", "attach"])
+            ):
+                self._invalidate_cx_vrf(self._cx_svi_number(self.context[1]))
             self.context = None
         if self._nested(words, line):
             return
@@ -381,6 +406,38 @@ class _Collector:
             return True
         return False
 
+    def _cx_svi_number(self, name: str) -> int | None:
+        match = re.fullmatch(r"vlan ([0-9]{1,4})", name, re.I) if self.platform == "aos-cx" else None
+        if match is not None and 1 <= (vlan := int(match[1])) <= 4094:
+            return vlan
+        return None
+
+    def _invalidate_cx_vrf(self, vlan: int | None) -> None:
+        if vlan is not None:
+            self._cx_uncertain_vrf.add(vlan)
+            if (item := self._cx_vlan_interfaces.get(vlan)) is not None:
+                item.vrf_source_location = None
+                item.vrf = None
+
+    def _read_cx_svi_vrf(self, words: list[str], item: SwitchInterface, line: int) -> bool:
+        vlan = self._cx_svi_number(item.name)
+        if vlan is None:
+            return False
+        command = [word.casefold() for word in words[:3]]
+        tokens = command[1:] if command[0] in {"no", "undo"} else command
+        if tokens[:1] != ["vrf"] and tokens[:2] != ["ip", "binding"]:
+            return False
+        if (
+            command[:2] == ["vrf", "attach"] and len(words) == 3
+            and re.fullmatch(r"[A-Za-z0-9_.-]+", words[2]) is not None
+            and vlan not in self._cx_uncertain_vrf and item.vrf_source_location is None
+        ):
+            item.vrf = words[2]
+            item.vrf_source_location = self.location(line)
+        else:
+            self._invalidate_cx_vrf(vlan)
+        return True
+
     def _interface(self, words: list[str], item: SwitchInterface, line: int) -> bool:
         command = " ".join(words)
         if words[0] == "description":
@@ -394,6 +451,8 @@ class _Collector:
         elif words[:2] == ["port", "link-type"] and words[-1] in {"access", "trunk", "hybrid"}:
             item.link_type = "access" if words[-1] == "access" else "trunk" if words[-1] == "trunk" else "hybrid"
             item.mode = "l2"
+        elif self._read_cx_svi_vrf(words, item, line):
+            return True
         elif words[:2] in (["vrf", "attach"], ["ip", "binding"]) and len(words) >= 3:
             item.vrf = words[-1]
         elif words[0] == "lag" and len(words) == 2:
@@ -463,6 +522,15 @@ class _Collector:
                 value=privilege, status="known" if network else "unknown",
                 source_locations=(self.location(line),),
             ))
+        elif (
+            self.platform == "aos-cx" and words[:2] in (["ip", "route"], ["ipv6", "route"])
+            and len(words) >= 4 and "/" in words[2]
+        ):
+            parameters = words[4:]
+            vrf = "default"
+            if len(parameters) >= 2 and parameters[0] == "vrf":
+                vrf, parameters = parameters[1], parameters[2:]
+            self.route(words[2], words[3], line, vrf, parameters=tuple(parameters))
         elif words[:2] == ["ip", "route"] and len(words) >= 5:
             self.route(f"{words[2]}/{words[3]}", words[4], line, "default", parameters=tuple(words[5:]))
         elif words[:2] == ["ip", "route-static"] and len(words) >= 5:

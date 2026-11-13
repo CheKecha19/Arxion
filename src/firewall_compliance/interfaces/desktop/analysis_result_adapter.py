@@ -95,7 +95,8 @@ def analysis_from_run(store: RunStore, project_id: str, run_id: str) -> Analysis
     revisions: list[DeviceRevision] = []
     decisions: list[FindingDecision] = []
     records: dict[UUID, dict[str, JsonValue]] = {}
-    scans: dict[str, dict[str, Any]] | None = None
+    scans: dict[str, dict[str, Any] | None] = {}
+    read_scan = getattr(store, "get_cloud_scan", None)
     times = [_date(run["created_at"])]
     if run.get("finished_at"):
         times.append(_date(run["finished_at"]))
@@ -177,9 +178,14 @@ def analysis_from_run(store: RunStore, project_id: str, run_id: str) -> Analysis
         times.extend((revision.imported_at, report.analyzed_at))
         origin = item.get("cloud_origin")
         if origin:
-            if scans is None:
-                scans = {str(scan["id"]): scan for scan in store.list_cloud_scans(project_id)}
-            scan = scans.get(str(origin["scan_id"]))
+            scan_id = str(origin["scan_id"])
+            if scan_id not in scans:
+                if callable(read_scan):
+                    scans[scan_id] = read_scan(project_id, scan_id)
+                else:
+                    scans.update((str(scan["id"]), scan) for scan in store.list_cloud_scans(project_id))
+                    scans.setdefault(scan_id, None)
+            scan = scans[scan_id]
             index = origin.get("record_index")
             if scan is None or type(index) is not int or index < 0:
                 raise ValueError("Исходный API-снимок облачного отчёта недоступен.")

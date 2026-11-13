@@ -1,9 +1,9 @@
 """Конфигурационные факты коммутаторов, отдельно от ACL и runtime forwarding."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, SerializerFunctionWrapHandler, model_serializer, model_validator
 
 from firewall_compliance.domain.base import DomainModel
 from firewall_compliance.domain.observation import ObservationEvidence
@@ -67,6 +67,23 @@ class SwitchInterface(DomainModel):
     aggregate: str | None = None
     stack_member: str | None = None
     source_locations: tuple[SourceLocation, ...]
+    vrf_source_location: SourceLocation | None = None
+
+    @model_validator(mode="after")
+    def validate_vrf_source_location(self) -> "SwitchInterface":
+        location = self.vrf_source_location
+        if location is not None and (
+            not self.vrf or location.line_start is None or location not in self.source_locations
+        ):
+            raise ValueError("Привязка VRF должна ссылаться на строку конфигурации интерфейса.")
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_vrf_source_location(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        payload: dict[str, Any] = handler(self)
+        if self.vrf_source_location is None:
+            payload.pop("vrf_source_location", None)
+        return payload
 
 
 class SwitchVlan(DomainModel):

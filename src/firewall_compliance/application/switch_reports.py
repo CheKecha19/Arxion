@@ -132,7 +132,11 @@ def switch_report_html_section(payload: Mapping[str, Any]) -> str:
                 parts.append(f"<dt>{escape(label)}</dt><dd>{escape(str(summary[key]))}</dd>")
         parts.append("</dl>")
         if summary.get("transit_bindings") == 0:
-            parts.append("<p>Транзитные ACL в представленном файле не обнаружены.</p>")
+            parts.append(
+                "<p>Обнаружены фильтры с неподтверждённой привязкой. Основания приведены в диагностике.</p>"
+                if summary.get("unknown_bindings") else
+                "<p>Транзитные ACL в представленном файле не обнаружены.</p>"
+            )
     for record in switch_report_records(payload):
         parts.append(
             f"<details><summary>{escape(record['section'])} · "

@@ -1,5 +1,6 @@
 """Explicit backed-up append-only matrix history for legacy project origins."""
 
+from collections.abc import Callable, Collection, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -8,9 +9,11 @@ from pathlib import Path
 import sqlite3
 from uuid import uuid4
 
+from firewall_compliance.application.cloud_sg_policy import ADVANCED_MULTI_ORDERED_PROJECTION
+from firewall_compliance.application.cloud_sg_revision import CloudSGSelection, cloud_sg_policy_id
+from firewall_compliance.application.matrix_artifact import MatrixAssessmentArtifact
 from firewall_compliance.domain.access_matrix import AccessMatrix
 from firewall_compliance.domain.revision import DeviceRevision
-from firewall_compliance.application.matrix_artifact import MatrixAssessmentArtifact
 from firewall_compliance.interfaces.desktop.organization_backup import create_workspace_backup
 from firewall_compliance.interfaces.desktop.organization_lock import workspace_lease
 
@@ -18,6 +21,13 @@ from firewall_compliance.interfaces.desktop.organization_lock import workspace_l
 @dataclass(frozen=True, slots=True)
 class MatrixVersionRecord:
     matrix: AccessMatrix
+    created_at: str
+    checksum: str
+
+
+@dataclass(frozen=True, slots=True)
+class MatrixVersionSummary:
+    version: str
     created_at: str
     checksum: str
 
@@ -138,15 +148,42 @@ class AccessMatrixStore:
             ).fetchall()
         finally:
             db.close()
-        result = []
-        for version, payload, checksum, created_at in rows:
-            if sha256(payload.encode("utf-8")).hexdigest() != checksum:
-                raise ValueError("Matrix checksum mismatch")
-            matrix = AccessMatrix.model_validate_json(payload)
-            if matrix.version != str(version):
-                raise ValueError("Matrix version mismatch")
-            result.append(MatrixVersionRecord(matrix, created_at, checksum))
-        return tuple(result)
+        return tuple(self._decode_version(*row) for row in rows)
+
+    @staticmethod
+    def _decode_version(version: int, payload: str, checksum: str, created_at: str) -> MatrixVersionRecord:
+        if sha256(payload.encode("utf-8")).hexdigest() != checksum:
+            raise ValueError("Matrix checksum mismatch")
+        matrix = AccessMatrix.model_validate_json(payload)
+        if matrix.version != str(version):
+            raise ValueError("Matrix version mismatch")
+        return MatrixVersionRecord(matrix, created_at, checksum)
+
+    def list_version_summaries(self, project_id: str) -> tuple[MatrixVersionSummary, ...]:
+        db = self._connect()
+        try:
+            if not self._schema_version(db):
+                return ()
+            rows = db.execute(
+                "SELECT version,created_at,checksum FROM workspace_matrix_versions "
+                "WHERE project_id=? ORDER BY version", (project_id,),
+            ).fetchall()
+            return tuple(MatrixVersionSummary(str(version), created_at, checksum) for version, created_at, checksum in rows)
+        finally:
+            db.close()
+
+    def get_version(self, project_id: str, version: str) -> MatrixVersionRecord:
+        db = self._connect()
+        try:
+            row = db.execute(
+                "SELECT version,payload,checksum,created_at FROM workspace_matrix_versions "
+                "WHERE project_id=? AND version=?", (project_id, version),
+            ).fetchone() if self._schema_version(db) else None
+            if row is None:
+                raise ValueError("Matrix version was not found in this project")
+            return self._decode_version(*row)
+        finally:
+            db.close()
 
     def append(self, project_id: str, matrix: AccessMatrix) -> MatrixVersionRecord:
         matrix = AccessMatrix.model_validate(matrix.model_dump(mode="python"))
@@ -207,6 +244,8 @@ class AccessMatrixStore:
                     original = DeviceRevision.model_validate(json.loads(item[0]).get("revision"))
                     if original != artifact.revision:
                         raise ValueError("Assessment revision differs from the saved input item")
+                elif artifact.cloud_selection is not None:
+                    self._validate_cloud_input(db, artifact)
                 device = artifact.revision.device
                 db.execute(
                     "INSERT INTO workspace_matrix_assessments "
@@ -222,6 +261,31 @@ class AccessMatrixStore:
             return str(artifact.artifact_id)
         finally:
             db.close()
+
+    @staticmethod
+    def _validate_cloud_input(db: sqlite3.Connection, artifact: MatrixAssessmentArtifact) -> None:
+        from firewall_compliance.application.cloud_security_groups import security_group_snapshot
+        from firewall_compliance.application.cloud_sg_revision import cloud_sg_revision
+
+        selection = artifact.cloud_selection
+        if selection is None:
+            raise ValueError("Cloud selection was not supplied")
+        db.row_factory = sqlite3.Row
+        row = db.execute(
+            "SELECT * FROM cloud_scans WHERE id=? AND project_id=?",
+            (selection.scan_id, artifact.origin_project_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Облачный источник сверки не найден в этом проекте")
+        scan = {**dict(row), **{key: json.loads(row[key]) for key in ("config", "selection", "result")}}
+        snapshot = security_group_snapshot(scan)
+        if artifact.assessment.scope_id not in (artifact.origin_project_id, *snapshot.workspace_site_ids):
+            raise ValueError("В сохранённом сборе нет привязки к площадке сверки")
+        original = cloud_sg_revision(
+            snapshot, selection, imported_at=artifact.revision.imported_at,
+        )
+        if original != artifact.revision:
+            raise ValueError("Ревизия сверки отличается от сохранённых облачных данных")
 
     def list_assessments(
         self, project_id: str, *, limit: int = 100, offset: int = 0,
@@ -256,6 +320,24 @@ class AccessMatrixStore:
         finally:
             db.close()
 
+    def assessment_summaries_for_version(
+        self, project_id: str, version: str,
+    ) -> tuple[MatrixAssessmentSummary, ...]:
+        db = self._connect()
+        try:
+            if self._schema_version(db) < 2:
+                return ()
+            rows = db.execute(
+                "SELECT artifact_id,created_at,matrix_version,revision_id,device_label "
+                "FROM workspace_matrix_assessments WHERE project_id=? AND matrix_version=? "
+                "ORDER BY created_at DESC,artifact_id DESC", (project_id, version),
+            )
+            return tuple(MatrixAssessmentSummary(
+                identifier, created_at, str(saved_version), revision_id, label,
+            ) for identifier, created_at, saved_version, revision_id, label in rows)
+        finally:
+            db.close()
+
     def assessment_ids_for_run(self, project_id: str, run_id: str) -> tuple[str, ...]:
         db = self._connect()
         try:
@@ -268,6 +350,108 @@ class AccessMatrixStore:
             ))
         finally:
             db.close()
+
+    def cloud_order_selections(
+        self, project_id: str, scope_id: str, scan_ids: Iterable[str], policy_ids: Collection[str], *,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> tuple[CloudSGSelection, ...]:
+        """Прочитать подтверждённые порядки Advanced из истории той же области."""
+        requested_scans = set(scan_ids)
+        if not requested_scans or not policy_ids or (cancelled is not None and cancelled()):
+            return ()
+        selections = []
+        seen_orders = set()
+        db = self._connect()
+        if cancelled is not None:
+            db.set_progress_handler(lambda: int(cancelled()), 10_000)
+        try:
+            if self._schema_version(db) < 2:
+                return ()
+            for identifier, payload in self._cloud_order_metadata(
+                db, project_id, scope_id, requested_scans, cancelled=cancelled,
+            ):
+                if cancelled is not None and cancelled():
+                    break
+                try:
+                    selection = CloudSGSelection.model_validate_json(payload)
+                except ValueError:
+                    continue
+                order = selection.order_evidence
+                if order is None:
+                    continue
+                policy = cloud_sg_policy_id(
+                    selection.scope_id, "interface/" + selection.interface_id, selection.direction, selection.family,
+                )
+                key = (
+                    selection.scan_id, policy, order.snapshot_sha256, order.observed_at, order.group_ids,
+                )
+                if policy not in policy_ids or key in seen_orders:
+                    continue
+                try:
+                    artifact = self.get_assessment(project_id, identifier)
+                except ValueError:
+                    continue
+                configuration = artifact.revision.parse_result.configuration
+                if (
+                    artifact.cloud_selection != selection or artifact.assessment.scope_id != scope_id
+                    or configuration.parser_version != ADVANCED_MULTI_ORDERED_PROJECTION
+                    or configuration.content_sha256 != order.snapshot_sha256
+                    or configuration.captured_at != order.observed_at
+                    or not any(rule.enabled and rule.policy_id == policy for rule in artifact.revision.parse_result.rules)
+                ):
+                    continue
+                seen_orders.add(key)
+                selections.append(selection)
+        except sqlite3.OperationalError as error:
+            if cancelled is None or not cancelled() or getattr(error, "sqlite_errorcode", None) != sqlite3.SQLITE_INTERRUPT:
+                raise
+        finally:
+            db.close()
+        return tuple(selections)
+
+    @staticmethod
+    def _cloud_order_metadata(
+        db: sqlite3.Connection, project_id: str, scope_id: str, scan_ids: set[str], *,
+        cancelled: Callable[[], bool] | None,
+    ) -> Iterator[tuple[str, str]]:
+        try:
+            rows = db.execute(
+                "SELECT artifact_id,json_extract(payload,'$.cloud_selection') "
+                "FROM workspace_matrix_assessments WHERE project_id=? AND origin_run_id IS NULL "
+                "AND CASE WHEN json_valid(payload) THEN "
+                "json_extract(payload,'$.assessment.scope_id')=? "
+                "AND json_type(payload,'$.cloud_selection.order_evidence')='object' "
+                "AND json_extract(payload,'$.cloud_selection.scan_id') IN (SELECT value FROM json_each(?)) "
+                "ELSE 0 END ORDER BY created_at DESC,artifact_id DESC",
+                (project_id, scope_id, json.dumps(sorted(scan_ids))),
+            )
+        except sqlite3.OperationalError as error:
+            if not str(error).startswith(("no such function: json_", "no such table: json_each")):
+                raise
+        else:
+            yield from rows
+            return
+        for identifier, payload in db.execute(
+            "SELECT artifact_id,payload FROM workspace_matrix_assessments "
+            "WHERE project_id=? AND origin_run_id IS NULL ORDER BY created_at DESC,artifact_id DESC",
+            (project_id,),
+        ):
+            if cancelled is not None and cancelled():
+                return
+            try:
+                value = json.loads(payload)
+            except ValueError:
+                continue
+            if not isinstance(value, dict):
+                continue
+            selection, assessment = value.get("cloud_selection"), value.get("assessment")
+            if (
+                isinstance(selection, dict) and isinstance(assessment, dict)
+                and assessment.get("scope_id") == scope_id
+                and isinstance(scan_id := selection.get("scan_id"), str) and scan_id in scan_ids
+                and isinstance(selection.get("order_evidence"), dict)
+            ):
+                yield identifier, json.dumps(selection, ensure_ascii=False)
 
     def get_assessment(self, project_id: str, artifact_id: str) -> MatrixAssessmentArtifact:
         db = self._connect()

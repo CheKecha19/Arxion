@@ -14,6 +14,14 @@ GROUPS = {
 }
 
 
+def security_group_action(raw: dict[str, Any]) -> str:
+    """Сохранять явное действие API и отмечать отсутствие сведений."""
+    value = raw.get("action")
+    if isinstance(value, str) and value.casefold() in {"allow", "deny"}:
+        return value.casefold()
+    return "unknown"
+
+
 def _text(value: Any) -> str:
     if isinstance(value, dict):
         return str(value.get("name") or value.get("id") or json.dumps(value, ensure_ascii=False))
@@ -33,6 +41,8 @@ def cloud_rule_values(record: dict[str, Any]) -> list[dict[str, Any]]:
     groups.extend((key, data.get(key)) for key in ("security_rules", "nat"))
     result = []
     for group, rules in groups:
+        if group == "security_rules" and isinstance(rules, dict):
+            rules = rules.get("items", rules.get("rules"))
         if not isinstance(rules, list):
             continue
         for sequence, raw in enumerate(rules, 1):
@@ -70,11 +80,20 @@ def cloud_rule_columns(value: dict[str, Any]) -> tuple[str, str, str, str, str, 
         destination = "Внешние адреса: " + (_text(raw.get("externalAddresses")) or "Не указано API")
         service = _text(raw.get("applicationPortProfile")) or "Не указано API"
     elif group == "security_rules":
-        action = "Разрешение · " + str(raw.get("direction", "направление не указано"))
-        source = "Удалённая сторона: " + (
-            _text(raw.get("remote_ip_prefix") or raw.get("remote_group_id")) or "Не указано API"
+        direction = raw.get("direction")
+        effect = {"allow": "Разрешение", "deny": "Запрет", "unknown": "Действие не установлено"}
+        action = effect[security_group_action(raw)] + " · " + str(direction or "направление не указано")
+        remote = "Удалённая сторона: " + (
+            _text(raw.get("remote_ip_prefix") or raw.get("remote_cidr") or raw.get("remote_group_id"))
+            or "Не указано API"
         )
-        destination = "Группа безопасности ресурса"
+        local = "Группа безопасности ресурса"
+        if direction == "ingress":
+            source, destination = remote, local
+        elif direction == "egress":
+            source, destination = local, remote
+        else:
+            source = destination = "Направление не указано API. " + remote
         service = (
             "; ".join(
                 f"{key}: {_text(raw[key])}"

@@ -7,11 +7,13 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict
 from functools import partial
+from pathlib import Path
 from threading import Event
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -49,10 +51,12 @@ from firewall_compliance.devices.cloud.cloud_ru.vmware.client import (
     VMwareClient,
     VMwareConfig,
 )
+from firewall_compliance.domain.cloud_security_groups import CloudSecurityGroupSnapshot
 from firewall_compliance.interfaces.desktop.cloud_analysis import analyze_saved_vmware
 from firewall_compliance.interfaces.desktop.cloud_public_form import PublicCloudForm
 from firewall_compliance.interfaces.desktop.jobs import JobError, JobRunner
 from firewall_compliance.interfaces.desktop.project_store import ProjectStore
+from firewall_compliance.interfaces.desktop.qt_batch_report import write_report_file
 
 SCAN_STATES = {
     "completed": "Завершено",
@@ -84,6 +88,7 @@ class CloudPanel:
         self.store = store
         self.on_history_changed: Callable[[], None] = lambda: None
         self.on_open_analysis: Callable[[str], None] = lambda _run_id: None
+        self.on_open_security_groups: Callable[[CloudSecurityGroupSnapshot], None] = lambda _snapshot: None
         self.client_factory = client_factory
         self.public_factories: dict[str, Callable[..., PublicCloudClient]] = {
             "advanced": AdvancedClient,
@@ -95,6 +100,11 @@ class CloudPanel:
         self.cancel = Event()
         self._active_scan: str | None = None
         self._active_project: str | None = None
+        self._deferred_history = False
+        self._scan_read: tuple[tuple[str, str, str, str | None], Event] | None = None
+        self._loaded_scan: dict[str, Any] | None = None
+        self._scan_json: tuple[tuple[str, str, str, str | None], str] | None = None
+        self._scan_json_pending: dict[str, Any] | None = None
         self._closed = False
         self.settings_widget = QTabWidget()
         self._build_settings()
@@ -269,43 +279,68 @@ class CloudPanel:
         self.history.currentIndexChanged.connect(self._show_scan)
         layout.addWidget(self.history)
         self.analyze_button = QPushButton("Проверить правила сохранённого сбора")
-        self.analyze_button.clicked.connect(self.analyze_saved_scan)
+        self.analyze_button.clicked.connect(lambda: self.analyze_saved_scan())
         layout.addWidget(self.analyze_button)
         self.open_analysis_button = QPushButton("Открыть проблемы и результаты проверок")
         self.open_analysis_button.clicked.connect(self._open_analysis)
         layout.addWidget(self.open_analysis_button)
+        self.security_groups_button = QPushButton("Сверить группу безопасности с матрицей…")
+        self.security_groups_button.clicked.connect(self._open_security_groups)
+        layout.addWidget(self.security_groups_button)
         self.analysis_status = _label(
             "Для проверки выберите сохранённый сбор VMware с правилами Firewall."
         )
         layout.addWidget(self.analysis_status)
+        self.scan_read_status = _label("")
+        self.scan_read_status.hide()
+        layout.addWidget(self.scan_read_status)
         layout.addWidget(self.export_button)
         self.result = QPlainTextEdit()
         self.result.setReadOnly(True)
-        tabs = QTabWidget()
+        self.scan_detail_tabs = QTabWidget()
         resources_view = QSplitter()
         self.records_view = QTreeWidget()
         self.records_view.setHeaderLabels(["Тип", "Название", "Полученные данные"])
         self.records_view.currentItemChanged.connect(self._show_record)
         resources_view.addWidget(self.records_view)
+        record_page = QWidget()
+        record_layout = QVBoxLayout(record_page)
+        record_layout.setContentsMargins(0, 0, 0, 0)
+        self._edge_policy_id = ""
+        self.copy_edge_policy_button = QPushButton("Скопировать ID политики")
+        self.copy_edge_policy_button.setToolTip("Укажите этот ID в требовании или точке контроля матрицы.")
+        self.copy_edge_policy_button.hide()
+        self.copy_edge_policy_button.clicked.connect(self._copy_edge_policy)
+        record_layout.addWidget(self.copy_edge_policy_button, 0, Qt.AlignmentFlag.AlignLeft)
         self.record_detail = QPlainTextEdit()
         self.record_detail.setReadOnly(True)
-        resources_view.addWidget(self.record_detail)
+        record_layout.addWidget(self.record_detail, 1)
+        resources_view.addWidget(record_page)
         self.errors_view = QPlainTextEdit()
         self.errors_view.setReadOnly(True)
         self.requests_view = QPlainTextEdit()
         self.requests_view.setReadOnly(True)
-        tabs.addTab(resources_view, "Ресурсы")
-        tabs.addTab(self.errors_view, "Ошибки")
-        tabs.addTab(self.requests_view, "API-запросы")
-        tabs.addTab(self.result, "JSON")
-        layout.addWidget(tabs, 1)
+        self.scan_detail_tabs.addTab(resources_view, "Ресурсы")
+        self.scan_detail_tabs.addTab(self.errors_view, "Ошибки")
+        self.scan_detail_tabs.addTab(self.requests_view, "API-запросы")
+        self.scan_detail_tabs.addTab(self.result, "JSON")
+        self.scan_detail_tabs.currentChanged.connect(self._show_scan_json)
+        layout.addWidget(self.scan_detail_tabs, 1)
+        self.collection_tabs.currentChanged.connect(self._scan_tab_changed)
 
     def open_result(self, scan_id: str) -> None:
         """Открыть сохранённый сбор из карточки ресурса или общей истории."""
-        self._refresh_history(scan_id)
+        self._fill_history(self._read_history(), scan_id)
         self.collection_tabs.setCurrentIndex(1)
 
     def set_project(self, project_id: str | None, *, refresh_history: bool = True) -> None:
+        if project_id != self.project_id:
+            self._loaded_scan = None
+            self._scan_json = None
+            self._scan_json_pending = None
+            self._deferred_history = not refresh_history
+        elif not refresh_history:
+            self._deferred_history = True
         self.project_id = project_id
         self.analysis_status.setText("Выберите сохранённый сбор для проверки правил.")
         for public_form in self.public_forms.values():
@@ -548,6 +583,9 @@ class CloudPanel:
                 work = partial(public_client.scan, public_selection)
                 scan_config = {"platform": platform, **asdict(public_config)}
                 scan_selection = asdict(public_selection)
+            site_ids = self.store.workspace_metadata.source_sites(self.project_id).get(f"cloud_ru_{platform}", ())
+            if site_ids:
+                scan_selection["workspace_site_ids"] = list(site_ids)
             scan_id = self.store.create_cloud_scan(self.project_id, scan_selection, scan_config)
         except ValueError as error:
             self.scan_status.setText(str(error))
@@ -603,17 +641,44 @@ class CloudPanel:
 
         self.runner.submit(work, completed)
 
+    @staticmethod
+    def _scan_key(scan: dict[str, Any]) -> tuple[str, str, str, str | None]:
+        return scan["project_id"], scan["id"], scan["state"], scan.get("finished_at")
+
+    def _selected_scan(self) -> dict[str, Any] | None:
+        header = self.history.currentData()
+        if not header or not self.project_id:
+            return None
+        if not header.get("workspace_projection"):
+            return header
+        scan = self._loaded_scan
+        if (
+            scan is not None and scan["project_id"] == self.project_id
+            and self._scan_key(scan) == self._scan_key(header)
+        ):
+            return scan
+        return None
+
     def _update_analysis_controls(self) -> None:
-        scan = self.history.currentData()
+        scan = self._selected_scan()
         eligible = bool(
             scan
             and scan["config"].get("platform", "vmware") == "vmware"
             and any(
-                record.get("type") == "edges" and "firewall" in record.get("data", {})
+                isinstance(record, dict) and record.get("type") == "edges"
+                and "firewall" in (record.get("data") or {})
                 for record in scan.get("result", {}).get("records", [])
             )
         )
         self.analyze_button.setEnabled(eligible and not self.busy)
+        self.security_groups_button.setEnabled(bool(
+            scan and not self.busy
+            and scan["config"].get("platform") in {"advanced", "evolution"}
+            and any(
+                isinstance(record, dict) and record.get("type") == "security_groups"
+                for record in scan.get("result", {}).get("records", [])
+            )
+        ))
         runs = (
             self.store.cloud_analysis_runs(scan["id"], self.project_id)
             if scan and self.project_id
@@ -622,7 +687,7 @@ class CloudPanel:
         self.open_analysis_button.setEnabled(bool(runs) and not self.busy)
 
     def _open_analysis(self) -> None:
-        scan = self.history.currentData()
+        scan = self._selected_scan()
         runs = (
             self.store.cloud_analysis_runs(scan["id"], self.project_id)
             if scan and self.project_id
@@ -631,23 +696,50 @@ class CloudPanel:
         if runs:
             self.on_open_analysis(runs[0])
 
+    def _open_security_groups(self) -> None:
+        from firewall_compliance.application.cloud_security_groups import security_group_snapshot
+
+        scan = self._selected_scan()
+        project_id = self.project_id
+        if not scan or not project_id or self.busy:
+            return
+        self.cancel = Event()
+        cancelled = self.cancel
+        self._set_busy(True)
+        self.analysis_status.setText("Читаем группы и интерфейсы сохранённого сбора…")
+
+        def completed(value: object) -> None:
+            if self._closed:
+                return
+            self._set_busy(False)
+            if self.project_id != project_id or (self.history.currentData() or {}).get("id") != scan["id"]:
+                return
+            if cancelled.is_set():
+                self.analysis_status.setText("Чтение снимка отменено.")
+            elif isinstance(value, JobError):
+                self.analysis_status.setText(value.message)
+            elif isinstance(value, CloudSecurityGroupSnapshot):
+                self.analysis_status.setText(
+                    f"Групп: {len(value.groups)} · интерфейсов: {len(value.interfaces)}. "
+                    "Выберите группу и подтверждённый интерфейс для сверки."
+                )
+                self.on_open_security_groups(value)
+
+        self.runner.submit(partial(security_group_snapshot, scan), completed)
+
     def analyze_saved_scan(
         self, scan_id: str | None = None, *, project_id: str | None = None
     ) -> None:
         project_id = project_id or self.project_id
         if self.busy or not project_id:
             return
-        scan = (
-            next(
-                (s for s in self.store.list_cloud_scans(project_id) if s["id"] == scan_id),
-                None,
-            )
-            if scan_id
-            else self.history.currentData()
-        )
-        if not scan:
+        selected = self._selected_scan() if project_id == self.project_id else None
+        if not scan_id and selected is not None:
+            scan_id = selected["id"]
+        if not scan_id:
             self.analysis_status.setText("Выберите сохранённый сбор текущего проекта.")
             return
+        scan = selected if selected is not None and selected["id"] == scan_id else None
         settings = self.store.get_project(project_id)["settings"]
         if settings.get("enabled_check_ids") is not None and not any(
             key.startswith("FW-") for key in settings["enabled_check_ids"]
@@ -657,9 +749,19 @@ class CloudPanel:
         self.cancel = Event()
         cancel = self.cancel
         self._set_busy(True)
-        self.analysis_status.setText(
-            "Проверка сохранённых правил… Запросы к облаку не выполняются."
-        )
+        if self.project_id == project_id:
+            self.analysis_status.setText(
+                "Проверка сохранённых правил… Запросы к облаку не выполняются."
+            )
+
+        def work() -> list[dict[str, Any]]:
+            snapshot = scan if scan is not None else self.store.get_cloud_scan(project_id, scan_id)
+            if snapshot is None:
+                raise ValueError("Сохранённый сбор текущего проекта не найден.")
+            return analyze_saved_vmware(snapshot, settings, cancel)
+
+        def selected_now() -> bool:
+            return self.project_id == project_id and (self.history.currentData() or {}).get("id") == scan_id
 
         def completed(result: object) -> None:
             self._set_busy(False)
@@ -667,9 +769,9 @@ class CloudPanel:
                 message = "Проверка отменена; новый результат не сохранён."
             elif isinstance(result, list) and result:
                 try:
-                    self.store.save_cloud_analysis(scan["id"], result, settings)
+                    self.store.save_cloud_analysis(scan_id, result, settings)
                 except (ValueError, OSError, sqlite3.Error):
-                    if self.project_id == project_id:
+                    if selected_now():
                         self.analysis_status.setText(
                             "Не удалось сохранить результат проверки. Исходный сбор доступен "
                             "для повторной проверки."
@@ -694,11 +796,11 @@ class CloudPanel:
                     if isinstance(result, JobError)
                     else "Не удалось проверить правила."
                 )
-            if self.project_id == project_id:
+            if selected_now():
                 self.analysis_status.setText(message)
                 self._update_analysis_controls()
 
-        self.runner.submit(partial(analyze_saved_vmware, scan, settings, cancel), completed)
+        self.runner.submit(work, completed)
 
     def _test_public(self, platform: str) -> None:
         if self.busy:
@@ -733,16 +835,27 @@ class CloudPanel:
         self.scan_status.setText("Отмена запрошена. Ожидается завершение текущего API-запроса.")
 
     def _refresh_history(self, selected_id: str | None = None) -> None:
-        scans = self.store.list_cloud_scans(self.project_id) if self.project_id else []
-        self._fill_history(scans, selected_id)
+        self._fill_history(self._read_history(), selected_id)
         self.on_history_changed()
 
     def refresh_history(self, scans: list[dict[str, Any]] | None = None) -> None:
         """Populate the visible history from a shared snapshot without change notifications."""
         if scans is None:
-            scans = self.store.list_cloud_scans(self.project_id) if self.project_id else []
+            scans = self._read_history()
+        elif any(scan.get("workspace_projection") for scan in scans):
+            self._deferred_history = True
         selected = self.history.currentData()
         self._fill_history(scans, selected["id"] if selected else None)
+
+    def _read_history(self) -> list[dict[str, Any]]:
+        if not self.project_id:
+            return []
+        if self._deferred_history:
+            return [
+                {**scan, "workspace_projection": True}
+                for scan in self.store.list_cloud_scan_headers(self.project_id)
+            ]
+        return self.store.list_cloud_scans(self.project_id)
 
     def _fill_history(
         self, scans: list[dict[str, Any]], selected_id: str | None = None
@@ -751,6 +864,8 @@ class CloudPanel:
         self.history.clear()
         if self.project_id:
             for scan in scans:
+                if scan.get("workspace_projection") and "result" in scan:
+                    scan = {key: value for key, value in scan.items() if key != "result"}
                 platform_name = scan["config"].get("platform", "vmware").capitalize()
                 self.history.addItem(
                     f"{scan['created_at']} · {platform_name} · {SCAN_STATES[scan['state']]}",
@@ -765,34 +880,93 @@ class CloudPanel:
                 ),
                 -1,
             )
-            if index >= 0:
-                self.history.setCurrentIndex(index)
+            self.history.setCurrentIndex(index)
         self.history.blockSignals(False)
         self._show_scan()
 
+    def _scan_tab_changed(self, _index: int) -> None:
+        if (self.history.currentData() or {}).get("workspace_projection"):
+            self._show_scan()
+
     def _show_scan(self, *_: Any) -> None:
-        scan = self.history.currentData()
+        header, project_id = self.history.currentData(), self.project_id
+        key = self._scan_key(header) if header and header.get("workspace_projection") else None
+        if self._scan_read is not None:
+            pending_key, cancel = self._scan_read
+            if pending_key == key and self.collection_tabs.currentIndex() == 1:
+                return
+            cancel.set()
+            self._scan_read = None
+        scan = self._selected_scan()
+        if scan is not None:
+            self._render_scan(scan)
+            return
+        if not header or not project_id or key is None or key[0] != project_id:
+            self._render_scan(None)
+            return
+        if header["state"] == "running":
+            self._render_scan(None, message="Сбор ещё выполняется.")
+            return
+        if self.collection_tabs.currentIndex() != 1:
+            self._render_scan(None, message="Откройте вкладку «Результат», чтобы прочитать сбор.")
+            return
+        self._render_scan(None, message="Читаем сохранённый сбор…")
+        ticket = Event()
+        request = key, ticket
+        self._scan_read = request
+        scan_id = header["id"]
+
+        def work() -> dict[str, Any] | None:
+            return None if ticket.is_set() else self.store.get_cloud_scan(project_id, scan_id)
+
+        def completed(value: object) -> None:
+            if self._closed or self._scan_read is not request or self.project_id != project_id:
+                return
+            self._scan_read = None
+            if (self.history.currentData() or {}).get("id") != scan_id or self.collection_tabs.currentIndex() != 1:
+                return
+            if isinstance(value, dict):
+                self._loaded_scan = value
+                if loaded := self._selected_scan():
+                    self._render_scan(loaded)
+                    return
+            self._render_scan(None, message="Не удалось прочитать сохранённый сбор.")
+
+        self.runner.submit(work, completed)
+
+    def _render_scan(self, scan: dict[str, Any] | None, *, message: str | None = None) -> None:
         self._update_analysis_controls()
         self.export_button.setEnabled(bool(scan) and scan["state"] != "running")
-        self.result.setPlainText(
-            json.dumps(scan, ensure_ascii=False, indent=2)
-            if scan
-            else "Сканирования ещё не запускались."
-        )
+        self.scan_read_status.setText(message or "")
+        self.scan_read_status.setVisible(bool(message))
         self.records_view.clear()
-        self.record_detail.clear()
-        payload = scan.get("result", {}) if scan else {}
-        for record in payload.get("records", []):
-            collected = [ALL_DATA.get(key, key) for key in record.get("data", {})]
+        self._show_record(None)
+        if scan is None:
+            self.result.setPlainText(message or "Сканирования ещё не запускались.")
+            self.errors_view.clear()
+            self.requests_view.clear()
+            return
+        if (self.history.currentData() or {}).get("workspace_projection"):
+            self.result.clear()
+            self._show_scan_json()
+        else:
+            self.result.setPlainText(json.dumps(scan, ensure_ascii=False, indent=2))
+        payload = scan.get("result", {})
+        projected = bool((self.history.currentData() or {}).get("workspace_projection"))
+        for record_index, record in enumerate(payload.get("records", [])):
+            if not isinstance(record, dict):
+                continue
+            collected = [ALL_DATA.get(key, key) for key in (record.get("data") or {})]
+            resource_type = str(record.get("type") or "Неизвестный тип")
             item = QTreeWidgetItem(
                 self.records_view,
                 [
-                    ALL_RESOURCES.get(record["type"], record["type"]),
-                    record.get("name", ""),
+                    ALL_RESOURCES.get(resource_type, resource_type),
+                    str(record.get("name") or ""),
                     ", ".join(["Инвентарь", *collected]),
                 ],
             )
-            item.setData(0, Qt.ItemDataRole.UserRole, record)
+            item.setData(0, Qt.ItemDataRole.UserRole, record_index if projected else record)
         if self.records_view.topLevelItemCount():
             first_item = self.records_view.topLevelItem(0)
             assert first_item is not None
@@ -815,31 +989,94 @@ class CloudPanel:
             or "Запросов нет."
         )
 
+    def _show_scan_json(self, *_: Any) -> None:
+        header = self.history.currentData()
+        if (
+            not header or not header.get("workspace_projection")
+            or self.scan_detail_tabs.currentWidget() is not self.result
+        ):
+            return
+        scan = self._selected_scan()
+        if scan is None:
+            return
+        key = self._scan_key(scan)
+        if self._scan_json is not None and self._scan_json[0] == key:
+            self.result.setPlainText(self._scan_json[1])
+            return
+        self.result.setPlainText("Подготавливаем JSON снимка…")
+        if self._scan_json_pending is scan:
+            return
+        self._scan_json_pending = scan
+
+        def completed(value: object) -> None:
+            if self._scan_json_pending is scan:
+                self._scan_json_pending = None
+            if self._closed or self._loaded_scan is not scan:
+                return
+            if isinstance(value, str):
+                self._scan_json = key, value
+            if self._selected_scan() is scan and self.scan_detail_tabs.currentWidget() is self.result:
+                self.result.setPlainText(value if isinstance(value, str) else "Не удалось подготовить JSON.")
+
+        self.runner.submit(lambda: json.dumps(scan, ensure_ascii=False, indent=2), completed)
+
     def _show_record(self, item: QTreeWidgetItem | None, *_: Any) -> None:
         record = item.data(0, Qt.ItemDataRole.UserRole) if item else None
+        if isinstance(record, int):
+            scan = self._selected_scan()
+            records = scan.get("result", {}).get("records", ()) if scan else ()
+            record = records[record] if 0 <= record < len(records) else None
+        header = self.history.currentData()
+        policy_id = record.get("id") if (
+            isinstance(header, dict) and header.get("config", {}).get("platform", "vmware") == "vmware"
+            and isinstance(record, dict) and record.get("type") == "edges"
+        ) else None
+        self._edge_policy_id = policy_id if isinstance(policy_id, str) and policy_id.strip() else ""
+        self.copy_edge_policy_button.setVisible(bool(self._edge_policy_id))
         self.record_detail.setPlainText(
             json.dumps(record, ensure_ascii=False, indent=2) if record else ""
         )
 
+    def _copy_edge_policy(self) -> None:
+        if self._edge_policy_id:
+            QApplication.clipboard().setText(self._edge_policy_id)
+
     def export_scan(self) -> None:
-        scan = self.history.currentData()
+        scan = self._selected_scan()
         if scan is None or scan["state"] == "running":
             return
+        projected = bool((self.history.currentData() or {}).get("workspace_projection"))
         filename, _ = QFileDialog.getSaveFileName(
             self.scans_widget,
             "Экспорт сканирования",
             f"cloud-ru-{scan['config'].get('platform', 'vmware')}-scan.json",
             "JSON (*.json)",
         )
-        if filename:
-            from pathlib import Path
+        if not filename:
+            return
 
+        def work() -> None:
+            write_report_file(Path(filename), json.dumps(scan, ensure_ascii=False, indent=2))
+
+        if not projected:
             try:
-                Path(filename).write_text(
-                    json.dumps(scan, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
+                work()
             except OSError:
                 self.scan_status.setText("Не удалось сохранить JSON. Проверьте доступ к файлу.")
+            return
+
+        self.analysis_status.setText("Сохраняем JSON снимка…")
+
+        def completed(value: object) -> None:
+            if self._closed or self._selected_scan() is not scan:
+                return
+            message = (
+                "Не удалось сохранить JSON. Проверьте доступ к файлу."
+                if isinstance(value, JobError) else "JSON снимка сохранён."
+            )
+            self.analysis_status.setText(message)
+
+        self.runner.submit(work, completed)
 
     def close(self) -> None:
         if self._closed:
@@ -847,6 +1084,8 @@ class CloudPanel:
         self._closed = True
         self.timer.stop()
         self.cancel.set()
+        if self._scan_read is not None:
+            self._scan_read[1].set()
         self.runner.shutdown()
         if self._active_scan:
             self.store.finish_cloud_scan(

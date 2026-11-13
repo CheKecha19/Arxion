@@ -23,6 +23,9 @@ from firewall_compliance.devices.cloud.cloud_ru.vmware.client import (
 )
 from firewall_compliance.interfaces.desktop.cloud_analysis import analyze_saved_vmware
 from firewall_compliance.interfaces.desktop.cycle_backend import FileCycleInput, run_file_cycle
+from firewall_compliance.interfaces.desktop.file_sources import (
+    FILE_SOURCE_PREFIX, SavedFileSources, default_file_device_id, file_path_key,
+)
 from firewall_compliance.interfaces.desktop.ngfw_sources import SavedNgfwSources, collect_saved_ngfw
 from firewall_compliance.interfaces.desktop.project_store import ProjectStore
 from firewall_compliance.interfaces.desktop.profile_history import LegacyProfileHistory
@@ -79,7 +82,7 @@ class SourceCycleResult:
 
 def configured_sources(store: ProjectStore, project_id: str) -> tuple[SourceManifest, ...]:
     """Capture public configuration and last explicitly selected collection scope."""
-    scans = store.list_cloud_scans(project_id)
+    scans = store.list_cloud_scan_headers(project_id)
     connections = store.list_source_connections(project_id)
     site_memberships = store.workspace_metadata.source_sites(project_id)
     result = []
@@ -102,7 +105,17 @@ def configured_sources(store: ProjectStore, project_id: str) -> tuple[SourceMani
             site_memberships.get("cloud_ru_" + platform, ()),
         ))
     for row in connections:
-        if not row["provider"].startswith("ngfw:"):
+        key = row["provider"]
+        if key.startswith(FILE_SOURCE_PREFIX):
+            config = row["config"]
+            if isinstance(config, dict) and config.get("enabled") is False:
+                continue
+            result.append(SourceManifest(
+                key, "files", json.dumps(config, allow_nan=False),
+                site_ids=site_memberships.get(key, ()),
+            ))
+            continue
+        if not key.startswith("ngfw:"):
             continue
         parts = row["provider"].split(":")
         platform = parts[1] if len(parts) == 3 else "unsupported"
@@ -147,11 +160,27 @@ def run_source_cycle(
     stop = cancel if cancel is not None else Event()
     emit = progress or (lambda _event: None)
     outcomes = []
+    # Reuse an association from a staged row when the saved set has no
+    # explicit binding. The ad hoc batch excludes files already processed by
+    # saved sources, while each saved source retains its own run provenance.
+    staged = {file_path_key(item.path): item for item in files}
+    consumed: set[str] = set()
     total = len(manifest) + bool(files)
     for index, source in enumerate(manifest):
         emit(CycleProgress("collection", index, total, source.source_id))
         if stop.is_set():
-            cancelled_run = store.create_run(project_id, settings=options)
+            cancelled_settings = dict(options)
+            if source.platform == "files":
+                try:
+                    fingerprint = configuration_fingerprint(source.config())
+                except (ValueError, TypeError):
+                    fingerprint = None
+                cancelled_settings.update(
+                    source_id=source.source_id, source_collection_state="cancelled",
+                    source_config_fingerprint=fingerprint,
+                    source_site_ids=list(source.site_ids),
+                )
+            cancelled_run = store.create_run(project_id, settings=cancelled_settings)
             store.record_cancelled(cancelled_run, Path(source.source_id))
             store.finish_run(cancelled_run, "cancelled")
             outcomes.append(SourceCycleItem(
@@ -161,6 +190,44 @@ def run_source_cycle(
         scan_id = None
         failure_run = None
         try:
+            if source.platform == "files":
+                config = SavedFileSources.from_config(source.source_id, source.config())
+                current = SavedFileSources(store).get(project_id, source.source_id)
+                if config != current or not config.enabled:
+                    raise ValueError("Файловый источник изменился")
+                paths = config.paths_for_run()
+                if not paths:
+                    raise ValueError("В папке нет файлов поддерживаемых форматов")
+                site_id = source.site_ids[0] if len(source.site_ids) == 1 else None
+                explicit = {file_path_key(Path(name)): device for name, device in config.device_ids.items()}
+                previous = SavedFileSources(store).previous_devices(project_id, config)
+                planned = []
+                for path in paths:
+                    key = file_path_key(path)
+                    staged_item = staged.get(key)
+                    planned.append(FileCycleInput(
+                        path, explicit.get(key)
+                        or (staged_item.device_id if staged_item else None)
+                        or previous.get(key) or default_file_device_id(path),
+                        expected_sha256=staged_item.expected_sha256 if staged_item else None,
+                        site_id=(staged_item.site_id if staged_item else None) or site_id,
+                    ))
+                inputs = tuple(planned)
+                result = run_file_cycle(
+                    store, project_id, inputs, options, cancel=stop,
+                    progress=lambda event: emit(CycleProgress(
+                        event.stage, event.completed, event.total, source.source_id,
+                    )),
+                    source_reference=source.source_id,
+                    source_fingerprint=configuration_fingerprint(source.config()),
+                    source_sites=source.site_ids,
+                )
+                consumed.update(file_path_key(path) for path in paths)
+                outcomes.append(SourceCycleItem(
+                    source.source_id, result.outcome.state, run_id=result.run_id,
+                    warning_count=len(result.warnings),
+                ))
+                continue
             if source.platform in {"usergate", "ideco"}:
                 current = SavedNgfwSources(store).get(project_id, source.source_id)
                 if current is None or current.model_dump(mode="json") != source.config():
@@ -211,11 +278,16 @@ def run_source_cycle(
                     cancel=stop,
                 )
             scan_id = store.create_cloud_scan(
-                project_id, asdict(selection), {"platform": platform, **config}
+                project_id, {**asdict(selection), "workspace_site_ids": list(source.site_ids)},
+                {"platform": platform, **config},
             )
             payload = asdict(client.scan(selection))
         except Exception:
-            message = "Сбор источника не завершён. Проверьте настройки, доступность и права API."
+            message = (
+                "Файловый источник не прочитан. Проверьте список файлов, путь к папке и доступ."
+                if source.platform == "files"
+                else "Сбор источника не завершён. Проверьте настройки, доступность и права API."
+            )
             if scan_id is not None:
                 store.finish_cloud_scan(scan_id, {
                     "state": "cancelled" if stop.is_set() else "failed",
@@ -230,6 +302,7 @@ def run_source_cycle(
                     **options, "source_id": source.source_id,
                     "source_config_fingerprint": fingerprint,
                     "source_collection_state": "cancelled" if stop.is_set() else "failed",
+                    "source_site_ids": list(source.site_ids),
                 })
                 store.record_error(failure_run, Path(source.source_id), message)
                 store.finish_run(failure_run, "cancelled" if stop.is_set() else "interrupted")
@@ -238,17 +311,21 @@ def run_source_cycle(
                 run_id=failure_run, message=message,
             ))
             continue
-        previous_scan = next((scan for scan in store.list_cloud_scans(project_id)
+        previous_scan = next((scan for scan in store.list_cloud_scan_headers(project_id)
             if scan["id"] != scan_id and scan.get("state") == "completed"
             and scan.get("config") == {"platform": platform, **config}
             and set(scan.get("selection", {}).get("resources", ())) == set(source.resources)
             and set(scan.get("selection", {}).get("data", ())) == set(source.data)
         ), None)
-        warning = count_drop_warning(
-            len(previous_scan["result"].get("records", ())), len(payload.get("records", ())),
-            threshold_percent=options.get("inventory_count_drop_percent", 30),
-            before_reference=previous_scan["id"], unit="ресурсы",
-        ) if previous_scan is not None and payload.get("state") in {"completed", "partial"} else None
+        warning = None
+        if previous_scan is not None and payload.get("state") in {"completed", "partial"}:
+            previous_count = store.cloud_scan_record_count(project_id, previous_scan["id"])
+            if previous_count is not None:
+                warning = count_drop_warning(
+                    previous_count, len(payload.get("records", ())),
+                    threshold_percent=options.get("inventory_count_drop_percent", 30),
+                    before_reference=previous_scan["id"], unit="ресурсы",
+                )
         if warning is not None:
             payload["integrity_warnings"] = [{"code": warning.code, "message": warning.message}]
         store.finish_cloud_scan(scan_id, payload)
@@ -256,11 +333,15 @@ def run_source_cycle(
             payload.get("state"), "failed"
         )
         run_id = None
-        message = "Собран инвентарь; проверка правил этой платформы не поддержана."
+        message = "Результат сбора сохранён."
+        if platform in {"advanced", "evolution"} and state in {"complete", "partial"}:
+            message = "Сбор сохранён. Полученные политики групп безопасности можно сверить в матрице доступа."
         if platform == "vmware" and state in {"complete", "partial"} and not stop.is_set():
-            scan = next(item for item in store.list_cloud_scans(project_id) if item["id"] == scan_id)
             emit(CycleProgress("analysis", index, total, source.source_id))
             try:
+                scan = store.get_cloud_scan(project_id, scan_id)
+                if scan is None:
+                    raise ValueError("Исходный облачный сбор не найден")
                 enabled = options.get("enabled_check_ids")
                 if enabled is not None and not any(key.startswith("FW-") for key in enabled):
                     reports = []
@@ -299,13 +380,25 @@ def run_source_cycle(
             source.source_id, state, scan_id, run_id, message,
             warning_count=1 if warning is not None else 0,
         ))
-    if files:
+    remaining = tuple(item for item in files if file_path_key(item.path) not in consumed)
+    if remaining:
+        staged_positions = {file_path_key(item.path): index for index, item in enumerate(files)}
         emit(CycleProgress("analysis", len(manifest), total, "files"))
+
+        def report_file_progress(event: CycleProgress) -> None:
+            identifier = event.item_id or event.source_id
+            position = (
+                staged_positions[file_path_key(remaining[int(identifier)].path)]
+                if identifier is not None and identifier.isdecimal() else None
+            )
+            emit(CycleProgress(
+                event.stage, event.completed, event.total, "files",
+                str(position) if position is not None else None,
+            ))
+
         result = run_file_cycle(
-            store, project_id, files, options, cancel=stop,
-            progress=lambda event: emit(CycleProgress(
-                event.stage, event.completed, event.total, "files", event.item_id
-            )),
+            store, project_id, remaining, options, cancel=stop,
+            progress=report_file_progress,
         )
         outcomes.append(SourceCycleItem(
             "files", result.outcome.state, run_id=result.run_id, warning_count=len(result.warnings)
@@ -320,7 +413,7 @@ def retry_task_inputs(
     """Plan a new attempt; never overwrite the selected history entry."""
     sources = configured_sources(store, project_id)
     if kind == "scan":
-        scan = next((item for item in store.list_cloud_scans(project_id) if item["id"] == task_id), None)
+        scan = store.get_cloud_scan(project_id, task_id)
         if scan is None:
             raise ValueError("Сбор не найден в выбранном проекте")
         if scan["state"] == "running" or (
@@ -338,17 +431,30 @@ def retry_task_inputs(
         source_key = run.get("settings", {}).get("source_id")
         if not source_key and run.get("settings", {}).get("cloud_scan_id"):
             source_key = "cloud_ru_vmware"
-        if not source_key:
+        if not source_key or source_key.startswith(FILE_SOURCE_PREFIX):
             files = []
             assignments = store.workspace_metadata.device_sites(project_id)
+            settings = run.get("settings", {})
+            saved_devices = settings.get("workspace_input_devices", {})
+            saved_sites = settings.get("workspace_input_sites", {})
             for item in run["items"]:
                 if item.get("status") not in {"error", "unsupported", "cancelled", "canceled", "partial"}:
                     continue
                 path = Path(item["path"])
-                device_id = (item.get("report") or {}).get("device_id") or store.suggest_device(project_id, path.name)
+                if source_key and item.get("path") == source_key:
+                    # Enumeration failed before there were individual paths. A
+                    # retry must expand the configured folder again.
+                    selected = tuple(source for source in sources if source.source_id == source_key)
+                    if not selected:
+                        raise ValueError("Включённый файловый источник для повтора отсутствует")
+                    return selected, ()
+                device_id = (
+                    (item.get("report") or {}).get("device_id") or saved_devices.get(str(path))
+                    or store.suggest_device(project_id, path.name)
+                )
                 files.append(FileCycleInput(
                     path, device_id, site_id=(assignments.get(device_id) if device_id is not None else None)
-                    or run.get("settings", {}).get("workspace_input_sites", {}).get(str(path)),
+                    or saved_sites.get(str(path)),
                 ))
             return (), tuple(files)
     else:

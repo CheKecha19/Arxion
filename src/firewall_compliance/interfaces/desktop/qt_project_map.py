@@ -65,13 +65,19 @@ class InteractionRows(QAbstractTableModel):
         self.edges: tuple[ProjectMapEdge, ...] = ()
         self.labels: dict[str, str] = {}
         self.contexts: dict[str, str] = {}
+        self._rule_columns: tuple[tuple[tuple[str, ...], str], ...] = ()
 
     def replace(
         self, edges: list[ProjectMapEdge], labels: dict[str, str], contexts: dict[str, str],
     ) -> None:
+        rule_columns = []
+        for edge in edges:
+            services = tuple(dict.fromkeys(value for rule in edge.rules for value in rule.services))
+            rule_columns.append((services, str(len({(rule.owner_id, rule.rule_id) for rule in edge.rules}))))
         self.beginResetModel()
         self.edges, self.labels = tuple(edges), labels
         self.contexts = contexts
+        self._rule_columns = tuple(rule_columns)
         self.endResetModel()
 
     def rowCount(self, parent: QModelIndex = EMPTY_INDEX) -> int:
@@ -90,14 +96,19 @@ class InteractionRows(QAbstractTableModel):
         if not index.isValid() or not 0 <= index.row() < len(self.edges) or not 0 <= index.column() < len(self.HEADERS) or role not in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             return None
         edge = self.edges[index.row()]
-        services = tuple(dict.fromkeys(value for rule in edge.rules for value in rule.services))
+        services, rule_count = self._rule_columns[index.row()]
+        if index.column() == 3 and role == Qt.ItemDataRole.ToolTipRole and services:
+            return "\n".join(services[:20]) + (f"\nЕщё: {len(services) - 20}" if len(services) > 20 else "")
+        service_summary = (
+            f"Несколько сервисов ({len(services)})" if len(services) > 1
+            else services[0] if services else "неизвестны / неприменимы"
+        )
         return (
             self.labels.get(edge.source, edge.source),
             self.labels.get(edge.target, edge.target),
             edge.action or "не указано",
-            (("Несколько сервисов: " if len(services) > 1 else "") + ", ".join(services))
-            or "неизвестны / неприменимы",
-            str(len({(rule.owner_id, rule.rule_id) for rule in edge.rules})),
+            service_summary,
+            rule_count,
             edge.status + (" · отключено" if not edge.enabled else "")
             + (" · фильтр неизвестен" if "Условия фильтра неизвестны" in edge.details else ""),
             self.contexts.get(edge.source, "неизвестен") + " → "
@@ -268,8 +279,8 @@ class ProjectMapWidget(QWidget):
         self._selecting = False
         self._edge_offset = 0
         self._relations: list[ProjectMapEdge] = []
-        self._base_status = ""
         self._focus_node: str | None = None
+        self._neighborhood_anchor: str | None = None
         self._focus_history: list[tuple[str | None, str]] = []
         self._cameras: dict[tuple[object, ...], tuple[QTransform, QPointF]] = {}
         self._last_view_key: tuple[object, ...] | None = None
@@ -278,26 +289,31 @@ class ProjectMapWidget(QWidget):
         self._drill_history: list[tuple[frozenset[str] | None, str | None]] = []
         self._render_members: dict[str, tuple[str, ...]] = {}
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 4, 0, 0)
-        toolbar = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        self.toolbar = QHBoxLayout()
+        toolbar = self.toolbar
+        toolbar.setSpacing(4)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Найти устройство, IP или зону…")
+        self.search.setPlaceholderText("Имя, IP, зона…")
+        self.search.setFixedWidth(100)
         self.search.setAccessibleName("Поиск на карте проекта")
-        toolbar.addWidget(self.search, 1)
+        toolbar.addWidget(self.search)
         self.zone_selector = QComboBox()
-        self.zone_selector.setMaximumWidth(210)
+        self.zone_selector.setFixedWidth(100)
         self.zone_selector.setAccessibleName("Зона карты проекта")
         toolbar.addWidget(self.zone_selector)
-        self.rename_button = QPushButton("Название зоны…")
+        self.rename_button = QPushButton("✎")
+        self.rename_button.setFixedWidth(26)
+        self.rename_button.setAccessibleName("Переименовать зону")
+        self.rename_button.setToolTip("Переименовать зону")
         self.rename_button.clicked.connect(self._rename_zone)
         toolbar.addWidget(self.rename_button)
-        layout.addLayout(toolbar)
-        tools = QHBoxLayout()
         self.presentation = QComboBox()
         self.presentation.addItem("Структура сети", "structure")
         self.presentation.addItem("Условия правил", "access")
         self.presentation.setAccessibleName("Представление карты проекта")
-        tools.addWidget(self.presentation)
+        toolbar.addWidget(self.presentation)
         self.edge_filter = QComboBox()
         for title, value in (
             ("Все связи", "all"),
@@ -306,11 +322,14 @@ class ProjectMapWidget(QWidget):
             ("Связи структуры", "attachment"),
         ):
             self.edge_filter.addItem(title, value)
-        tools.addWidget(self.edge_filter)
+        toolbar.addWidget(self.edge_filter)
         self.neighbors = QCheckBox("Соседние узлы")
         self.neighbors.setChecked(True)
-        tools.addWidget(self.neighbors)
-        tools.addStretch()
+        toolbar.addWidget(self.neighbors)
+        legend_toggle = QCheckBox("Легенда")
+        self.legend_toggle = legend_toggle
+        toolbar.addWidget(legend_toggle)
+        toolbar.addStretch()
         self.scene = QGraphicsScene(self)
         self.view = AclMapView(self.scene, self)
         self._fit_timer = QTimer(self)
@@ -323,41 +342,40 @@ class ProjectMapWidget(QWidget):
         self.view.setAccessibleName("Общая сетевая карта проекта")
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         navigation = QHBoxLayout()
-        for label, callback in (
-            ("+", self.view.zoom_in),
-            ("−", self.view.zoom_out),
-            ("Вписать", self.view.fit_map),
+        navigation.setSpacing(4)
+        for label, description, width, callback in (
+            ("+", "Увеличить масштаб", 26, self.view.zoom_in),
+            ("−", "Уменьшить масштаб", 26, self.view.zoom_out),
+            ("Вписать", "Вписать карту в полотно", 64, self.view.fit_map),
+            ("Вся карта", "Вернуться к обзору карты", 64, self._clear_focus),
+            ("Назад", "Вернуться к предыдущему виду", 64, self._back_focus),
+            ("Группа", "Раскрыть выбранную группу", 64, self._drill_selected),
+            ("←", "Предыдущая страница линий", 26, lambda: self._page_edges(-1)),
+            ("→", "Следующая страница линий", 26, lambda: self._page_edges(1)),
         ):
             button = QPushButton(label)
+            button.setFixedWidth(width)
+            button.setAccessibleName(description)
+            button.setToolTip(description)
             button.clicked.connect(callback)
             navigation.addWidget(button)
+        navigation.addStretch()
         self.properties_button = QPushButton("Свойства")
         self.properties_button.setCheckable(True)
-        tools.addWidget(self.properties_button)
-        self.open_rules_button = QPushButton("Правила выбранной связи")
+        toolbar.addWidget(self.properties_button)
+        self.open_rules_button = QPushButton("Правила")
+        self.open_rules_button.setToolTip("Открыть правила выбранной связи")
         self.open_rules_button.clicked.connect(self._open_selected_rules)
-        tools.addWidget(self.open_rules_button)
-        self.access_button = QPushButton("Показать доступ")
+        toolbar.addWidget(self.open_rules_button)
+        self.access_button = QPushButton("Доступ")
+        self.access_button.setToolTip("Показать условия доступа для выбранного ресурса")
         self.access_button.clicked.connect(self._show_access)
-        tools.addWidget(self.access_button)
-        reset = QPushButton("Вся карта")
-        reset.clicked.connect(self._clear_focus)
-        navigation.addWidget(reset)
-        back = QPushButton("Назад")
-        back.clicked.connect(self._back_focus)
-        navigation.addWidget(back)
-        drill = QPushButton("Раскрыть группу")
-        drill.clicked.connect(self._drill_selected)
-        navigation.addWidget(drill)
-        previous = QPushButton("← Линии")
-        previous.clicked.connect(lambda: self._page_edges(-1))
-        navigation.addWidget(previous)
-        following = QPushButton("Линии →")
-        following.clicked.connect(lambda: self._page_edges(1))
-        navigation.addWidget(following)
-        layout.addLayout(tools)
+        toolbar.addWidget(self.access_button)
+        for button in (self.properties_button, self.open_rules_button, self.access_button):
+            button.setFixedWidth(64)
+        layout.addLayout(toolbar)
         layout.addLayout(navigation)
-        self.conditions = RuleQueryWidget(self)
+        self.conditions = RuleQueryWidget(self, compact=True)
         self.conditions.changed.connect(self._filters_changed)
         layout.addWidget(self.conditions)
         self.details = QPlainTextEdit()
@@ -365,6 +383,11 @@ class ProjectMapWidget(QWidget):
         self.details.setMinimumWidth(240)
         self.details.setMaximumWidth(420)
         self.details.setAccessibleName("Устройство и правила выбранной связи")
+        self.rule_picker = QComboBox()
+        self.rule_picker.setAccessibleName("Правило выбранной связи")
+        self.rule_picker.currentIndexChanged.connect(self._show_neighborhood_rule)
+        self.rule_picker.hide()
+        self._selected_rule_edge: ProjectMapEdge | None = None
         self.interaction_model = InteractionRows(self)
         self.interactions = QTableView()
         self.interactions.setModel(self.interaction_model)
@@ -376,6 +399,8 @@ class ProjectMapWidget(QWidget):
         side = QSplitter(Qt.Orientation.Vertical)
         limits = QWidget()
         limit_layout = QHBoxLayout(limits)
+        limit_layout.setContentsMargins(4, 2, 4, 2)
+        limit_layout.setSpacing(4)
         self.node_limit = QSpinBox()
         self.node_limit.setRange(3, 500)
         self.node_limit.setValue(100)
@@ -386,11 +411,14 @@ class ProjectMapWidget(QWidget):
         self.line_limit.setAccessibleName("Максимум линий на странице карты")
         for title, widget in (("Узлы", self.node_limit), ("Линии", self.line_limit)):
             limit_layout.addWidget(QLabel(title))
+            widget.setFixedWidth(52)
             limit_layout.addWidget(widget)
             widget.valueChanged.connect(self._limits_changed)
-        limits.setMaximumHeight(65)
+        limit_layout.addStretch()
+        limits.setFixedHeight(28)
         side.addWidget(limits)
         side.addWidget(self.interactions)
+        side.addWidget(self.rule_picker)
         side.addWidget(self.details)
         side.setMinimumWidth(280)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -400,10 +428,14 @@ class ProjectMapWidget(QWidget):
         splitter.setSizes([900, 320])
         self.details.hide()
         self.properties_button.toggled.connect(self.details.setVisible)
-        layout.addWidget(splitter, 1)
         self.status = QLabel()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.status.hide()
+        self.load_status = QLabel()
+        self.load_status.setWordWrap(True)
+        layout.addWidget(self.load_status)
+        self.load_status.hide()
         legend = QLabel(
             "→ ACL: синий — разрешение, красный — запрет · "
             "жёлтый — неизвестное действие · серый — подключение · "
@@ -412,6 +444,9 @@ class ProjectMapWidget(QWidget):
         )
         legend.setWordWrap(True)
         layout.addWidget(legend)
+        legend.hide()
+        legend_toggle.toggled.connect(legend.setVisible)
+        layout.addWidget(splitter, 1)
         self.scene.selectionChanged.connect(self._selected)
         self.search.textChanged.connect(self._filters_changed)
         self.zone_selector.currentIndexChanged.connect(self._filters_changed)
@@ -439,6 +474,19 @@ class ProjectMapWidget(QWidget):
             else ""
         )
         return node.zone + (" · " + suffix if suffix else "")
+
+    def set_load_status(self, message: str) -> None:
+        self.load_status.setText(message)
+        self.load_status.setVisible(bool(message))
+
+    def show_neighborhood(self, graph: ProjectMap, anchor: str, presentation: str) -> None:
+        self._neighborhood_anchor = anchor
+        self.rename_button.hide()
+        self.presentation.blockSignals(True)
+        self.presentation.setCurrentIndex(self.presentation.findData(presentation))
+        self.presentation.blockSignals(False)
+        self.set_graph(graph, {})
+        self.properties_button.setChecked(True)
 
     def set_graph(
         self, graph: ProjectMap, labels: dict[str, str],
@@ -542,6 +590,7 @@ class ProjectMapWidget(QWidget):
         members = self._render_members.get(node.key, ()) if node is not None else ()
         if len(members) < 2:
             self.status.setText("Выберите сводную группу для раскрытия.")
+            self.status.show()
             return
         self._drill_history.append((self._drill_members, self._focus_node))
         self._drill_members = frozenset(members)
@@ -566,13 +615,21 @@ class ProjectMapWidget(QWidget):
 
     def _show_access(self) -> None:
         node = next((item.node for item in self.scene.selectedItems() if isinstance(item, ProjectIconItem)), None)
+        if self._neighborhood_anchor is not None:
+            self.presentation.setCurrentIndex(self.presentation.findData("access"))
+            return
         if node is None:
             self.status.setText("Выберите устройство или ресурс структуры.")
+            self.status.show()
             return
         if len(self._render_members.get(node.key, ())) > 1:
             self.status.setText("Сначала раскройте группу и выберите устройство или ресурс.")
+            self.status.show()
             return
-        owner = next((edge.source for edge in self.graph.edges if edge.kind == "membership" and edge.target == node.key), node.key)
+        owner = next(
+            (edge.source for edge in self.graph.edges if edge.kind == "membership" and edge.target == node.key),
+            node.key,
+        )
         self.presentation.blockSignals(True)
         self.presentation.setCurrentIndex(self.presentation.findData("access"))
         self.presentation.blockSignals(False)
@@ -636,6 +693,7 @@ class ProjectMapWidget(QWidget):
                 self._cameras.pop(next(iter(self._cameras)))
         self._building = True
         try:
+            self._clear_rule_picker()
             self.scene.clear()
             self.node_items.clear()
             self.edge_items.clear()
@@ -643,12 +701,16 @@ class ProjectMapWidget(QWidget):
             self._render_members.clear()
             query = self.search.text().strip().casefold()
             zone = self.zone_selector.currentData()
-            self.rename_button.setEnabled(isinstance(zone, str))
+            self.rename_button.setEnabled(self._neighborhood_anchor is None and isinstance(zone, str))
             structure = self.presentation.currentData() == "structure"
             mode = "all" if structure else self.edge_filter.currentData()
             self.edge_filter.setVisible(not structure)
+            self.presentation.setToolTip(
+                "Принадлежность ресурсов, интерфейсы и настроенные подключения."
+                if structure else "Направления, действия и условия ACL между ресурсами."
+            )
             self.access_button.setVisible(structure)
-            self.open_rules_button.setVisible(not structure)
+            self.open_rules_button.setVisible(not structure and self._neighborhood_anchor is None)
             self.conditions.setVisible(not structure)
             edges = [
                 edge
@@ -714,6 +776,8 @@ class ProjectMapWidget(QWidget):
                 )
             original = {node.key: node for node in self.graph.nodes}
             anchor = self._focus_node if self._focus_node in original else None
+            if self._neighborhood_anchor in original and not query and zone is None:
+                visible.add(self._neighborhood_anchor)
             if self._drill_members is not None and anchor is None:
                 visible.intersection_update(self._drill_members)
                 if self.neighbors.isChecked():
@@ -731,7 +795,8 @@ class ProjectMapWidget(QWidget):
                         visible.update((edge.source, edge.target))
             projection = bounded_project_map(
                 self.graph, visible, tuple(edges), node_budget=self.node_limit.value(),
-                detail=self._drill_members is not None and anchor is None, anchor=anchor,
+                detail=self._drill_members is not None and anchor is None,
+                anchor=anchor or self._neighborhood_anchor,
                 detail_members=self._drill_members,
             )
             view_graph = projection.graph
@@ -953,7 +1018,7 @@ class ProjectMapWidget(QWidget):
                 self.scene.addItem(item)
                 self.edge_items.append(item)
             self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-24, -24, 24, 24))
-            self._base_status = (
+            diagnostics = (
                 ("Структура сети" if structure else "Условия правил")
                 + (
                     " › " + self.node_items[self._focus_node].node.label
@@ -973,17 +1038,14 @@ class ProjectMapWidget(QWidget):
                     else ""
                 )
             )
-            self.status.setText(self._base_status)
-            self.status.setToolTip("\n".join(self.graph.warnings))
+            self.status.hide()
             current_keys = {self.zone_key(node) for node in self.graph.nodes}
             unused = {key: value for key, value in self.zone_labels.items() if key not in current_keys}
             if unused:
-                self._base_status += f" · Подписей прежней группировки: {len(unused)}"
-                self.status.setText(self._base_status)
-                self.status.setToolTip(
-                    self.status.toolTip() + "\nРанее сохранённые подписи:\n"
-                    + "\n".join(f"{key}: {value}" for key, value in unused.items())
+                diagnostics += "\nРанее сохранённые подписи:\n" + "\n".join(
+                    f"{key}: {value}" for key, value in unused.items()
                 )
+            self.legend_toggle.setToolTip("\n".join((diagnostics, *self.graph.warnings)))
             self.details.setPlainText(
                 "Выберите устройство или линию связи.\n\n"
                 "Группы адресов /24 и /64 — представление, не доказательство VLAN или общей сети.\n"
@@ -1010,6 +1072,7 @@ class ProjectMapWidget(QWidget):
         if self._building or self._selecting:
             return
         selected = self.scene.selectedItems()
+        self._clear_rule_picker()
         if not selected:
             focused = self.node_items.get(self._focus_node) if self._focus_node else None
             if focused is not None:
@@ -1047,8 +1110,11 @@ class ProjectMapWidget(QWidget):
             lines.append(f"\nСвязей: {len(connected)}")
             for edge in connected:
                 active_nodes.update((edge.source, edge.target))
-                for rule in edge.rules:
-                    lines.append(f"{rule.name}: {rule.source} → {rule.destination} · {rule.action}")
+                if self._neighborhood_anchor is None:
+                    for rule in edge.rules:
+                        lines.append(f"{rule.name}: {rule.source} → {rule.destination} · {rule.action}")
+            if self._neighborhood_anchor is not None and any(edge.rules for edge in connected):
+                lines.append("Выберите связь в таблице, чтобы посмотреть условия и источники правил.")
             for icon in self.node_items.values():
                 icon.setVisible(icon.node.key in active_nodes)
             for line in self.edge_items:
@@ -1057,28 +1123,13 @@ class ProjectMapWidget(QWidget):
             edge = item.edge
             if edge in self.interaction_model.edges:
                 self.interactions.selectRow(self.interaction_model.edges.index(edge))
-            lines = [
-                "Связь по условиям ACL" if edge.kind == "acl"
-                else "Неразобранные условия правила" if edge.kind == "condition"
-                else "Структура / принадлежность",
-                f"Действие: {edge.action or '—'}",
-                f"Правил: {len(edge.rules)}",
-                *edge.details,
-            ]
-            for rule in edge.rules:
-                lines.extend(
-                    (
-                        "",
-                        f"{rule.device} · {rule.name}",
-                        f"ID: {rule.rule_id}",
-                        f"{rule.source} → {rule.destination}",
-                        f"Сервисы: {', '.join(rule.services) or 'неизвестны'}",
-                        f"Действие: {rule.action} · включено: {rule.enabled}",
-                        f"Направление: {rule.direction or 'не указано'}",
-                        f"Условия: {rule.status} · {rule.location}",
-                        *rule.details,
-                    )
-                )
+            if self._neighborhood_anchor is not None and edge.rules:
+                self._selected_rule_edge = edge
+                self.rule_picker.blockSignals(True)
+                self.rule_picker.addItems([f"{rule.device} · {rule.name}" for rule in edge.rules])
+                self.rule_picker.blockSignals(False)
+                self.rule_picker.show()
+            lines = self._edge_details(edge, 0 if self._selected_rule_edge is not None else None)
             for line in self.edge_items:
                 line.setVisible(line is item)
             for icon in self.node_items.values():
@@ -1099,6 +1150,42 @@ class ProjectMapWidget(QWidget):
         if not bounds.isNull():
             self.scene.setSceneRect(bounds.adjusted(-30, -30, 30, 30))
         self.properties_button.setChecked(True)
+
+    def _clear_rule_picker(self) -> None:
+        if self._selected_rule_edge is None:
+            return
+        self._selected_rule_edge = None
+        self.rule_picker.clear()
+        self.rule_picker.hide()
+
+    def _show_neighborhood_rule(self, index: int) -> None:
+        edge = self._selected_rule_edge
+        if edge is None or not 0 <= index < len(edge.rules):
+            return
+        self.details.setPlainText("\n".join(self._edge_details(edge, index)))
+
+    @staticmethod
+    def _edge_details(edge: ProjectMapEdge, index: int | None) -> list[str]:
+        lines = [
+            "Связь по условиям ACL" if edge.kind == "acl"
+            else "Неразобранные условия правила" if edge.kind == "condition"
+            else "Структура / принадлежность",
+            f"Действие: {edge.action or '—'}",
+            f"Правил: {len(edge.rules)}",
+            *edge.details,
+        ]
+        rules = edge.rules if index is None else (edge.rules[index],)
+        for rule in rules:
+            lines.extend((
+                "", f"{rule.device} · {rule.name}", f"ID: {rule.rule_id}",
+                f"{rule.source} → {rule.destination}",
+                f"Сервисы: {', '.join(rule.services) or 'неизвестны'}",
+                f"Действие: {rule.action} · включено: {rule.enabled}",
+                f"Направление: {rule.direction or 'не указано'}",
+                f"Условия: {rule.status} · {rule.location}",
+                *rule.details,
+            ))
+        return lines
 
     def _open_selected_rules(self) -> None:
         selected = self.scene.selectedItems()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -399,6 +399,13 @@ def _operation(run: Mapping[str, Any], reports: Sequence[_Report]) -> OperationS
     )
 
 
+def _scan_count(scan: Mapping[str, Any], field: str, result_key: str) -> int:
+    projected = scan.get(field)
+    if scan.get("workspace_projection") is True and type(projected) is int and projected >= 0:
+        return projected
+    return len(_mapping(scan.get("result")).get(result_key, []))
+
+
 def build_dashboard(
     resources: Sequence[Mapping[str, Any]],
     runs: Sequence[Mapping[str, Any]],
@@ -427,14 +434,26 @@ def build_dashboard(
     unique_runs = list(
         {str(run.get("id") or index): run for index, run in enumerate(runs)}.values()
     )
+    unique_scans = {str(scan.get("id") or index): scan for index, scan in enumerate(scans)}
     reports = _reports(unique_runs)
     reports.sort(
         key=lambda report: report.timestamp or datetime.min.replace(tzinfo=UTC), reverse=True
     )
     latest: dict[str, _Report] = {}
+    reports_by_run: dict[int, list[_Report]] = defaultdict(list)
     for report in reports:
+        reports_by_run[id(report.run)].append(report)
         if report.executed:
             latest.setdefault(report.device_id, report)
+    ranked_reports = tuple(latest.values())
+    missing_rank = len(ranked_reports)
+    device_ranks: dict[str, int] = {}
+    cloud_ranks: dict[tuple[str, str], int] = {}
+    for rank, report in enumerate(ranked_reports):
+        device_ranks[report.device_id] = rank
+        cloud_id = _cloud_key(_mapping(report.item.get("cloud_origin")))
+        if cloud_id is not None:
+            cloud_ranks.setdefault(cloud_id, rank)
     category_states: dict[str, Counter[str]] = {key: Counter() for key, _ in CATEGORIES}
     matched_devices: set[str] = set()
     for resource in active:
@@ -444,16 +463,15 @@ def build_dashboard(
         counts = category_states.setdefault(category, Counter())
         counts["total"] += 1
         device_ids, cloud_ids = _resource_keys(resource)
-        candidates = [
-            report
-            for report in latest.values()
-            if report.device_id in device_ids
-            or (_cloud_key(_mapping(report.item.get("cloud_origin"))) in cloud_ids)
-        ]
-        candidate = candidates[0] if candidates else None
-        if candidate is None:
+        # Preserve the first report in the original stable timestamp order across all aliases.
+        rank = min(
+            min((device_ranks.get(key, missing_rank) for key in device_ids), default=missing_rank),
+            min((cloud_ranks.get(key, missing_rank) for key in cloud_ids), default=missing_rank),
+        )
+        if rank == missing_rank:
             counts["collected" if _time(resource.get("last_scan")) else "unchecked"] += 1
             continue
+        candidate = ranked_reports[rank]
         matched_devices.add(candidate.device_id)
         if _stale(resource, candidate):
             counts["stale"] += 1
@@ -477,17 +495,13 @@ def build_dashboard(
             status = mark.get("status") or finding.get("status", "new")
             if status not in {"resolved", "false_positive"}:
                 open_severities[str(severity)] += 1
-    operations = []
-    for run in unique_runs:
-        owned = [report for report in reports if report.run is run]
-        operations.append(_operation(run, owned))
+    operations = [_operation(run, reports_by_run.get(id(run), ())) for run in unique_runs]
     operations.sort(
         key=lambda operation: _time(operation.created_at) or datetime.min.replace(tzinfo=UTC),
         reverse=True,
     )
     recent_checks = tuple(operations[:5])
-    for scan in {str(scan.get("id") or index): scan for index, scan in enumerate(scans)}.values():
-        result = _mapping(scan.get("result"))
+    for scan in unique_scans.values():
         operations.append(
             OperationSummary(
                 str(scan.get("id", "")),
@@ -495,7 +509,7 @@ def build_dashboard(
                 str(scan.get("state", "unknown")),
                 _iso(scan.get("created_at")),
                 _iso(scan.get("finished_at")),
-                len(result.get("records", [])),
+                _scan_count(scan, "record_count", "records"),
             )
         )
     operations.sort(
@@ -564,12 +578,7 @@ def build_dashboard(
             for item in run.get("items", [])
             if isinstance(item, dict)
         ),
-        sum(
-            len(_mapping(scan.get("result")).get("errors", []))
-            for scan in {
-                str(scan.get("id") or index): scan for index, scan in enumerate(scans)
-            }.values()
-        ),
+        sum(_scan_count(scan, "error_count", "errors") for scan in unique_scans.values()),
         finding_trend(unique_runs),
         tuple(source_health),
     )

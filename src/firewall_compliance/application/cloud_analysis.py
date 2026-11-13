@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from ipaddress import ip_address, ip_network
 from typing import Any, Literal
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from firewall_compliance import __version__
 from firewall_compliance.domain.configuration import Configuration, Device, Rule
@@ -19,6 +19,7 @@ from firewall_compliance.domain.enums import (
     RuleAction,
     SourceDocumentKind,
 )
+from firewall_compliance.domain.matrix_vmware_origin import VMwareMatrixOrigin
 from firewall_compliance.domain.network import Endpoint, IpRange, PortRange, Service
 from firewall_compliance.domain.parse_result import ParseCoverage, ParseIssue, ParseResult
 from firewall_compliance.domain.revision import DeviceRevision, RevisionSource
@@ -32,11 +33,71 @@ def vmware_device_id(config: dict[str, Any], resource_id: str) -> str:
     return "cloud-ru-vmware:" + sha256(scope.encode()).hexdigest()[:24]
 
 
-def vmware_revision(scan: dict[str, Any], record_index: int) -> DeviceRevision:
+def vmware_revision(
+    scan: dict[str, Any], record_index: int, *, imported_at: datetime | None = None,
+    application_version: str = __version__,
+) -> DeviceRevision:
     """Interpret only Edge Firewall policy, keeping unsupported conditions explicit."""
+    return vmware_record_revision(
+        scan, record_index, scan["result"]["records"][record_index],
+        imported_at=imported_at, application_version=application_version,
+    )
+
+
+def _vmware_captured_at(scan: dict[str, Any], record: dict[str, Any]) -> datetime:
+    timestamp = record.get("collected_at") or scan.get("created_at")
+    if not isinstance(timestamp, str):
+        raise ValueError("В снимке VMware отсутствует дата сбора.")
+    captured = datetime.fromisoformat(timestamp)
+    if captured.utcoffset() is None:
+        raise ValueError("Дата снимка VMware не содержит часовой пояс.")
+    return captured
+
+
+def vmware_scope_revision(
+    scan: dict[str, Any], origin: VMwareMatrixOrigin, *, project_id: str, site_id: str | None,
+    imported_at: datetime | None = None, application_version: str = __version__,
+    record: dict[str, Any] | None = None,
+) -> DeviceRevision:
+    """Восстановить политику Edge из полного сбора или уже извлечённой записи."""
+    if scan.get("id") != origin.scan_id or scan.get("project_id") != project_id:
+        raise ValueError("Сбор VMware не найден в этом проекте")
+    config = scan.get("config")
+    if not isinstance(config, dict) or config.get("platform", "vmware") != "vmware":
+        raise ValueError("Облачный сбор не относится к платформе VMware")
+    if scan.get("state") not in {"completed", "partial"}:
+        raise ValueError("Для сверки нужен успешный или частичный сбор VMware")
+    selection = scan.get("selection")
+    sites = selection.get("workspace_site_ids") if isinstance(selection, dict) else None
+    if site_id == "" or (site_id is not None and (not isinstance(sites, (list, tuple)) or site_id not in sites)):
+        raise ValueError("Сбор VMware не привязан к выбранной площадке")
+    if record is None:
+        result = scan.get("result")
+        records = result.get("records") if isinstance(result, dict) else None
+        if not isinstance(records, (list, tuple)) or origin.record_index >= len(records):
+            raise ValueError("Запись Edge Gateway не найдена в сохранённом сборе")
+        record = records[origin.record_index]
+    if (not isinstance(record, dict) or record.get("id") != origin.resource_id
+            or origin.resource_id != origin.resource_id.strip()):
+        raise ValueError("Запись Edge Gateway отличается от сохранённого источника сверки")
+    data = record.get("data")
+    firewall = data.get("firewall") if isinstance(data, dict) else None
+    if not isinstance(firewall, dict) or firewall.get("userDefinedRules") is None:
+        raise ValueError("В снимке отсутствуют пользовательские правила Edge Gateway")
+    return vmware_record_revision(
+        scan, origin.record_index, record,
+        imported_at=imported_at if imported_at is not None else _vmware_captured_at(scan, record),
+        application_version=application_version,
+    )
+
+
+def vmware_record_revision(
+    scan: dict[str, Any], record_index: int, record: object, *, imported_at: datetime | None = None,
+    application_version: str = __version__,
+) -> DeviceRevision:
+    """Normalize the selected record with its original path in the saved scan."""
     if scan["config"].get("platform", "vmware") != "vmware":
         raise ValueError("Этот анализ поддерживает только Cloud.ru VMware.")
-    record = scan["result"]["records"][record_index]
     if not isinstance(record, dict) or not isinstance(record.get("data"), dict):
         raise ValueError("Некорректный объект снимка VMware.")
     if not isinstance(record.get("id"), str) or not record["id"].strip():
@@ -46,14 +107,15 @@ def vmware_revision(scan: dict[str, Any], record_index: int) -> DeviceRevision:
         raise ValueError("В выбранном ресурсе не получены правила Firewall Edge Gateway.")
     if "userDefinedRules" not in firewall:
         raise ValueError("В ответе Firewall отсутствует userDefinedRules.")
-    captured = datetime.fromisoformat(record.get("collected_at") or scan["created_at"])
-    if captured.utcoffset() is None:
-        raise ValueError("Дата снимка VMware не содержит часовой пояс.")
-    imported = max(datetime.now(UTC), captured)
+    captured = _vmware_captured_at(scan, record)
+    if imported_at is not None and (imported_at.utcoffset() is None or imported_at < captured):
+        raise ValueError("Время импорта VMware должно содержать часовой пояс и следовать за сбором.")
+    imported = imported_at if imported_at is not None else max(datetime.now(UTC), captured)
     source_name = f"Cloud.ru VMware / {record.get('name') or record['id']} / {scan['id']}"
     device_id = vmware_device_id(scan["config"], record["id"])
     digest = sha256(json.dumps(record, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     config_id = uuid5(NAMESPACE_URL, f"{scan['id']}/{record['id']}/{digest}")
+    source_id = uuid4() if imported_at is None else uuid5(NAMESPACE_URL, f"{config_id}/records/{record_index}")
     configuration = Configuration(
         configuration_id=config_id,
         source_name=source_name,
@@ -498,12 +560,13 @@ def vmware_revision(scan: dict[str, Any], record_index: int) -> DeviceRevision:
         parse_result=parsed,
         sources=(
             RevisionSource(
+                source_document_id=source_id,
                 source_name=source_name,
                 content_sha256=digest,
                 kind=SourceDocumentKind.CONFIGURATION,
                 captured_at=captured,
             ),
         ),
-        application_version=__version__,
+        application_version=application_version,
         imported_at=imported,
     )

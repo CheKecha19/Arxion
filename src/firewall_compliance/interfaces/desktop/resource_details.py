@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any
 from weakref import ref
 
@@ -27,7 +28,6 @@ from firewall_compliance.interfaces.desktop.result_presentation import (
     group_details,
     project_item_limitations,
 )
-from firewall_compliance.interfaces.desktop.workspace_models import cloud_resource_key
 
 
 def _json(value: Any) -> str:
@@ -122,12 +122,7 @@ class ResourceDetails:
         )
         observations = []
         if cloud:
-            for scan in view._cloud_scans():
-                if any(
-                    "cloud:" + cloud_resource_key(scan, record, index) == item["id"]
-                    for index, record in enumerate(scan.get("result", {}).get("records", []))
-                ):
-                    observations.append({**scan, "operation_kind": "collection"})
+            observations = view._cloud_resource_history(item["id"])
             source = {
                 "Платформа": item["platform"],
                 "Операция": item["scan"]["id"],
@@ -137,14 +132,17 @@ class ResourceDetails:
                 "Ошибки сбора": item["scan"].get("result", {}).get("errors", []),
             }
         else:
-            for run in view.store.list_runs(view.project_id) if view.project_id else []:
-                saved = view.store.get_run(run["id"])
+            history = view._source_project_snapshot().history if view.project_id else []
+            for run in history:
                 if any(
                     candidate["report"]["device_id"] == report.get("device_id")
-                    for candidate in saved["items"]
+                    for candidate in run["items"]
                     if candidate.get("report")
                 ):
-                    observations.append({**run, "operation_kind": "check"})
+                    observations.append({
+                        "id": run["id"], "created_at": run["created_at"], "state": run["state"],
+                        "operation_kind": "check",
+                    })
             source = {
                 "Файл": item.get("source_name"),
                 "SHA-256": item.get("content_sha256"),
@@ -256,17 +254,16 @@ class ResourceDetails:
         path = value.get("source_location", {}).get("object_path", "")
         if not origin or not path.startswith("/result/records/"):
             return text
-        scans = (
-            self.view.store.list_cloud_scans(self.view.project_id) if self.view.project_id else []
-        )
-        source = next((scan for scan in scans if scan["id"] == origin["scan_id"]), None)
-        if source is None:
+        project_id = self.view.project_id
+        if not project_id:
             return text + "\nИсходный сбор недоступен."
         try:
-            raw: Any = source
-            for segment in path.strip("/").split("/"):
+            _, _, index, *segments = path.strip("/").split("/")
+            reference = str(origin["scan_id"]), int(index)
+            raw: Any = self.view.store.read_cloud_resource_records(project_id, [reference])[reference]
+            for segment in segments:
                 raw = raw[int(segment)] if isinstance(raw, list) else raw[segment]
-        except (ValueError, KeyError, IndexError, TypeError):
+        except (ValueError, KeyError, IndexError, TypeError, sqlite3.Error):
             return text + "\nИсходное правило по сохранённому пути недоступно."
         return text + "\n\nИсходные поля правила API:\n" + _json(raw)
 

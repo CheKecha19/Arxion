@@ -8,15 +8,24 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from firewall_compliance.application.controller_reports import (
+    controller_report_html_section,
+    controller_report_payload,
+)
 from firewall_compliance.application.matrix_artifact import MatrixAssessmentArtifact
-from firewall_compliance.application.matrix_reports import matrix_report_section
+from firewall_compliance.application.matrix_reports import matrix_report_section, matrix_scope_report_section
+from firewall_compliance.application.matrix_scope_assessment import (
+    MatrixScopeAssessment, matrix_scope_checksum, verify_scope_rows,
+)
 from firewall_compliance.application.run_comparison_artifact import RunComparisonArtifact
 from firewall_compliance.application.switch_reports import (
     switch_report_html_section,
     switch_report_payload,
 )
 from firewall_compliance.application.switch_topology import build_switch_topology_from_items
+from firewall_compliance.domain.access_matrix import AccessMatrix
 from firewall_compliance.domain.parse_result import ParseResult
+from firewall_compliance.interfaces.desktop.matrix_scope_store import MatrixScopeStore
 from firewall_compliance.interfaces.desktop.matrix_store import AccessMatrixStore
 from firewall_compliance.interfaces.desktop.run_comparison import comparison_report_section
 from firewall_compliance.interfaces.desktop.run_comparison_store import RunComparisonStore
@@ -92,7 +101,10 @@ def build_batch_report(
     checks: Counter[str] = Counter()
     for item in run["items"]:
         switch = None
+        controller = None
         parsed_payload = item.get("parse_result")
+        if parsed_payload and parsed_payload.get("controller_inventory") is not None:
+            controller = controller_report_payload(ParseResult.model_validate(parsed_payload))
         if parsed_payload and (
             parsed_payload.get("switch_facts") is not None
             or parsed_payload.get("switch_policies") is not None
@@ -114,6 +126,7 @@ def build_batch_report(
                 "result": item["report"],
                 "excerpts": item["excerpts"] if include_fragments else [],
                 **({"switch_import": switch} if switch is not None else {}),
+                **({"controller_import": controller} if controller is not None else {}),
             }
         )
         if item["report"]:
@@ -122,6 +135,8 @@ def build_batch_report(
                 severity.update(finding["severity"] for finding in check["findings"])
     assessments: list[dict[str, Any]] = []
     assessment_notes: list[str] = []
+    scope_assessments: list[dict[str, Any]] = []
+    scope_matrices: dict[str, dict[str, Any]] = {}
     comparisons: list[dict[str, Any]] = []
     comparison_notes: list[str] = []
     database = getattr(store, "path", None)
@@ -141,6 +156,18 @@ def build_batch_report(
                     )
         except (ValueError, TypeError, OSError, sqlite3.Error):
             assessment_notes.append("История сверок матрицы недоступна для этого хранилища.")
+        try:
+            scope_rows, rejected = MatrixScopeStore(database).assessments_for_run_report(project["id"], run_id)
+            for identifier, result, matrix in scope_rows:
+                scope_assessments.append({"artifact_id": identifier, "result": result.model_dump(mode="json")})
+                if result.matrix_checksum not in scope_matrices:
+                    scope_matrices[result.matrix_checksum] = matrix.model_dump(mode="json")
+            assessment_notes.extend(
+                f"Сверка области {identifier} не включена: целостность или область записи не подтверждены."
+                for identifier in rejected
+            )
+        except (ValueError, TypeError, OSError, sqlite3.Error):
+            assessment_notes.append("История сверок области недоступна для этого хранилища.")
         comparison_store = RunComparisonStore(database)
         try:
             identifiers = comparison_store.ids_for_run(project["id"], run_id)
@@ -163,7 +190,7 @@ def build_batch_report(
     )
     return {
         "package_type": "firewall-compliance.batch-report",
-        "schema_version": "1.2.0",
+        "schema_version": "1.4.0",
         "generated_at": datetime.now(UTC).isoformat(),
         "selection": {
             "mode": "full_run", "filters": {},
@@ -182,6 +209,8 @@ def build_batch_report(
         "items": items,
         "user_decisions": run["marks"],
         "matrix_assessments": assessments,
+        "matrix_scope_assessments": scope_assessments,
+        "matrix_scope_versions": scope_matrices,
         "matrix_assessment_notes": assessment_notes,
         "run_comparisons": comparisons,
         "run_comparison_notes": comparison_notes,
@@ -234,9 +263,10 @@ def _limitation_section(groups: tuple[LimitationGroup, ...]) -> str:
     )
 
 
-def render_batch_html(package: dict[str, Any]) -> str:
+def render_batch_html(package: dict[str, Any], *, scope_preview_limit: int | None = None) -> str:
     """HTML без JavaScript, сетевых ресурсов и интерпретации исходного текста как разметки."""
     summary = package["summary"]
+    scope_assessments = package.get("matrix_scope_assessments", [])
     execution_counts = Counter(
         check_execution_status(check)
         for item in package["items"]
@@ -262,6 +292,7 @@ def render_batch_html(package: dict[str, Any]) -> str:
         f"<p>Импорты: {_counts(summary['imports'])}</p>",
         f"<p>Приоритеты: {_counts(summary['findings_by_severity'])}</p>",
         f"<p>Выполнение проверок: {execution_summary}</p>",
+        *(('<p><a href="#matrix-assessments">Общие сверки матрицы</a></p>',) if scope_assessments else ()),
         '<div class="notice">' + "<br>".join(_escape(x) for x in package["limitations"]) + "</div>",
         "<h2>Устройства и охват</h2><table><thead><tr><th>Источник</th><th>Устройство</th>"
         "<th>Платформа</th><th>Результат импорта</th><th>Конструкции</th></tr></thead><tbody>",
@@ -292,6 +323,8 @@ def render_batch_html(package: dict[str, Any]) -> str:
         sections.append(f"<p>SHA-256: <code>{_escape(item['content_sha256'])}</code></p>")
         if item.get("switch_import") is not None:
             sections.append(switch_report_html_section(item["switch_import"]))
+        if item.get("controller_import") is not None:
+            sections.append(controller_report_html_section(item["controller_import"]))
         item_groups = project_item_limitations(item)
         sections.append(_limitation_section(item_groups))
         result = item["result"]
@@ -394,9 +427,9 @@ def render_batch_html(package: dict[str, Any]) -> str:
         f'<p class="notice">{_escape(value)}</p>'
         for value in package.get("run_comparison_notes", [])
     )
-    sections.append("<h2>Сверки матрицы для выбранного запуска</h2>")
+    sections.append('<h2><a name="matrix-assessments"></a>Сверки матрицы для выбранного запуска</h2>')
     assessments = package.get("matrix_assessments", [])
-    if not assessments:
+    if not assessments and not scope_assessments:
         sections.append("<p>Сохранённых сверок матрицы в этом пакете нет.</p>")
     for payload in assessments:
         try:
@@ -409,6 +442,31 @@ def render_batch_html(package: dict[str, Any]) -> str:
             sections.append(matrix_report_section(artifact))
         except (ValueError, TypeError):
             sections.append('<p class="notice">Сверка не показана: её входы или область не подтверждены.</p>')
+    scope_versions = package.get("matrix_scope_versions", {})
+    verified_versions: dict[str, AccessMatrix] = {}
+    for payload in scope_assessments:
+        try:
+            result = MatrixScopeAssessment.model_validate(payload["result"])
+            checksum = result.matrix_checksum
+            if checksum not in verified_versions:
+                matrix = AccessMatrix.model_validate(scope_versions[checksum])
+                if matrix_scope_checksum(matrix) != checksum:
+                    raise ValueError("Scope assessment matrix checksum differs from the report")
+                verified_versions[checksum] = matrix
+            matrix = verified_versions[checksum]
+            if (
+                result.project_id != package["project"]["id"]
+                or result.scope_id != (result.selected_site_id or result.project_id)
+                or (matrix.matrix_id, matrix.version) != (result.matrix_id, result.matrix_version)
+            ):
+                raise ValueError("Scope assessment inputs differ from the report")
+            verify_scope_rows(matrix, result)
+            sections.append(matrix_scope_report_section(
+                payload["artifact_id"], result, matrix, run_id=package["run"]["id"],
+                preview_limit=scope_preview_limit,
+            ))
+        except (ValueError, TypeError, KeyError):
+            sections.append('<p class="notice">Сверка области не показана: её входы или область не подтверждены.</p>')
     sections.extend(
         f'<p class="notice">{_escape(value)}</p>'
         for value in package.get("matrix_assessment_notes", [])

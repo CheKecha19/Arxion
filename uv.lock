@@ -230,7 +230,7 @@ wheels = [
 
 [[package]]
 name = "firewall-compliance"
-version = "0.10.0"
+version = "0.13.0"
 source = { editable = "." }
 dependencies = [
     { name = "defusedxml" },

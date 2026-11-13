@@ -13,28 +13,24 @@ class WorkspaceSection:
 
 
 WORKSPACE_SECTIONS = (
-    WorkspaceSection("home", "Дашборд", (("home", "Дашборд"),)),
+    WorkspaceSection("home", "Обзор", (("home", "Обзор"),)),
+    WorkspaceSection("findings", "Анализ", (("findings", "Проверки"), ("history", "История и изменения"))),
     WorkspaceSection(
         "devices", "Инфраструктура",
-        (("devices", "Ресурсы"), ("rules", "Правила"), ("map", "Карта сети")),
+        (("devices", "Ресурсы и VLAN"), ("map", "Карта сети")),
     ),
     WorkspaceSection(
-        "findings", "Анализ", (("matrix", "Матрица доступа"), ("findings", "Проверки")),
+        "rules", "Доступ",
+        (("rules", "Правила"), ("matrix", "Матрица доступа"), ("advanced", "Сетевые инструменты")),
+    ),
+    WorkspaceSection("reports", "Отчёты", (("reports", "Отчёты"),)),
+    WorkspaceSection(
+        "staging", "Источники данных", (("staging", "Файлы и запуск"), ("scans", "Облачный сбор")),
     ),
 )
-
-# Действующие инструменты доступны из рабочего раздела проверок.
-ANALYSIS_PAGES = (
-    ("findings", "Проверки"), ("staging", "Файлы и запуск"),
-    ("scans", "Облачный сбор"), ("advanced", "Инструменты"),
-    ("history", "История"), ("reports", "Экспорт"),
-)
-
 
 def section_for_page(page: str) -> WorkspaceSection | None:
     """Найти основной раздел страницы; настройки расположены отдельно."""
-    if page in {key for key, _ in ANALYSIS_PAGES}:
-        return WorkspaceSection("findings", "Анализ", ANALYSIS_PAGES)
     return next(
         (section for section in WORKSPACE_SECTIONS if any(key == page for key, _ in section.pages)),
         None,

@@ -112,7 +112,7 @@ class TaskCenterDialog(QDialog):
 
         def work() -> list[dict[str, Any]]:
             rows = []
-            for run in self._store.project_history(self._project_id):
+            for run in self._store.project_history(self._project_id, compact=True):
                 items = run["items"]
                 rows.append({
                     "kind": "run", "id": run["id"], "state": run["state"],
@@ -126,12 +126,14 @@ class TaskCenterDialog(QDialog):
                         f"предупреждений о составе: {sum(len(item.get('collection_warnings', ())) for item in items)}"
                     ),
                 })
-            for scan in self._store.list_cloud_scans(self._project_id):
+            for scan in self._store.project_cloud_scan_summaries(
+                self._project_id, include_inventory=False,
+            ):
                 result = scan.get("result") or {}
                 rows.append({
                     "kind": "scan", "id": scan["id"], "state": scan["state"],
                     "created_at": scan["created_at"], "finished_at": scan.get("finished_at"),
-                    "count": len(result.get("records", ())),
+                    "count": scan.get("record_count", len(result.get("records", ()))),
                     "errors": len(result.get("errors", ())),
                     "limitations": (
                         "Сбор инвентаря не подтверждает проверку правил; "

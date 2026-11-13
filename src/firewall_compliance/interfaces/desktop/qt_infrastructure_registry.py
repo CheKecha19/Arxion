@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import cached_property
+from ipaddress import IPv4Network, IPv6Network, ip_network
+from threading import Event
 from typing import Any, Protocol
 
 from PySide6.QtCore import (
@@ -16,6 +20,7 @@ from PySide6.QtCore import (
     QSortFilterProxyModel,
     Qt,
     Signal,
+    QTimer,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -38,12 +43,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from firewall_compliance.interfaces.desktop.jobs import JobError, JobRunner
+from firewall_compliance.interfaces.desktop.qt_resource_batch import ResourceBatchDialog
+from firewall_compliance.interfaces.desktop.resource_registry import (
+    MATRIX_BINDING_FIELD,
+    MATRIX_SOURCE_BINDINGS_FIELD,
+    resource_address_binding,
+    resource_source_address_bindings,
+)
+
 
 class Registry(Protocol):
     def list_resources(
         self, project_id: str, *, include_archived: bool = False
     ) -> list[dict[str, Any]]: ...
     def add_manual(self, project_id: str, fields: dict[str, Any]) -> str: ...
+    def add_manual_batch(self, project_id: str, rows: Sequence[Mapping[str, Any]]) -> tuple[str, ...]: ...
     def update(self, project_id: str, resource_id: str, fields: dict[str, Any]) -> None: ...
     def archive(self, project_id: str, resource_id: str) -> None: ...
     def restore(self, project_id: str, resource_id: str) -> None: ...
@@ -58,6 +73,7 @@ CATEGORIES = {
     "cloud": "Облачный сегмент",
 }
 Index = QModelIndex | QPersistentModelIndex
+AddressNetwork = IPv4Network | IPv6Network
 EMPTY_INDEX = QModelIndex()
 LOCATION_FIELDS = (
     ("country", "Страна"),
@@ -75,6 +91,7 @@ LOCATION_FIELDS = (
 COLUMNS = (
     ("name", "Имя из источника"),
     ("label", "Подпись"),
+    ("addresses", "IP-адреса и сети"),
     ("category", "Категория"),
     ("platform", "Платформа"),
     ("resource_type", "Тип ресурса"),
@@ -129,10 +146,81 @@ def _text(row: dict[str, Any], key: str) -> str:
     return str(value) if value is not None else ""
 
 
+def _network(value: str, *, strict: bool = True) -> AddressNetwork | None:
+    try:
+        return ip_network(value.strip(), strict=strict) if "%" not in value else None
+    except ValueError:
+        return None
+
+
+def _networks(values: object) -> tuple[AddressNetwork, ...]:
+    if not isinstance(values, (tuple, list)):
+        return ()
+    return tuple(
+        dict.fromkeys(
+            network
+            for value in values
+            if isinstance(value, str) and (network := _network(value)) is not None
+        )
+    )
+
+
+def _address_text(networks: tuple[AddressNetwork, ...]) -> str:
+    return ", ".join(
+        str(network.network_address) if network.prefixlen == network.max_prefixlen else str(network)
+        for network in networks
+    )
+
+
+def _overlaps(network: AddressNetwork, candidates: tuple[AddressNetwork, ...]) -> bool:
+    return any(
+        network.version == candidate.version and network.overlaps(candidate)
+        for candidate in candidates
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _SearchRow:
+    text: dict[str, str]
+    normalized: dict[str, str]
+    haystack: str
+    dates: dict[str, datetime | None]
+    addresses: tuple[AddressNetwork, ...]
+    address_tooltip: str
+
+    @classmethod
+    def read(cls, row: dict[str, Any]) -> _SearchRow:
+        metadata = row.get("metadata")
+        binding = row.get(MATRIX_BINDING_FIELD)
+        if isinstance(metadata, Mapping):
+            binding = metadata.get(MATRIX_BINDING_FIELD, binding)
+        confirmed = _networks(binding.get("prefixes")) if isinstance(binding, Mapping) else ()
+        observed = _networks(row.get("observed_addresses"))
+        addresses = tuple(dict.fromkeys((*observed, *confirmed)))
+        dates = {key: _timestamp(row.get(key)) for key in DATE_FIELDS}
+        values = {}
+        for key, _ in COLUMNS:
+            if key == "addresses":
+                values[key] = _address_text(addresses)
+            elif key in dates:
+                stamp = dates[key]
+                values[key] = stamp.strftime("%Y-%m-%d %H:%M:%S UTC") if stamp else ""
+            else:
+                values[key] = _text(row, key)
+        normalized = {key: value.casefold() for key, value in values.items()}
+        observed_text, confirmed_text = _address_text(observed), _address_text(confirmed)
+        tooltip = (
+            f"Из источника: {observed_text or 'неизвестно'}\n"
+            f"Подтверждено в карточке: {confirmed_text or 'не указано'}"
+        )
+        return cls(values, normalized, " ".join(normalized.values()), dates, addresses, tooltip)
+
+
 class RegistryRows(QAbstractTableModel):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.rows: list[dict[str, Any]] = []
+        self.search_rows: list[_SearchRow] = []
 
     def rowCount(self, parent: Index = EMPTY_INDEX) -> int:
         return 0 if parent.isValid() else len(self.rows)
@@ -143,11 +231,15 @@ class RegistryRows(QAbstractTableModel):
     def data(self, index: Index, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         if not index.isValid() or index.row() >= len(self.rows):
             return None
-        row, key = self.rows[index.row()], COLUMNS[index.column()][0]
+        key = COLUMNS[index.column()][0]
+        search = self.search_rows[index.row()]
+        if role == Qt.ItemDataRole.ToolTipRole and key == "addresses":
+            return search.address_tooltip
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
-            return _text(row, key) or ("Неизвестно" if key in DATE_FIELDS else "—")
+            unknown = "Неизвестно" if key in DATE_FIELDS or key == "addresses" else "—"
+            return search.text[key] or unknown
         if role == Qt.ItemDataRole.UserRole:
-            return row
+            return self.rows[index.row()]
         return None
 
     def headerData(
@@ -157,9 +249,12 @@ class RegistryRows(QAbstractTableModel):
             return COLUMNS[section][1]
         return super().headerData(section, orientation, role)
 
-    def replace(self, rows: list[dict[str, Any]]) -> None:
+    def replace(self, rows: list[dict[str, Any]], search_rows: list[_SearchRow] | None = None) -> None:
+        if search_rows is None:
+            search_rows = [_SearchRow.read(row) for row in rows]
         self.beginResetModel()
         self.rows = rows
+        self.search_rows = search_rows
         self.endResetModel()
 
 
@@ -171,62 +266,98 @@ class RegistryFilter:
     since: str | None = None
     until: str | None = None
 
+    @cached_property
+    def normalized(self) -> str:
+        return self.value.casefold()
+
+    @cached_property
+    def network(self) -> AddressNetwork | None:
+        return _network(self.value, strict=False) if self.field == "addresses" else None
+
+    @cached_property
+    def bounds(self) -> tuple[datetime | None, datetime | None]:
+        lower, upper = _timestamp(self.since), _timestamp(self.until)
+        return lower, upper + timedelta(days=1) if upper is not None else None
+
 
 class RegistryProxy(QSortFilterProxyModel):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.query = ""
+        self._query = ""
+        self._network: AddressNetwork | None = None
+        self.site_id: str | None = None
+        self.device_sites: Mapping[str, str] = {}
         self.conditions: list[RegistryFilter] = []
 
     def filterAcceptsRow(self, source_row: int, source_parent: Index) -> bool:
         model = self.sourceModel()
         if not isinstance(model, RegistryRows):
             return False
-        row = model.rows[source_row]
-        haystack = " ".join(_text(row, key) for key, _ in COLUMNS).casefold()
-        if self.query.casefold() not in haystack:
+        if self.site_id is not None and not self._matches_site(model.rows[source_row]):
+            return False
+        row = model.search_rows[source_row]
+        if self._network is not None:
+            if not _overlaps(self._network, row.addresses):
+                return False
+        elif self._query not in row.haystack:
             return False
         for condition in self.conditions:
-            text = _text(row, condition.field)
+            text = row.normalized.get(condition.field, "")
             if condition.operation == "empty" and text:
                 return False
             if condition.operation == "filled" and not text:
                 return False
-            if (
-                condition.operation == "contains"
-                and condition.value.casefold() not in text.casefold()
-            ):
-                return False
-            if condition.operation == "equals" and condition.value.casefold() != text.casefold():
-                return False
+            if condition.operation == "contains":
+                if condition.network is not None:
+                    if not _overlaps(condition.network, row.addresses):
+                        return False
+                elif condition.normalized not in text:
+                    return False
+            if condition.operation == "equals":
+                if condition.network is not None:
+                    if condition.network not in row.addresses:
+                        return False
+                elif condition.normalized != text:
+                    return False
             if condition.operation == "range":
-                stamp = _timestamp(row.get(condition.field))
+                stamp = row.dates.get(condition.field)
                 if stamp is None:
                     return False
-                lower, upper = _timestamp(condition.since), _timestamp(condition.until)
-                if lower and stamp < lower or upper and stamp >= upper + timedelta(days=1):
+                lower, upper = condition.bounds
+                if lower and stamp < lower or upper and stamp >= upper:
                     return False
         return True
+
+    def _matches_site(self, row: dict[str, Any]) -> bool:
+        source = row.get("source") or {}
+        if source.get("kind") == "cloud" or source.get("scan_id"):
+            return True
+        device = source.get("device_id")
+        if isinstance(device, str) and device:
+            return self.device_sites.get(device, "") == self.site_id
+        binding = (row.get("metadata") or {}).get(MATRIX_BINDING_FIELD)
+        return not isinstance(binding, Mapping) or binding.get("site_id") == self.site_id
 
     def lessThan(self, left: Index, right: Index) -> bool:
         model = self.sourceModel()
         if not isinstance(model, RegistryRows):
             return False
         key = COLUMNS[left.column()][0]
-        a, b = model.rows[left.row()], model.rows[right.row()]
+        a, b = model.search_rows[left.row()], model.search_rows[right.row()]
         if key in DATE_FIELDS:
-            first, second = _timestamp(a.get(key)), _timestamp(b.get(key))
+            first, second = a.dates[key], b.dates[key]
             if first is None or second is None:
                 return first is None and second is not None
             return first < second
-        return _text(a, key).casefold() < _text(b, key).casefold()
+        return a.normalized[key] < b.normalized[key]
 
     def apply(self, query: str | None = None) -> None:
         modern = hasattr(self, "beginFilterChange") and hasattr(self, "endFilterChange")
         if modern:
             self.beginFilterChange()
         if query is not None:
-            self.query = query
+            self._query = query.casefold()
+            self._network = _network(query, strict=False) if query.strip() else None
         if modern:
             self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
         else:
@@ -234,7 +365,10 @@ class RegistryProxy(QSortFilterProxyModel):
 
 
 class ResourceEditor(QDialog):
-    def __init__(self, row: dict[str, Any] | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, row: dict[str, Any] | None = None, parent: QWidget | None = None, *,
+        access_sites: Sequence[Mapping[str, str]] = (),
+    ) -> None:
         super().__init__(parent)
         self.row = row or {}
         self.manual = not row or row.get("origin") == "manual"
@@ -271,6 +405,61 @@ class ResourceEditor(QDialog):
         placement = self._page(tabs, "Размещение")
         for key, label in LOCATION_FIELDS:
             self._field(placement, key, label)
+        access = self._page(tabs, "Адреса для матрицы")
+        access_hint = QLabel(
+            "Подтвердите IP-адреса или сети CIDR ресурса в стандартном сетевом контексте "
+            "одной площадки. Используйте отдельную строку для каждого значения."
+        )
+        access_hint.setWordWrap(True)
+        access.addRow(access_hint)
+        raw_binding = self.row.get(MATRIX_BINDING_FIELD)
+        try:
+            self._initial_binding = (
+                resource_address_binding(raw_binding) if raw_binding is not None else None
+            )
+        except ValueError:
+            self._initial_binding = None
+            access_hint.setText(access_hint.text() + " Сохранённые адреса не удалось прочитать.")
+        self.access_site = QComboBox()
+        self.access_site.addItem("Выберите площадку", None)
+        self.access_site.addItem("Без площадки", "")
+        self.access_site.setAccessibleName("Площадка для сверки")
+        for site in access_sites:
+            self.access_site.addItem(site["name"], site["id"])
+        if self._initial_binding is not None:
+            saved_site = self._initial_binding["site_id"]
+            site_index = self.access_site.findData(saved_site)
+            if site_index < 0:
+                self.access_site.addItem(f"Сохранённая площадка: {saved_site}", saved_site)
+                site_index = self.access_site.count() - 1
+            self.access_site.setCurrentIndex(site_index)
+        self.access_prefixes = QPlainTextEdit(
+            "\n".join(self._initial_binding["prefixes"]) if self._initial_binding is not None else ""
+        )
+        self.access_prefixes.setPlaceholderText("10.10.20.10\n10.10.30.0/24")
+        self.access_prefixes.setAccessibleName("Подтверждённые адреса ресурса")
+        access.addRow("Площадка для сверки", self.access_site)
+        access.addRow("IP-адреса и CIDR", self.access_prefixes)
+        source_bindings = self.row.get(MATRIX_SOURCE_BINDINGS_FIELD)
+        if source_bindings:
+            try:
+                bindings = resource_source_address_bindings(source_bindings)
+            except ValueError:
+                bindings = ()
+            if bindings:
+                site_names = {site["id"]: site["name"] for site in access_sites}
+                summary = QLabel("\n".join(
+                    f"{binding['device_id']} · {binding['platform']}"
+                    + (f" · {binding['device_context']}" if binding["device_context"] else "")
+                    + (f" · VRF {binding['vrf']}" if binding.get("vrf") else "")
+                    + f" · {site_names.get(binding['site_id'], binding['site_id'] or 'Без площадки')}"
+                    + "\n" + ", ".join(binding["prefixes"])
+                    for binding in bindings
+                ))
+                summary.setTextFormat(Qt.TextFormat.PlainText)
+                summary.setWordWrap(True)
+                summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                access.addRow("Для отдельных источников", summary)
         dates = self._page(tabs, "Наблюдения")
         for key in ("added_at", "first_seen", "last_scan", "last_check"):
             dates.addRow(dict(COLUMNS)[key], QLabel(_text(self.row, key) or "Неизвестно"))
@@ -290,9 +479,14 @@ class ResourceEditor(QDialog):
         if self.manual and isinstance(name, QLineEdit) and not name.text().strip():
             self.validation.setText("Укажите имя ресурса.")
             return
+        try:
+            values = self.values()
+        except ValueError as error:
+            self.validation.setText(str(error))
+            return
         if any(
             isinstance(value, str) and (len(value) > 16000 or "\x00" in value)
-            for value in self.values().values()
+            for value in values.values()
         ):
             self.validation.setText(
                 "Поля должны содержать не более 16000 символов без нулевых байтов."
@@ -338,7 +532,8 @@ class ResourceEditor(QDialog):
             and self.row
         ):
             reset = QPushButton("↶")
-            reset.setMaximumWidth(34)
+            reset.setFixedWidth(26)
+            reset.setAccessibleName("Сбросить ручное значение")
             reset.setToolTip("Удалить ручное значение и использовать данные источника")
             reset.clicked.connect(lambda _checked=False, field=key: self._reset(field))
             line.addWidget(reset)
@@ -378,17 +573,56 @@ class ResourceEditor(QDialog):
                 result[key] = None
             elif not self.row or value != self._initial[key]:
                 result[key] = value
+        prefixes = [line for line in self.access_prefixes.toPlainText().splitlines() if line.strip()]
+        site_id = self.access_site.currentData()
+        if prefixes and site_id is None:
+            raise ValueError("Выберите площадку для подтверждённых адресов ресурса.")
+        binding = (
+            resource_address_binding({"site_id": site_id, "prefixes": prefixes})
+            if prefixes else None
+        )
+        if binding != self._initial_binding:
+            result[MATRIX_BINDING_FIELD] = binding
         return result
+
+
+type _RegistryKey = tuple[str, str | None, bool]
+
+
+@dataclass(slots=True)
+class _RegistryRead:
+    key: _RegistryKey
+    prepare: Callable[[], None] | None
+    on_loaded: Callable[[], None] | None
+    cancelled: Event = field(default_factory=Event)
+
+
+@dataclass(slots=True)
+class _RegistryContents:
+    rows: list[dict[str, Any]]
+    search_rows: list[_SearchRow]
 
 
 class InfrastructureRegistryPanel(QWidget):
     changed = Signal()
     operation_requested = Signal(object)
+    details_requested = Signal(object)
+    map_requested = Signal(object)
+    matrix_groups_requested = Signal(object)
 
-    def __init__(self, registry: Registry, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, registry: Registry, parent: QWidget | None = None, *, runner: JobRunner | None = None,
+    ) -> None:
         super().__init__(parent)
         self.registry = registry
+        self._runner = runner
+        self._pending: _RegistryRead | None = None
+        self._failed: _RegistryRead | None = None
+        self._loaded_key: _RegistryKey | None = None
+        self._read_error: str | None = None
         self.project_id: str | None = None
+        self.access_sites: tuple[Mapping[str, str], ...] = ()
+        self._recent_manual_ids: tuple[str, ...] = ()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
@@ -399,9 +633,12 @@ class InfrastructureRegistryPanel(QWidget):
         top = QHBoxLayout()
         self.search = QLineEdit()
         self.search.setClearButtonEnabled(True)
-        self.search.setPlaceholderText("Поиск по всем полям, включая описание, размещение и даты")
+        self.search.setPlaceholderText("Имя, IP-адрес, сеть CIDR или текст карточки")
         self.search.setAccessibleName("Поиск в реестре инфраструктуры")
-        self.search.setToolTip(explanation)
+        self.search.setToolTip(
+            "IP-адрес ищется среди известных адресов и сетей ресурса. "
+            "Для CIDR показываются пересекающиеся сети. Текст ищется по всем полям."
+        )
         top.addWidget(self.search, 1)
         self.show_archived = QCheckBox("Показывать архив")
         self.show_archived.toggled.connect(self.refresh)
@@ -478,16 +715,15 @@ class InfrastructureRegistryPanel(QWidget):
         self.table.setSortingEnabled(True)
         self.table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.table.horizontalHeader().setStretchLastSection(False)
-        # Keep the data rows readable at the supported 1000x650 window size.
-        # The global ten-pixel header padding otherwise consumes a filtered row.
-        self.table.horizontalHeader().setStyleSheet(
-            "QHeaderView::section { padding-top: 4px; padding-bottom: 4px; }"
-        )
         layout.addWidget(self.table, 1)
         actions = QHBoxLayout()
         self.add_button = QPushButton("Добавить")
         self.add_button.setToolTip("Добавить устройство вручную до первого сканирования")
         self.add_button.clicked.connect(self._new)
+        self.batch_button = QPushButton("Добавить из таблицы…")
+        self.batch_button.clicked.connect(self._new_batch)
+        self.matrix_groups_button = QPushButton("Группы матрицы…")
+        self.matrix_groups_button.clicked.connect(lambda: self.matrix_groups_requested.emit(self._recent_manual_ids))
         self.edit_button = QPushButton("Изменить")
         self.edit_button.setToolTip("Изменить подпись, описание, комментарии и размещение")
         self.edit_button.clicked.connect(self._edit)
@@ -502,13 +738,22 @@ class InfrastructureRegistryPanel(QWidget):
         self.operation_button = QPushButton("Источник")
         self.operation_button.setToolTip("Открыть исходную операцию ресурса")
         self.operation_button.clicked.connect(self._open_operation)
+        self.details_button = QPushButton("Структура и политики")
+        self.details_button.setToolTip("Открыть объекты и связи последней сохранённой конфигурации")
+        self.details_button.clicked.connect(self._open_details)
+        self.map_button = QPushButton("На карте")
+        self.map_button.setToolTip("Показать окружение выбранного ресурса")
+        self.map_button.clicked.connect(self._open_map)
         for button in (
             self.add_button,
+            self.batch_button,
             self.edit_button,
             self.archive_button,
             self.restore_button,
             self.link_button,
             self.operation_button,
+            self.details_button,
+            self.map_button,
         ):
             actions.addWidget(button)
         layout.addLayout(actions)
@@ -518,8 +763,20 @@ class InfrastructureRegistryPanel(QWidget):
         self.status.setToolTip(
             explanation + " Неизвестные даты не подменяются текущими; даты отображаются в UTC."
         )
-        layout.addWidget(self.status)
-        self.search.textChanged.connect(self._apply_filters)
+        status_row = QHBoxLayout()
+        status_row.addWidget(self.status, 1)
+        self._retry = QPushButton("Повторить загрузку")
+        self._retry.clicked.connect(self._retry_read)
+        self._retry.hide()
+        status_row.addWidget(self._retry)
+        status_row.addWidget(self.matrix_groups_button)
+        layout.addLayout(status_row)
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(150)
+        self._search_timer.timeout.connect(self._apply_filters)
+        self.search.textChanged.connect(lambda _text: self._search_timer.start())
+        self.search.returnPressed.connect(self._apply_filters)
         self.filter_field.currentIndexChanged.connect(self._filter_field_changed)
         self.filter_operation.currentIndexChanged.connect(self._filter_field_changed)
         self.table.selectionModel().selectionChanged.connect(self._selection_changed)
@@ -531,6 +788,7 @@ class InfrastructureRegistryPanel(QWidget):
 
     def set_project(self, project_id: str | None, *, refresh: bool = True) -> None:
         if self.project_id != project_id:
+            self._recent_manual_ids = ()
             self.clear_filters()
             self.show_archived.blockSignals(True)
             self.show_archived.setChecked(False)
@@ -539,36 +797,147 @@ class InfrastructureRegistryPanel(QWidget):
         if refresh:
             self.refresh()
         else:
-            self.model.replace([])
-            self._selection_changed()
+            self._reset_read()
+            self._update_count()
 
-    def refresh(self, *_: Any) -> None:
+    def set_access_sites(self, sites: Sequence[Mapping[str, str]]) -> None:
+        self.access_sites = tuple(sites)
+
+    def set_site_filter(self, site_id: str | None, assignments: Mapping[str, str]) -> None:
+        changed_site = self.proxy.site_id != site_id
+        changed_assignments = self.proxy.device_sites != assignments
+        if changed_site:
+            self._recent_manual_ids = ()
+        self.proxy.site_id = site_id
+        self.proxy.device_sites = dict(assignments)
+        if changed_site and self._runner is not None:
+            self._reset_read()
+            self._update_count()
+        elif changed_site or changed_assignments:
+            self._apply_filters()
+
+    def _reset_read(self) -> None:
+        if self._pending is not None:
+            self._pending.cancelled.set()
+            self._pending = None
+        self._loaded_key = None
+        self._read_error = None
+        self._failed = None
+        self.model.replace([], [])
+        self._selection_changed()
+
+    def refresh(
+        self, *_: Any, prepare: Callable[[], None] | None = None, force: bool = False,
+        on_loaded: Callable[[], None] | None = None,
+    ) -> None:
+        """Read registry contents, optionally preparing the captured project snapshot first."""
+        project_id = self.project_id
+        if project_id is None:
+            self._reset_read()
+            self._update_count()
+            return
+        include_archived = self.show_archived.isChecked()
+        key = project_id, self.proxy.site_id, include_archived
+        pending = self._pending
+        if (pending is not None and pending.key == key and not force
+                and (prepare is None or pending.prepare is not None)):
+            if on_loaded is not None:
+                pending.on_loaded = on_loaded
+            return
+        previous = pending or self._failed
+        if previous is not None and previous.key[:2] == key[:2] and prepare is None:
+            prepare = previous.prepare
+            on_loaded = on_loaded or previous.on_loaded
+        if pending is not None:
+            pending.cancelled.set()
+        if self._loaded_key != key:
+            self._reset_read()
+        request = _RegistryRead(key, prepare, on_loaded)
+        self._pending = request
+        self._read_error = None
+        self._failed = None
+        registry = self.registry
+
+        def read() -> _RegistryContents | None:
+            if request.cancelled.is_set():
+                return None
+            if prepare is not None:
+                prepare()
+            if request.cancelled.is_set():
+                return None
+            rows = registry.list_resources(project_id, include_archived=include_archived)
+            search_rows = []
+            for row in rows:
+                if request.cancelled.is_set():
+                    return None
+                search_rows.append(_SearchRow.read(row))
+            return _RegistryContents(rows, search_rows)
+
+        if self._runner is None:
+            try:
+                result = read()
+            except (ValueError, OSError, sqlite3.Error) as error:
+                result = JobError("registry", str(error))
+            self._complete_read(request, result)
+            return
+        self._update_count()
+        self._selection_changed()
+        try:
+            self._runner.submit(read, lambda result: self._complete_read(request, result))
+        except RuntimeError:
+            self._complete_read(request, JobError("registry", "Загрузка реестра недоступна."))
+
+    def _complete_read(self, request: _RegistryRead, result: object) -> None:
+        if self._pending is not request or request.cancelled.is_set():
+            return
+        if request.key != (self.project_id, self.proxy.site_id, self.show_archived.isChecked()):
+            self._reset_read()
+            self._update_count()
+            return
+        self._pending = None
+        if isinstance(result, _RegistryContents):
+            self._install_contents(request.key, result)
+        else:
+            self._reset_read()
+            self._read_error = result.message if isinstance(result, JobError) else "Не удалось загрузить реестр."
+            self._failed = request
+        self._update_count()
+        self._selection_changed()
+        if isinstance(result, _RegistryContents) and request.on_loaded is not None:
+            request.on_loaded()
+
+    def _retry_read(self) -> None:
+        request = self._failed
+        if request is not None:
+            self.refresh(prepare=request.prepare, on_loaded=request.on_loaded)
+
+    def _install_contents(self, key: _RegistryKey, result: _RegistryContents) -> None:
         selected = self.selected()
         identity = selected.get("id") if selected else None
-        try:
-            rows = (
-                self.registry.list_resources(
-                    self.project_id, include_archived=self.show_archived.isChecked()
-                )
-                if self.project_id
-                else []
-            )
-            self.model.replace(rows)
-            self.proxy.apply()
-            if identity:
-                for index, row in enumerate(rows):
-                    if row["id"] == identity:
-                        mapped = self.proxy.mapFromSource(self.model.index(index, 0))
-                        if mapped.isValid():
-                            self.table.selectRow(mapped.row())
-                        break
-            self._update_count()
-        except (ValueError, OSError, sqlite3.Error) as error:
-            self.model.replace([])
-            self.status.setText(str(error))
-        self.add_button.setEnabled(bool(self.project_id))
-        self.link_button.setEnabled(bool(self.project_id))
-        self._selection_changed()
+        top = self.proxy.mapToSource(self.proxy.index(self.table.rowAt(0), 0))
+        top_identity = self.model.rows[top.row()]["id"] if top.isValid() else None
+        vertical = self.table.verticalScrollBar().value()
+        horizontal = self.table.horizontalScrollBar().value()
+        self._loaded_key = key
+        self._search_timer.stop()
+        self.model.replace(result.rows, result.search_rows)
+        self.proxy.apply(self.search.text())
+        restored_top = EMPTY_INDEX
+        if identity is not None or top_identity is not None:
+            for index, row in enumerate(result.rows):
+                if row["id"] not in (identity, top_identity):
+                    continue
+                mapped = self.proxy.mapFromSource(self.model.index(index, 0))
+                if mapped.isValid() and row["id"] == identity:
+                    self.table.selectRow(mapped.row())
+                if row["id"] == top_identity:
+                    restored_top = mapped
+        self.table.doItemsLayout()
+        if restored_top.isValid():
+            self.table.scrollTo(restored_top, QAbstractItemView.ScrollHint.PositionAtTop)
+        else:
+            self.table.verticalScrollBar().setValue(vertical)
+        self.table.horizontalScrollBar().setValue(horizontal)
 
     def selected(self) -> dict[str, Any] | None:
         indexes = self.table.selectionModel().selectedRows()
@@ -582,7 +951,13 @@ class InfrastructureRegistryPanel(QWidget):
         )
 
     def _selection_changed(self, *_: Any) -> None:
-        row = self.selected()
+        loading = self._pending is not None
+        row = None if loading else self.selected()
+        self.table.setEnabled(not loading)
+        self.add_button.setEnabled(bool(self.project_id))
+        self.batch_button.setEnabled(bool(self.project_id))
+        self.matrix_groups_button.setEnabled(bool(self.project_id))
+        self.link_button.setEnabled(bool(self.project_id) and not loading)
         self.edit_button.setEnabled(bool(row))
         self.archive_button.setEnabled(
             bool(row) and row.get("lifecycle") == "active" if row else False
@@ -591,14 +966,22 @@ class InfrastructureRegistryPanel(QWidget):
             bool(row) and row.get("lifecycle") == "archived" if row else False
         )
         self.operation_button.setEnabled(bool(row and row.get("source")))
+        self.details_button.setEnabled(bool(row and row.get("source")))
+        self.map_button.setEnabled(bool(row))
         self.audit_button.setEnabled(bool(row))
 
     def _filter_field_changed(self, *_: Any) -> None:
-        is_date = self.filter_field.currentData() in DATE_FIELDS
+        field = self.filter_field.currentData()
+        is_date = field in DATE_FIELDS
         range_mode = is_date and self.filter_operation.currentData() in {"contains", "equals"}
         self.date_bounds.setVisible(range_mode)
         self.filter_value.setVisible(
             not is_date and self.filter_operation.currentData() in {"contains", "equals"}
+        )
+        self.filter_value.setPlaceholderText("IP-адрес или CIDR" if field == "addresses" else "")
+        self.filter_value.setToolTip(
+            "«Содержит» ищет пересечение адресов и сетей. «Равно» сравнивает адрес или CIDR целиком."
+            if field == "addresses" else ""
         )
 
     def add_filter(self) -> None:
@@ -652,26 +1035,66 @@ class InfrastructureRegistryPanel(QWidget):
         self._apply_filters()
 
     def _apply_filters(self, *_: Any) -> None:
+        self._search_timer.stop()
         self.active_filters.setVisible(bool(self.proxy.conditions))
         self.proxy.apply(self.search.text())
         self._update_count()
         self._selection_changed()
 
     def _update_count(self) -> None:
+        self._retry.setVisible(self._failed is not None)
+        if self._pending is not None:
+            self.status.setText("Загружаем ресурсы проекта…")
+            return
+        if self._read_error is not None:
+            self.status.setText(self._read_error)
+            return
+        if self.project_id is None:
+            self.status.setText("Выберите проект.")
+            return
         self.status.setText(
             f"Показано: {self.proxy.rowCount()} из {len(self.model.rows)} · даты UTC"
+            + (" · выбранная площадка и записи без установленной области" if self.proxy.site_id is not None else "")
         )
 
     def _new(self) -> None:
-        editor = ResourceEditor(parent=self)
+        editor = ResourceEditor(parent=self, access_sites=self.access_sites)
         if editor.exec() == QDialog.DialogCode.Accepted:
             self.create_resource(editor.values())
+
+    def _new_batch(self) -> None:
+        project_id = self.project_id
+        site_id = self.proxy.site_id
+        if project_id is None:
+            return
+        registry = self.registry
+
+        def create(rows: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
+            return registry.add_manual_batch(project_id, rows)
+
+        dialog = ResourceBatchDialog(
+            self.access_sites, self, initial_site_id=site_id, create=create, runner=self._runner,
+        )
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        created = dialog.created_ids if accepted else ()
+        dialog.deleteLater()
+        if created and self.project_id == project_id and self.proxy.site_id == site_id:
+            self._recent_manual_ids = created
+
+            def loaded() -> None:
+                self.status.setText(
+                    f"Добавлено ручных ресурсов: {len(created)}. Их можно выбрать из каталога в группах матрицы."
+                )
+
+            self.refresh(force=True, on_loaded=loaded)
+            self.changed.emit()
+            self.matrix_groups_button.setFocus()
 
     def _edit(self, *_: Any) -> None:
         row = self.selected()
         if not row:
             return
-        editor = ResourceEditor(row, self)
+        editor = ResourceEditor(row, self, access_sites=self.access_sites)
         if editor.exec() == QDialog.DialogCode.Accepted:
             self.edit_resource(row["id"], editor.values())
 
@@ -680,7 +1103,7 @@ class InfrastructureRegistryPanel(QWidget):
             return None
         try:
             identity = self.registry.add_manual(self.project_id, fields)
-            self.refresh()
+            self.refresh(force=True)
             self.changed.emit()
             return identity
         except (ValueError, OSError, sqlite3.Error) as error:
@@ -692,7 +1115,7 @@ class InfrastructureRegistryPanel(QWidget):
             return
         try:
             self.registry.update(self.project_id, resource_id, fields)
-            self.refresh()
+            self.refresh(force=True)
             self.changed.emit()
         except (ValueError, OSError, sqlite3.Error) as error:
             self.status.setText(str(error))
@@ -712,7 +1135,7 @@ class InfrastructureRegistryPanel(QWidget):
                 self.registry.archive(self.project_id, row["id"])
             else:
                 self.registry.restore(self.project_id, row["id"])
-            self.refresh()
+            self.refresh(force=True)
             self.changed.emit()
         except (ValueError, OSError, sqlite3.Error) as error:
             self.status.setText(str(error))
@@ -722,7 +1145,7 @@ class InfrastructureRegistryPanel(QWidget):
             return
         try:
             self.registry.link_manual(self.project_id, manual_id, discovered_id)
-            self.refresh()
+            self.refresh(force=True)
             self.changed.emit()
         except (ValueError, OSError, sqlite3.Error) as error:
             self.status.setText(str(error))
@@ -770,6 +1193,16 @@ class InfrastructureRegistryPanel(QWidget):
         row = self.selected()
         if row:
             self.operation_requested.emit(row)
+
+    def _open_details(self) -> None:
+        row = self.selected()
+        if row:
+            self.details_requested.emit(row)
+
+    def _open_map(self) -> None:
+        row = self.selected()
+        if row:
+            self.map_requested.emit(row)
 
     def _history(self) -> None:
         row = self.selected()

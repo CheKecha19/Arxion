@@ -1,11 +1,11 @@
-"""Bounded ArubaOS 8.10 session-ACL declarations; never an effective role evaluator."""
+"""Общая грамматика ArubaOS Controller 8.x, отдельно от оценки роли."""
 
 from __future__ import annotations
 
 import re
 import shlex
 from dataclasses import dataclass, field
-from ipaddress import IPv4Address, IPv4Network
+from ipaddress import IPv4Address, IPv4Network, ip_address, ip_network
 from urllib.parse import quote
 
 from firewall_compliance.domain import (
@@ -36,12 +36,14 @@ from firewall_compliance.parsers.contracts import (
     SourceDocument,
 )
 
-_VERSION = re.compile(r"(?mi)^\s*(?:!\s*)?(?:arubaos\s+)?version\s+8\.10(?:\.\d+){0,3}\s*$")
+_VERSION = re.compile(
+    r"(?mi)^\s*(?:!\s*)?(?:arubaos\s+)?version\s+(8\.\d+)(?:\.\d+){0,3}\s*$"
+)
 _MIXED = re.compile(
     r"(?mi)^\s*(?:!\s*)?(?:aruba\s+instant\b|instant\s+version\b|"
     r"arubaos-cx\b|aos-cx\b|arubaos-switch\b|comware\b|"
     r"access-list\s+ip\b|acl\s+number\b|sysname\b|"
-    r"version\s+(?!8\.10(?:[.\s]|$))\d)"
+    r"version\s+(?!8\.\d+(?:[.\s]|$))\d)"
 )
 
 
@@ -80,18 +82,19 @@ def _tokens(line: str) -> tuple[str, ...]:
 
 
 def _supported(text: str) -> bool:
+    from firewall_compliance.parsers.platform_detection import detect_switch_platform
+
+    detected = detect_switch_platform(text)
     return bool(
-        _VERSION.search(text)
-        and not _MIXED.search(text)
-        and re.search(r"(?m)^\s*ip access-list session\s+\S", text)
-        and re.search(r"(?m)^\s*user-role\s+\S", text)
+        _VERSION.search(text) and not _MIXED.search(text)
+        and detected.platform == "arubaos-controller" and not detected.ambiguous
     )
 
 
 class ArubaControllerParser:
-    """A separate, conservative declaration inventory for explicit 8.10 exports."""
+    """Импорт объявлений IPv4/IPv6, с проверенными профилями 8.6 и 8.10."""
 
-    _metadata = ParserMetadata(parser_id="aruba-aos-controller", version="0.1.0", vendor="aruba")
+    _metadata = ParserMetadata(parser_id="aruba-aos-controller", version="0.2.0", vendor="aruba")
 
     def __init__(
         self,
@@ -122,7 +125,7 @@ class ArubaControllerParser:
             parser_id=self.metadata.parser_id,
             is_match=matches,
             confidence=0.99 if matches else 0,
-            reasons=("Explicit 8.10 session ACL/user-role declarations; authenticity unverified.",)
+            reasons=("ArubaOS Controller 8.x; подлинность и полнота источника не подтверждены.",)
             if matches
             else (),
         )
@@ -148,7 +151,7 @@ class ArubaControllerParser:
             return self._failure(
                 request,
                 "CONTROLLER_FORMAT",
-                "Нужен однозначный export ArubaOS 8.10 session ACL/user-role.",
+                "Нужен однозначный export ArubaOS Controller 8.x.",
             )
         lines = text.splitlines()
         if len(lines) > self.max_lines:
@@ -161,6 +164,7 @@ class ArubaControllerParser:
         duplicate_objects: set[tuple[str, str]] = set()
         duplicate_acls: set[str] = set()
         acl_names: set[str] = set()
+        role_names: set[str] = set()
         entries: list[tuple[str, int, tuple[str, ...]]] = []
         bindings: list[PolicyAttachment] = []
         kind, name, hostname = "", "", None
@@ -193,8 +197,12 @@ class ArubaControllerParser:
             header: tuple[str, str] | None = None
             if tokens[:3] == ("ip", "access-list", "session") and len(tokens) == 4:
                 header = ("acl", tokens[3])
-            elif tokens[0] in {"netdestination", "user-role"} and len(tokens) == 2:
-                header = ("alias" if tokens[0] == "netdestination" else "role", tokens[1])
+            elif (
+                tokens[0] in {"netdestination", "netdestination6", "user-role"}
+                and len(tokens) == 2
+            ):
+                family_name = "ipv6:" + tokens[1] if tokens[0] == "netdestination6" else tokens[1]
+                header = ("alias" if tokens[0] != "user-role" else "role", family_name)
             if header:
                 kind, name = header
                 if len(name) > 128:
@@ -226,6 +234,13 @@ class ArubaControllerParser:
                             "Повторная ACL не доказывает порядок правил.",
                         )
                     acl_names.add(name)
+                if kind == "role":
+                    if name in role_names:
+                        state.reject(
+                            number, "CONTROLLER_DUPLICATE_ROLE",
+                            "Повторная роль не доказывает порядок её ACL и настройки.",
+                        )
+                    role_names.add(name)
                 continue
             if tokens[0] == "netservice" and len(tokens) >= 2:
                 kind, name = "", ""
@@ -252,10 +267,9 @@ class ArubaControllerParser:
                     state.location(number)
                 )
                 continue
-            if tokens[0] in {"netdestination", "user-role", "netservice"} or tokens[:3] == (
-                "ip",
-                "access-list",
-                "session",
+            if (
+                tokens[0] in {"netdestination", "netdestination6", "user-role", "netservice"}
+                or tokens[:3] == ("ip", "access-list", "session")
             ):
                 state.reject(
                     number,
@@ -283,35 +297,48 @@ class ArubaControllerParser:
                 try:
                     binding = _binding(name, tokens, state.location(number))
                 except ValueError:
-                    state.reject(
-                        number,
-                        "CONTROLLER_ROLE_UNSUPPORTED",
-                        "Настройка роли не является поддержанной session ACL привязкой.",
-                    )
+                    # Настройки VLAN/AAA/QoS роли извлекает отдельный inventory parser.
+                    if (
+                        tokens[:2] == ("access-list", "session")
+                        or tokens[:1] in {("session-acl",), ("ipv6",)}
+                    ):
+                        state.reject(
+                            number, "CONTROLLER_ROLE_UNSUPPORTED",
+                            "Привязка session ACL не разобрана.",
+                        )
                 else:
                     bindings.append(binding)
-            if len(aliases) + len(service_defs) > self.max_objects or len(entries) > self.max_rules:
+            if (
+                len(aliases) + len(service_defs) > self.max_objects
+                or len(entries) > self.max_rules
+                or len(bindings) > min(self.max_rules, 10000)
+            ):
                 return self._failure(
                     request,
                     "CONTROLLER_CONSTRUCT_LIMIT",
                     "Превышен лимит объектов или правил; частичный успех не заявляется.",
                 )
         if (
-            len(aliases) + len(service_defs) + len(acl_names) > self.max_objects
+            len(aliases) + len(service_defs) + len(acl_names) + len(role_names) > self.max_objects
             or len(entries) > self.max_rules
         ):
             return self._failure(
                 request, "CONTROLLER_CONSTRUCT_LIMIT", "Превышен лимит деклараций."
             )
-        if not acl_names:
-            return self._failure(
-                request, "CONTROLLER_FORMAT", "Нет корректного заголовка session ACL."
-            )
+        version_match = _VERSION.search(text)
+        assert version_match is not None
+        if version_match[1] not in {"8.6", "8.10"}:
+            state.warnings.append(ParseIssue(
+                code="CONTROLLER_VERSION_UNVERIFIED", level=ParseIssueLevel.WARNING,
+                message="Общая грамматика AOS 8.x; особенности этого minor не подтверждены. "
+                "Проверенные профили: 8.6 и 8.10. Эффективная политика не заявляется.",
+                source_location=state.location(1),
+            ))
         configuration = Configuration(
             source_name=request.source.source_name,
             device_id=hostname or f"aruba-controller:{request.source.content_sha256[:16]}",
             vendor=self.metadata.vendor,
-            platform="arubaos-controller-8.10",
+            platform=f"arubaos-controller-{version_match[1]}",
             parser_version=self.metadata.version,
             content_sha256=request.source.content_sha256,
             captured_at=request.source.captured_at,
@@ -323,6 +350,18 @@ class ArubaControllerParser:
                 if ("alias", alias) in duplicate_objects:
                     raise ValueError("duplicate alias")
                 endpoints[alias] = _alias(alias, members)
+                if endpoints[alias].resolution_status != DataStatus.KNOWN:
+                    for line, values in members:
+                        if (
+                            values[:1] in {("name",), ("invert",)}
+                            or values[:2] == ("host", "vlan")
+                        ):
+                            state.warnings.append(ParseIssue(
+                                code="CONTROLLER_ALIAS_DYNAMIC", level=ParseIssueLevel.WARNING,
+                                message="Сохранён статический состав; DNS, инверсия или VLAN-offset "
+                                "требуют отдельного контекста и не превращены в ANY.",
+                                source_location=state.location(line),
+                            ))
             except ValueError:
                 endpoints[alias] = _unknown_endpoint(alias)
                 if not members:
@@ -343,8 +382,6 @@ class ArubaControllerParser:
             try:
                 if ("service", service_name) in duplicate_objects:
                     raise ValueError("duplicate service")
-                if not values or values[0] not in {"tcp", "udp", "1"}:
-                    raise ValueError("unsupported netservice grammar")
                 services[service_name] = _service(service_name, values)
             except ValueError:
                 services[service_name] = _unknown_service(service_name)
@@ -389,13 +426,13 @@ class ArubaControllerParser:
             code="CONTROLLER_DECLARATIONS_ONLY",
             level=ParseIssueLevel.WARNING,
             message=(
-                "Только заданные IPv4 session ACL/alias/service и привязки ролей. "
+                "Объявления IPv4/IPv6 session ACL/alias/service и привязки ролей. "
                 "Эффективный порядок роли, runtime user addresses, stateful, NAT "
                 "и путь не вычислены."
             ),
             source_location=state.location(1),
         )
-        return ParseResult(
+        result = ParseResult(
             configuration=configuration,
             rules=tuple(rules),
             policy_attachments=tuple(bindings),
@@ -410,6 +447,12 @@ class ArubaControllerParser:
                 unsupported_constructs=len(state.rejected),
             ),
         )
+        from firewall_compliance.parsers.controller_inventory import parse_controller_inventory
+
+        inventory = parse_controller_inventory(request.source, result)
+        return ParseResult.model_validate({
+            **result.model_dump(mode="python"), "controller_inventory": inventory,
+        })
 
 
 def _unknown_endpoint(name: str) -> Endpoint:
@@ -434,7 +477,7 @@ def _network(values: tuple[str, ...]) -> str:
     if len(values) == 1:
         if "/" not in values[0]:
             raise ValueError("network needs prefix or mask")
-        return str(IPv4Network(values[0], strict=False))
+        return str(ip_network(values[0], strict=False))
     if len(values) == 2:
         # Aruba uses a netmask, never a Cisco ACL wildcard mask.
         mask = IPv4Address(values[1])
@@ -448,19 +491,39 @@ def _network(values: tuple[str, ...]) -> str:
 def _alias(name: str, members: list[tuple[int, tuple[str, ...]]]) -> Endpoint:
     cidrs: list[str] = []
     ranges: list[IpRange] = []
+    dynamic: list[str] = []
+    description: str | None = None
+    family = 6 if name.startswith("ipv6:") else 4
+    uncertain = False
     for _, values in members:
         if values[:1] == ("host",) and len(values) == 2:
-            cidrs.append(f"{IPv4Address(values[1])}/32")
+            address = ip_address(values[1])
+            if address.version != family:
+                raise ValueError("address family mismatch")
+            cidrs.append(f"{address}/{128 if family == 6 else 32}")
         elif values[:1] == ("network",):
-            cidrs.append(_network(values[1:]))
+            network = _network(values[1:])
+            if ip_network(network).version != family:
+                raise ValueError("address family mismatch")
+            cidrs.append(network)
         elif values[:1] == ("range",) and len(values) == 3:
-            first, last = IPv4Address(values[1]), IPv4Address(values[2])
+            first, last = ip_address(values[1]), ip_address(values[2])
+            if first.version != family or last.version != family:
+                raise ValueError("address family mismatch")
             if int(last) - int(first) > 15:
                 raise ValueError("vendor range limit")
             ranges.append(IpRange(start=str(first), end=str(last)))
-        elif values[:1] != ("description",):
+        elif values[:1] == ("description",):
+            description = " ".join(values[1:])
+        elif values[:1] == ("name",) and len(values) == 2:
+            dynamic.append(values[1])
+            uncertain = True
+        elif values[:1] == ("invert",) or values[:2] == ("host", "vlan"):
+            # Инверсия нескольких элементов не равна простому дополнению их объединения.
+            uncertain = True
+        else:
             raise ValueError("unsupported alias member")
-    if not cidrs and not ranges:
+    if not cidrs and not ranges and not dynamic and not uncertain:
         raise ValueError("empty alias not ANY")
     return Endpoint(
         endpoint_id=f"controller-alias:{name}",
@@ -468,11 +531,28 @@ def _alias(name: str, members: list[tuple[int, tuple[str, ...]]]) -> Endpoint:
         kind=EndpointKind.GROUP,
         cidrs=tuple(cidrs),
         ip_ranges=tuple(ranges),
+        description=description,
+        resolution_status=DataStatus.UNKNOWN if uncertain else DataStatus.KNOWN,
     )
 
 
 def _service(name: str, values: tuple[str, ...]) -> Service:
+    alg: str | None = None
+    if "alg" in values:
+        index = values.index("alg")
+        if len(values) != index + 2:
+            raise ValueError("invalid ALG")
+        alg, values = values[-1], values[:index]
+        if alg not in {
+            "dhcp", "dns", "facetime", "ftp", "h323", "jabber", "noe", "rtsp",
+            "sccp", "sip", "sips", "svp", "tftp", "vocera",
+        }:
+            raise ValueError("unsupported ALG")
+    elif values and values[-1] in {"http-proxy", "https-proxy"}:
+        alg, values = values[-1], values[:-1]
     ranges: tuple[PortRange, ...]
+    source_ranges: tuple[PortRange, ...] = ()
+    protocol_number: int | None = None
     if values == ("any",):
         protocol, ranges = Protocol.IP, ()
     elif values in {("icmp",), ("1",)}:
@@ -480,54 +560,91 @@ def _service(name: str, values: tuple[str, ...]) -> Service:
     elif values and values[0] in {"tcp", "udp"}:
         protocol = Protocol(values[0])
         ports = values[1:]
+        if ports[:1] == ("source",):
+            source_tokens = ports[1:]
+            if "destination" in source_tokens:
+                split = source_tokens.index("destination")
+                source_tokens, ports = source_tokens[:split], source_tokens[split + 1:]
+            elif len(source_tokens) <= 2:
+                ports = ()
+            elif len(source_tokens) in {3, 4}:
+                source_tokens, ports = source_tokens[:2], source_tokens[2:]
+            else:
+                raise ValueError("ambiguous source ports")
+            if not 1 <= len(source_tokens) <= 2:
+                raise ValueError("missing source ports")
+            source_ranges = (
+                PortRange(start=int(source_tokens[0]), end=int(source_tokens[-1])),
+            )
         if len(ports) == 2 and ports[0] == "list":
-            numbers = ports[1].split(",")
+            numbers = re.split(r"[,\s]+", ports[1].strip())
             if not 1 <= len(numbers) <= 6:
                 raise ValueError("invalid port list")
             ranges = tuple(PortRange(start=int(value), end=int(value)) for value in numbers)
         elif len(ports) in {1, 2}:
             ranges = (PortRange(start=int(ports[0]), end=int(ports[-1])),)
+        elif not ports and source_ranges:
+            ranges = ()
         else:
             raise ValueError("explicit ports required")
+    elif len(values) == 1 and values[0].isdigit() and 0 <= int(values[0]) <= 255:
+        protocol_number, ranges = int(values[0]), ()
+        protocol = Protocol.OTHER
+    elif values in {("icmpv6",), ("ipv6-icmp",)}:
+        protocol_number, protocol, ranges = 58, Protocol.OTHER, ()
     else:
         raise ValueError("unsupported protocol/service")
     return Service(
-        service_id=f"controller-service:{name}", name=name, protocol=protocol, port_ranges=ranges
+        service_id=f"controller-service:{name}", name=name, protocol=protocol, port_ranges=ranges,
+        source_port_ranges=source_ranges, protocol_number=protocol_number, alg=alg,
     )
 
 
 def _endpoint(
-    tokens: tuple[str, ...], aliases: dict[str, Endpoint]
+    tokens: tuple[str, ...], aliases: dict[str, Endpoint], family: int = 4,
 ) -> tuple[Endpoint, tuple[str, ...]]:
     if not tokens:
         raise ValueError("missing endpoint")
     word = tokens[0]
     if word == "any":
         return Endpoint(
-            endpoint_id="controller:any:ipv4",
-            name="any (IPv4)",
+            endpoint_id=f"controller:any:ipv{family}",
+            name=f"any (IPv{family})",
             kind=EndpointKind.SUBNET,
-            cidrs=("0.0.0.0/0",),
+            cidrs=("::/0" if family == 6 else "0.0.0.0/0",),
         ), tokens[1:]
     if word == "alias" and len(tokens) >= 2:
-        return aliases.get(tokens[1], _unknown_endpoint(tokens[1])), tokens[2:]
+        alias_name = "ipv6:" + tokens[1] if family == 6 else tokens[1]
+        return aliases.get(alias_name, _unknown_endpoint(alias_name)), tokens[2:]
     if word == "host" and len(tokens) >= 2:
-        value = str(IPv4Address(tokens[1]))
+        address = ip_address(tokens[1])
+        if address.version != family:
+            raise ValueError("address family mismatch")
+        value = str(address)
         return Endpoint(
             endpoint_id=f"controller-host:{value}",
             name=value,
             kind=EndpointKind.HOST,
-            cidrs=(f"{value}/32",),
+            cidrs=(f"{value}/{128 if family == 6 else 32}",),
         ), tokens[2:]
     if word == "network" and len(tokens) >= 2:
         count = 1 if "/" in tokens[1] else 2
         value = _network(tokens[1 : 1 + count])
+        if ip_network(value).version != family:
+            raise ValueError("address family mismatch")
         return Endpoint(
             endpoint_id=f"controller-network:{value}",
             name=value,
             kind=EndpointKind.SUBNET,
             cidrs=(value,),
         ), tokens[1 + count :]
+    if word in {"user", "localip", "userrole"}:
+        size = 2 if word == "userrole" and len(tokens) >= 2 else 1
+        return Endpoint(
+            endpoint_id=f"controller-dynamic:ipv{family}:" + ":".join(tokens[:size]),
+            name=" ".join(tokens[:size]), kind=EndpointKind.OBJECT,
+            resolution_status=DataStatus.UNKNOWN,
+        ), tokens[size:]
     raise ValueError("dynamic/unknown endpoint")
 
 
@@ -550,10 +667,14 @@ def _rule(
     action = RuleAction.UNKNOWN
     logging = None
     known = False
+    syntax_known = False
     try:
-        source, rest = _endpoint(tokens, aliases)
+        family = 6 if tokens[:1] == ("ipv6",) else 4
+        if family == 6:
+            tokens = tokens[1:]
+        source, rest = _endpoint(tokens, aliases, family)
         sources = (source,)
-        destination, rest = _endpoint(rest, aliases)
+        destination, rest = _endpoint(rest, aliases, family)
         destinations = (destination,)
         action_indexes = [index for index, word in enumerate(rest) if word in {"permit", "deny"}]
         if len(action_indexes) != 1:
@@ -561,21 +682,50 @@ def _rule(
         index = action_indexes[0]
         service_tokens, action_tokens = rest[:index], rest[index:]
         action = RuleAction.ALLOW if action_tokens[0] == "permit" else RuleAction.DENY
-        if service_tokens and service_tokens[0] in {"tcp", "udp"} and len(service_tokens) != 2:
-            raise ValueError("inline service requires one destination port")
-        if len(service_tokens) == 1 and service_tokens[0] not in {"any", "icmp", "1"}:
+        if (
+            len(service_tokens) == 1
+            and service_tokens[0] not in {"any", "icmp", "icmpv6", "ipv6-icmp"}
+            and not service_tokens[0].isdigit()
+        ):
             service = services.get(service_tokens[0], _unknown_service(service_tokens[0]))
         else:
             service = _service(" ".join(service_tokens), service_tokens)
         selected_services = (service,)
-        if action_tokens[1:] not in {(), ("log",)}:
-            raise ValueError("unsupported extended condition/action")
-        logging = action_tokens[1:] == ("log",)
-        known = not duplicate and all(
+        extra = action_tokens[1:]
+        logging = "log" in extra
+        conditional = False
+        while extra:
+            if extra[0] in {"log", "mirror"}:
+                extra = extra[1:]
+            elif len(extra) >= 2 and extra[0] == "queue" and extra[1] in {"high", "low"}:
+                extra = extra[2:]
+            elif (
+                len(extra) >= 2 and extra[0] in {"tos", "dot1p-priority"}
+                and extra[1].isdigit()
+            ):
+                extra = extra[2:]
+            elif len(extra) >= 2 and extra[0] == "time-range":
+                conditional = True
+                extra = extra[2:]
+            else:
+                raise ValueError("conditional or unsupported extended action")
+        if duplicate:
+            raise ValueError("duplicate ACL order")
+        if any(
+            value.resolution_status == DataStatus.UNSUPPORTED
+            for value in (source, destination, service)
+        ):
+            raise ValueError("unresolved object declaration")
+        syntax_known = True
+        known = not conditional and all(
             value.resolution_status == DataStatus.KNOWN for value in (source, destination, service)
         )
         if not known:
-            raise ValueError("unknown resolved condition or order")
+            state.warnings.append(ParseIssue(
+                code="CONTROLLER_DYNAMIC_CONDITION", level=ParseIssueLevel.WARNING,
+                message="Условие требует адреса пользователя, DNS, времени или иного контекста; "
+                "оно сохранено без замены на ANY.", source_location=location,
+            ))
     except (ValueError, IndexError):
         state.reject(
             line,
@@ -592,25 +742,28 @@ def _rule(
         sources=sources,
         destinations=destinations,
         services=selected_services,
-        policy_id=f"controller-session:{acl}",
+        policy_id=f"controller-session:{acl}", policy_purpose="unknown",
         policy_semantics=None,
         source_location=location,
-        match_status=DataStatus.KNOWN if known else DataStatus.UNSUPPORTED,
-        source_status=DataStatus.KNOWN
-        if sources and sources[0].resolution_status == DataStatus.KNOWN
-        else DataStatus.UNSUPPORTED,
-        destination_status=DataStatus.KNOWN
-        if destinations and destinations[0].resolution_status == DataStatus.KNOWN
-        else DataStatus.UNSUPPORTED,
-        service_status=DataStatus.KNOWN
-        if selected_services and selected_services[0].resolution_status == DataStatus.KNOWN
-        else DataStatus.UNSUPPORTED,
-        logging_enabled=logging if known else None,
-        logging_status=DataStatus.KNOWN if known else DataStatus.UNKNOWN,
+        match_status=DataStatus.KNOWN if known else (
+            DataStatus.UNKNOWN if syntax_known else DataStatus.UNSUPPORTED
+        ),
+        source_status=sources[0].resolution_status if sources else DataStatus.UNSUPPORTED,
+        destination_status=(
+            destinations[0].resolution_status if destinations else DataStatus.UNSUPPORTED
+        ),
+        service_status=(
+            selected_services[0].resolution_status if selected_services else DataStatus.UNSUPPORTED
+        ),
+        logging_enabled=logging if syntax_known else None,
+        logging_status=DataStatus.KNOWN if syntax_known else DataStatus.UNKNOWN,
     )
 
 
 def _binding(role: str, tokens: tuple[str, ...], location: SourceLocation) -> PolicyAttachment:
+    family = "ipv6" if tokens[:1] == ("ipv6",) else None
+    if family:
+        tokens = tokens[1:]
     if tokens[:2] == ("access-list", "session"):
         rest = tokens[2:]
     elif tokens[:1] == ("session-acl",):
@@ -635,6 +788,6 @@ def _binding(role: str, tokens: tuple[str, ...], location: SourceLocation) -> Po
         subject_kind="user_role",
         subject_id=role,
         declaration_position=position,
-        scope_reference=f"ap-group:{ap_group}" if ap_group is not None else None,
+        scope_reference=(f"ap-group:{ap_group}" if ap_group is not None else family),
         source_location=location,
     )

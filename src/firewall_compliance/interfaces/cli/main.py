@@ -126,6 +126,11 @@ def analyze(
             "--complete-config", help="Подтверждаю, что файл содержит полный экспорт конфигурации."
         ),
     ] = False,
+    configuration_view: Annotated[
+        Literal["unknown", "local", "effective", "effective_detail", "pending"],
+        typer.Option("--configuration-view", help="Область экспорта, заявленная оператором."),
+    ] = "unknown",
+    node_path: Annotated[str | None, typer.Option("--node-path")] = None,
     extended_policy_checks: Annotated[
         bool,
         typer.Option(
@@ -144,7 +149,10 @@ def analyze(
     try:
         source = FileSourceReader().read(path)
         source = SourceDocument.model_validate(
-            {**source.model_dump(), "configuration_complete": complete_config}
+            {
+                **source.model_dump(), "configuration_complete": complete_config,
+                "configuration_view": configuration_view, "configuration_node_path": node_path,
+            }
         )
         profile = (
             ManagementProfile.model_validate_json(
@@ -186,6 +194,7 @@ def analyze(
     from firewall_compliance.analysis.firewall_assurance import analyze_firewall
 
     _echo_switch_summary(revision.parse_result)
+    _echo_controller_summary(revision.parse_result)
     result = analyze_firewall(
         revision,
         require_logging=require_logging,
@@ -214,6 +223,138 @@ def _echo_switch_summary(parsed: ParseResult) -> None:
     )
     if summary.transit_bindings == 0:
         typer.echo("Транзитные ACL в представленном файле не обнаружены.", err=True)
+
+
+def _echo_controller_summary(parsed: ParseResult) -> None:
+    """Обозначить область импорта без добавления полей в прежний JSON stdout."""
+    inventory = parsed.controller_inventory
+    if inventory is None:
+        return
+    typer.echo(
+        f"ArubaOS Controller: объектов {len(inventory.objects)}, "
+        f"связей {len(inventory.references)}, правил {len(parsed.rules)}, "
+        f"диагностик {len(inventory.issues)}; "
+        "настройки не доказывают активные назначения ролей или сквозную доступность.",
+        err=True,
+    )
+
+
+@app.command("controller-inspect")
+def controller_inspect(
+    path: Annotated[Path, typer.Argument(exists=True, file_okay=True, dir_okay=False)],
+    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+    format_name: Annotated[Literal["json", "csv", "html"], typer.Option("--format")] = "json",
+    complete_config: Annotated[bool, typer.Option("--complete-config")] = False,
+    configuration_view: Annotated[
+        Literal["unknown", "local", "effective", "effective_detail", "pending"],
+        typer.Option("--configuration-view"),
+    ] = "unknown",
+    node_path: Annotated[str | None, typer.Option("--node-path")] = None,
+) -> None:
+    """Экспортировать объекты, связи и ограниченный анализ конфигурации Controller."""
+    from firewall_compliance.application.controller_reports import (
+        controller_report_payload,
+        export_controller_csv,
+        export_controller_html,
+    )
+
+    try:
+        if output is not None:
+            _require_separate_output(output, path)
+        source = FileSourceReader().read(path)
+        source = SourceDocument.model_validate({
+            **source.model_dump(), "configuration_complete": complete_config,
+            "configuration_view": configuration_view, "configuration_node_path": node_path,
+        })
+        revision = build_source_revision(
+            source, create_default_registry(), imported_at=datetime.now(UTC),
+        )
+        if isinstance(revision, ParseFailure):
+            typer.echo(revision.model_dump_json(indent=2))
+            raise typer.Exit(2)
+        payload = controller_report_payload(revision.parse_result)
+        if payload is None:
+            raise ValueError("Источник не является поддержанным Controller export")
+        text = (
+            export_controller_csv(payload) if format_name == "csv"
+            else export_controller_html(payload) if format_name == "html"
+            else json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False)
+        )
+        if output is None:
+            typer.echo(text)
+        else:
+            output.write_text(text, encoding="utf-8")
+        _echo_controller_summary(revision.parse_result)
+    except (OSError, ValueError, UnicodeError):
+        typer.echo("Не удалось прочитать или экспортировать Controller-конфигурацию.", err=True)
+        raise typer.Exit(2) from None
+
+
+@app.command("controller-role")
+def controller_role(
+    path: Annotated[Path, typer.Argument(exists=True, file_okay=True, dir_okay=False)],
+    role: Annotated[str, typer.Option("--role")],
+    source_ip: Annotated[str, typer.Option("--source")],
+    destination_ip: Annotated[str, typer.Option("--destination")],
+    protocol: Annotated[str, typer.Option("--protocol")] = "tcp",
+    port: Annotated[int | None, typer.Option("--port", min=0, max=65535)] = None,
+    source_port: Annotated[int | None, typer.Option("--source-port", min=0, max=65535)] = None,
+    at_time: Annotated[datetime | None, typer.Option("--at-time")] = None,
+    user_ip: Annotated[str | None, typer.Option("--user-ip")] = None,
+    local_ip: Annotated[str | None, typer.Option("--local-ip")] = None,
+    user_roles: Annotated[
+        Path | None, typer.Option("--user-roles", exists=True, file_okay=True, dir_okay=False),
+    ] = None,
+    ap_group: Annotated[str | None, typer.Option("--ap-group")] = None,
+    complete_config: Annotated[bool, typer.Option("--complete-config")] = False,
+    configuration_view: Annotated[
+        Literal["unknown", "local", "effective", "effective_detail", "pending"],
+        typer.Option("--configuration-view"),
+    ] = "unknown",
+    node_path: Annotated[str | None, typer.Option("--node-path")] = None,
+    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+) -> None:
+    """Оценить заданный пакет в роли с trace; результат не является reachability."""
+    from firewall_compliance.analysis.controller_policy import evaluate_controller_role
+
+    try:
+        if output is not None:
+            _require_separate_output(output, path, user_roles)
+        context_roles: dict[str, str] | None = None
+        if user_roles is not None:
+            value = json.loads(user_roles.read_text(encoding="utf-8-sig"))
+            if not isinstance(value, dict) or any(
+                not isinstance(key, str) or not isinstance(role_name, str)
+                for key, role_name in value.items()
+            ):
+                raise ValueError("user-roles must be an IP-to-role mapping")
+            context_roles = value
+        if at_time is not None and at_time.tzinfo is None:
+            raise ValueError("at-time requires explicit timezone")
+        source = FileSourceReader().read(path)
+        source = SourceDocument.model_validate({
+            **source.model_dump(), "configuration_complete": complete_config,
+            "configuration_view": configuration_view, "configuration_node_path": node_path,
+        })
+        revision = build_source_revision(
+            source, create_default_registry(), imported_at=datetime.now(UTC),
+        )
+        if isinstance(revision, ParseFailure):
+            typer.echo(revision.model_dump_json(indent=2))
+            raise typer.Exit(2)
+        decision = evaluate_controller_role(
+            revision.parse_result, role, source_ip, destination_ip, protocol, port,
+            source_port=source_port, at_time=at_time, user_ip=user_ip, local_ip=local_ip,
+            user_roles=context_roles, ap_group=ap_group,
+        )
+        text = decision.model_dump_json(indent=2)
+        if output is None:
+            typer.echo(text)
+        else:
+            output.write_text(text, encoding="utf-8")
+    except (OSError, ValueError, UnicodeError):
+        typer.echo("Не удалось оценить роль: проверьте экспорт, параметры и часовой пояс.", err=True)
+        raise typer.Exit(2) from None
 
 
 @app.command("switch-inspect")

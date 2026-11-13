@@ -35,6 +35,7 @@ from firewall_compliance.interfaces.desktop.backend import (
     analyze_file,
     selected_checks,
 )
+from firewall_compliance.interfaces.desktop.file_sources import FILE_SOURCE_PREFIX
 from firewall_compliance.interfaces.desktop.project_store import ProjectStore
 from firewall_compliance.interfaces.desktop.profile_history import LegacyProfileHistory
 from firewall_compliance.parsers import ParseFailure
@@ -121,28 +122,37 @@ def run_file_cycle(
     if not inputs:
         raise ValueError("Select at least one input")
     manifest = tuple(inputs)
+    history_counts = getattr(store, "project_rule_count_history", None)
     previous_counts: dict[tuple[str, str, str], tuple[int, str]] = {}
-    for previous_run in store.project_history(project_id):
-        if source_reference is not None and (
-            previous_run.get("settings", {}).get("source_id") != source_reference
-            or previous_run.get("settings", {}).get("source_config_fingerprint") != source_fingerprint
-        ):
-            continue
-        for previous_item in reversed(previous_run["items"]):
-            report = previous_item.get("report") or {}
-            parsed = previous_item.get("parse_result") or {}
-            rules = parsed.get("rules")
-            if previous_item.get("status") == "complete" and report and isinstance(rules, list):
-                key = (
-                    str(report["device_id"]), str(report["parser_version"]),
-                    str(parsed.get("configuration", {}).get("platform")),
-                )
-                previous_counts.setdefault(key, (len(rules), previous_item["id"]))
+    if callable(history_counts):
+        previous_counts = history_counts(
+            project_id, source_id=source_reference, source_fingerprint=source_fingerprint,
+        )
+    else:
+        for previous_run in store.project_history(project_id):
+            if source_reference is not None and (
+                previous_run.get("settings", {}).get("source_id") != source_reference
+                or previous_run.get("settings", {}).get("source_config_fingerprint") != source_fingerprint
+            ):
+                continue
+            for previous_item in reversed(previous_run["items"]):
+                report = previous_item.get("report") or {}
+                parsed = previous_item.get("parse_result") or {}
+                rules = parsed.get("rules")
+                if previous_item.get("status") == "complete" and report and isinstance(rules, list):
+                    key = (
+                        str(report["device_id"]), str(report["parser_version"]),
+                        str(parsed.get("configuration", {}).get("platform")),
+                    )
+                    previous_counts.setdefault(key, (len(rules), previous_item["id"]))
     if any(not isinstance(item, FileCycleInput) for item in manifest):
         raise TypeError("inputs must contain FileCycleInput values")
     captured = CycleSettings.capture(settings)
     values = captured.values()
-    if set(values) - ANALYSIS_SETTING_KEYS - {"configuration_complete", "include_fragments"}:
+    if set(values) - ANALYSIS_SETTING_KEYS - {
+        "configuration_complete", "include_fragments",
+        "configuration_view", "configuration_node_path",
+    }:
         raise ValueError("Only analysis settings may be captured by a file cycle")
     profile = ProfileVersion.from_settings(project_id, 1, analysis_settings(values))
     options = profile.settings()
@@ -163,6 +173,13 @@ def run_file_cycle(
     selected_checks(enabled, management, exposure, scope)
     if type(values.get("configuration_complete", False)) is not bool:
         raise ValueError("configuration_complete must be boolean")
+    if values.get("configuration_view", "unknown") not in {
+        "unknown", "local", "effective", "effective_detail", "pending",
+    }:
+        raise ValueError("unknown configuration view")
+    node_path = values.get("configuration_node_path")
+    if node_path is not None and (not isinstance(node_path, str) or not node_path.strip()):
+        raise ValueError("configuration node path must be nonempty")
     if "include_fragments" in values and type(values["include_fragments"]) is not bool:
         raise ValueError("include_fragments must be boolean")
     run_settings = dict(values)
@@ -170,10 +187,15 @@ def run_file_cycle(
         run_settings["workspace_input_sites"] = {
             str(item.path): item.site_id for item in manifest if item.site_id is not None
         }
+    saved_files = source_reference is not None and source_reference.startswith(FILE_SOURCE_PREFIX)
+    if saved_files:
+        run_settings["workspace_input_devices"] = {
+            str(item.path): item.device_id for item in manifest if item.device_id is not None
+        }
     if source_reference is not None:
         run_settings["source_id"] = source_reference
         run_settings["source_config_fingerprint"] = source_fingerprint
-        run_settings["source_collection_state"] = "completed"
+        run_settings["source_collection_state"] = "running" if saved_files else "completed"
         run_settings["source_site_ids"] = list(source_sites)
     LegacyProfileHistory(store.path).initialize()
     if any(item.site_id is not None for item in manifest):
@@ -209,6 +231,8 @@ def run_file_cycle(
             policy_exposure_profile=exposure,
             policy_scope_profile=scope,
             configuration_complete=values.get("configuration_complete", False),
+            configuration_view=values.get("configuration_view", "unknown"),
+            configuration_node_path=values.get("configuration_node_path"),
         )
         analyzed_hash = (
             outcome.source.content_sha256
@@ -278,12 +302,24 @@ def run_file_cycle(
             persist_item=persist_item, persist_source=persist_source,
         )
     except BaseException:
-        store.finish_run(run_id, "interrupted")
+        if saved_files:
+            store.finish_run(run_id, "interrupted", source_collection_state="failed")
+        else:
+            store.finish_run(run_id, "interrupted")
         raise
     state = (
         "cancelled" if outcome.state == "cancelled"
         else "completed" if outcome.state == "complete"
         else "interrupted"
     )
-    store.finish_run(run_id, state)
+    if saved_files:
+        collected = sum(item.state == "collected" for item in outcome.sources)
+        collection_state = (
+            "completed" if collected == len(manifest) else
+            "cancelled" if cancellation.is_set() else
+            "partial" if collected else "failed"
+        )
+        store.finish_run(run_id, state, source_collection_state=collection_state)
+    else:
+        store.finish_run(run_id, state)
     return FileCycleResult(run_id, outcome, tuple(sessions), tuple(warnings))

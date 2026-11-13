@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -12,7 +12,7 @@ from ipaddress import ip_address, ip_interface, ip_network
 from typing import Any
 
 from firewall_compliance.application.asset_catalog import CatalogObservation, SnapshotAddressIndex
-from firewall_compliance.application.cloud_analysis import vmware_revision
+from firewall_compliance.application.cloud_analysis import vmware_record_revision
 from firewall_compliance.domain.configuration import Rule
 from firewall_compliance.domain.enums import DataStatus, EndpointKind
 from firewall_compliance.domain.network import Endpoint
@@ -22,6 +22,7 @@ from firewall_compliance.interfaces.desktop.cloud_map_references import (
     cloud_references,
     vdc_reference,
 )
+from firewall_compliance.interfaces.desktop.cloud_rule_presentation import security_group_action
 
 CONTOUR = "contour"
 EXTERNAL = "external"
@@ -167,6 +168,11 @@ def build_project_map(
     integrations: Sequence[dict[str, Any]] = (),
     *,
     revisions: Mapping[str, DeviceRevision] | None = None,
+    group_rule_pairs: bool = False,
+    include_switch_structure: bool = False,
+    resolve_cloud_references: bool = True,
+    resolve_cloud_rule_addresses: bool = True,
+    cancelled: Callable[[], bool] | None = None,
 ) -> ProjectMap:
     """Combine latest device snapshots and cloud inventory without invented links."""
     nodes: dict[str, ProjectMapNode] = {}
@@ -178,6 +184,10 @@ def build_project_map(
     address_index = SnapshotAddressIndex()
     observations: dict[str, str] = {}
     scope_areas: dict[str, str] = {}
+
+    def check_cancelled() -> None:
+        if cancelled is not None and cancelled():
+            raise InterruptedError("Построение карты отменено.")
 
     def integration(config: dict[str, Any]) -> str:
         area = cloud_area(config)
@@ -211,6 +221,7 @@ def build_project_map(
     for item in integrations:
         integration({**item["config"], "platform": item["provider"].removeprefix("cloud_ru_")})
     for item in devices:
+        check_cancelled()
         if item.get("cloud_origin"):
             # The original cloud inventory node owns this policy; avoid a second device.
             continue
@@ -243,8 +254,16 @@ def build_project_map(
         for interface in revision.interfaces:
             for address in interface.addresses:
                 addresses.add(str(ip_interface(address).ip))
+        switch = revision.parse_result.switch_facts
+        if switch is not None:
+            for switch_interface in switch.interfaces:
+                for switch_address in switch_interface.addresses:
+                    if switch_address.status == "known" and switch_address.cidr:
+                        with suppress(ValueError):
+                            addresses.add(str(ip_interface(switch_address.cidr).ip))
         values = tuple(sorted(addresses))
-        label = device.hostname or str(item.get("source_name") or device.device_id)
+        label = device.hostname or (switch.hostname if switch is not None else None)
+        label = label or str(item.get("source_name") or device.device_id)
         nodes[key] = ProjectMapNode(
             key,
             label,
@@ -271,8 +290,10 @@ def build_project_map(
             )
         parsed.append((revision, key, label))
     cloud_records: list[tuple[dict[str, Any], str, str]] = []
+    incomplete_cloud_records = 0
     cloud_platforms: dict[str, str] = {}
     for item in clouds:
+        check_cancelled()
         record = item["record"]
         area = integration(item["scan"]["config"])
         values = resource_addresses(record)
@@ -361,6 +382,9 @@ def build_project_map(
                 snapshot_id=observations[key],
                 address=canonical,
             )
+        if item.get("cloud_record_missing"):
+            incomplete_cloud_records += 1
+            continue
         cloud_records.append((record, area, key))
         if (
             item.get("platform", "vmware") == "vmware"
@@ -373,9 +397,10 @@ def build_project_map(
                     index = next(
                         i
                         for i, value in enumerate(item["scan"]["result"]["records"])
-                        if value.get("id") == record.get("id") and value.get("type") == "edges"
+                        if isinstance(value, dict)
+                        and value.get("id") == record.get("id") and value.get("type") == "edges"
                     )
-                parsed.append((vmware_revision(item["scan"], index), key, nodes[key].label))
+                parsed.append((vmware_record_revision(item["scan"], index, record), key, nodes[key].label))
             except (ValueError, TypeError, KeyError, IndexError, StopIteration):
                 warnings.append(
                     f"{nodes[key].label}: правила Firewall не нормализованы; "
@@ -413,7 +438,8 @@ def build_project_map(
                     address_index.resolve(
                         context=scope, snapshot_id=observations[owner], address=address
                     )
-                    if address else ()
+                    if address and (resolve_cloud_rule_addresses or not scope.startswith("cloud:"))
+                    else ()
                 )
                 if len(candidates) == 1:
                     result.append(candidates[0].resource_key)
@@ -453,6 +479,7 @@ def build_project_map(
         return tuple(dict.fromkeys(result))
 
     for revision, owner, label in parsed:
+        check_cancelled()
         scope = nodes[owner].scope
         endpoint_keys: dict[str, str] = {}
         for fact in (*revision.interfaces, *revision.network_segments):
@@ -494,10 +521,48 @@ def build_project_map(
                         "Связь внутри одной ревизии; сквозная доступность не вычисляется.",
                     ),
                 ))
+        if include_switch_structure and (switch := revision.parse_result.switch_facts) is not None:
+            for vlan in switch.vlans:
+                check_cancelled()
+                key = "segment:" + identity(owner, "vlan", vlan.vlan_id)
+                nodes[key] = ProjectMapNode(
+                    key, f"VLAN {vlan.vlan_id}" + (f" · {vlan.name}" if vlan.name else ""),
+                    "network", nodes[owner].area, "Локальные VLAN",
+                    details=(
+                        f"Устройство: {label}", "VLAN объявлен в сохранённой конфигурации.",
+                        *(f"Источник: {location.source_name}:{location.line_start}"
+                          for location in vlan.source_locations),
+                    ),
+                    scope=scope,
+                )
+                structural_edges.append(ProjectMapEdge(
+                    owner, key, "membership", details=("Локальный VLAN устройства.",),
+                ))
+            for interface in switch.interfaces:
+                check_cancelled()
+                key = "interface:" + identity(owner, "switch", interface.name)
+                addresses = tuple(
+                    address.cidr for address in interface.addresses
+                    if address.status == "known" and address.cidr is not None
+                )
+                nodes[key] = ProjectMapNode(
+                    key, interface.name, "network", nodes[owner].area, "Интерфейсы",
+                    addresses, (
+                        f"Устройство: {label}",
+                        f"VRF: {interface.vrf or 'не указан'}",
+                        f"Административное состояние: {interface.admin_state}",
+                        *(f"Источник: {location.source_name}:{location.line_start}"
+                          for location in interface.source_locations),
+                    ), scope,
+                )
+                structural_edges.append(ProjectMapEdge(
+                    owner, key, "membership", details=("Интерфейс в сохранённой конфигурации.",),
+                ))
 
     for revision, owner, label in parsed:
         scope = nodes[owner].scope
         for rule in revision.parse_result.rules:
+            check_cancelled()
             rule_inputs[owner, rule.rule_id] = rule
             sources = tuple(
                 dict.fromkeys(
@@ -555,7 +620,8 @@ def build_project_map(
             if not sources or not destinations:
                 warnings.append(f"{label} / {rule.name}: неполные адресные условия")
                 continue
-            if len(sources) * len(destinations) > 400:
+            pair_count = len(sources) * len(destinations)
+            if pair_count > (1 if group_rule_pairs else 400):
                 grouped = []
                 for dimension, values in (("Источники", sources), ("Назначения", destinations)):
                     key = "group:" + identity(owner, rule.rule_id, dimension)
@@ -570,7 +636,8 @@ def build_project_map(
                     )
                     grouped.append(key)
                 sources, destinations = (grouped[0],), (grouped[1],)
-                warnings.append(f"{label} / {rule.name}: показана связь групп адресов")
+                if not group_rule_pairs:
+                    warnings.append(f"{label} / {rule.name}: показана связь групп адресов")
             for source in sources:
                 for destination in destinations:
                     aggregated[source, destination, rule.action.value, rule.enabled, status].append(
@@ -606,12 +673,14 @@ def build_project_map(
             security_groups[area, observations[key], canonical_cloud_reference(str(record.get("id", "")), "security_groups")].append(key)
 
     for record, area, owner in cloud_records:
+        check_cancelled()
         data = record.get("data", {})
         rules = data.get("security_rules", [])
         if isinstance(rules, dict):
             rules = rules.get("items", rules.get("rules", []))
         if isinstance(rules, list):
             for index, rule_data in enumerate(rules):
+                check_cancelled()
                 if not isinstance(rule_data, dict):
                     continue
                 remote = rule_data.get("remote_ip_prefix") or rule_data.get("remote_cidr")
@@ -632,8 +701,11 @@ def build_project_map(
                         kind=EndpointKind.OBJECT, resolution_status=DataStatus.UNKNOWN,
                     ), nodes[owner].scope, owner)
                 protocol = rule_data.get("protocol")
+                action = security_group_action(rule_data)
+                enabled = rule_data.get("enabled") is not False
                 status = (
                     "known" if remote_known and direction in {"ingress", "egress"}
+                    and action != "unknown"
                     and type(protocol) in {str, int}
                     and protocol in {"tcp", "udp", "icmp", "6", "17", "1", 6, 17, 1}
                     else "unknown"
@@ -648,8 +720,8 @@ def build_project_map(
                     nodes[owner].label,
                     str(rule_data.get("id", index)),
                     str(rule_data.get("description") or "Правило SG"),
-                    "allow",
-                    True,
+                    action,
+                    enabled,
                     services,
                     str(remote or rule_data.get("remote_group_id") or "неизвестно")
                     if direction == "ingress" else nodes[owner].label,
@@ -667,12 +739,12 @@ def build_project_map(
                 for peer in peers:
                     if direction not in {"ingress", "egress"}:
                         structural_edges.append(ProjectMapEdge(
-                            owner, peer, "condition", "unknown", True, "unknown", (evidence,),
+                            owner, peer, "condition", "unknown", enabled, "unknown", (evidence,),
                             ("Направление правила API неизвестно; линия не задаёт направление доступа.",),
                         ))
                         continue
                     source, target = (peer, owner) if direction == "ingress" else (owner, peer)
-                    aggregated[source, target, "allow", True, status].append(evidence)
+                    aggregated[source, target, action, enabled, status].append(evidence)
     edges = [*structural_edges, *(
         ProjectMapEdge(source, target, "acl", action, enabled, status, tuple(rules))
         for (source, target, action, enabled, status), rules in aggregated.items()
@@ -688,7 +760,10 @@ def build_project_map(
 
     for record, area, key in cloud_records:
         vm_networks = record.get("data", {}).get("vm_networks", ())
-        resource_refs = (*cloud_references(record.get("inventory", {})), *cloud_references(vm_networks, "data.vm_networks"))
+        resource_refs = (
+            (*cloud_references(record.get("inventory", {})), *cloud_references(vm_networks, "data.vm_networks"))
+            if resolve_cloud_references else ()
+        )
         for ref in resource_refs:
             matches = cloud_ids.get((area, observations[key], ref.kind, ref.identifier), set())
             if matches == {key}:
@@ -733,6 +808,8 @@ def build_project_map(
                     key, target, "attachment", status="unknown",
                     details=nodes[target].details,
                 ))
+    if incomplete_cloud_records:
+        warnings.append(f"Полные данные не отображены для ресурсов: {incomplete_cloud_records}.")
     if cloud_records:
         missing_networks = sum(
             record.get("type") == "vms" and "vm_networks" not in record.get("data", {})

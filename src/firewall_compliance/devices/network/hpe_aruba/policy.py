@@ -120,7 +120,7 @@ class _Diagnostics:
 class HpArubaParser:
     """Распознать характерный HP/Aruba export и сохранить ACL с ограничениями."""
 
-    _metadata = ParserMetadata(parser_id="hp-aruba-acl", version="0.3.0", vendor="hp-aruba")
+    _metadata = ParserMetadata(parser_id="hp-aruba-acl", version="0.4.0", vendor="hp-aruba")
 
     @property
     def metadata(self) -> ParserMetadata:

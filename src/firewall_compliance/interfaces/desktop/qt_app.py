@@ -11,7 +11,7 @@ import sys
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from queue import Empty, Queue
@@ -21,11 +21,13 @@ from typing import Any, Literal
 from PySide6.QtCore import (
     QCoreApplication,
     QEvent,
+    QItemSelection,
     QItemSelectionModel,
     QModelIndex,
     QPersistentModelIndex,
     QSize,
     QSortFilterProxyModel,
+    Signal,
     Qt,
     QTimer,
 )
@@ -72,6 +74,7 @@ from PySide6.QtWidgets import (
 from firewall_compliance.application.cloud_analysis import vmware_device_id
 from firewall_compliance.application.inspection_cycle import CycleProgress
 from firewall_compliance.checks.management.rules import MANAGEMENT_CHECKS
+from firewall_compliance.domain.cloud_security_groups import CloudSecurityGroupSnapshot
 from firewall_compliance.domain.revision import DeviceRevision
 from firewall_compliance.domain.source import SourceLocation
 from firewall_compliance.infrastructure.source_reader import FileSourceReader
@@ -102,6 +105,7 @@ from firewall_compliance.interfaces.desktop.cycle_backend import (
     run_file_cycle,
 )
 from firewall_compliance.interfaces.desktop.dashboard import build_dashboard
+from firewall_compliance.interfaces.desktop.dashboard_workflow import dashboard_workflow
 from firewall_compliance.interfaces.desktop.infrastructure_observations import project_observations
 from firewall_compliance.interfaces.desktop.jobs import JobError, JobRunner, JobStatus
 from firewall_compliance.interfaces.desktop.management_settings import ManagementSettings
@@ -117,6 +121,7 @@ from firewall_compliance.interfaces.desktop.map_store import (
     write_map_network_facts,
 )
 from firewall_compliance.interfaces.desktop.object_presentation import (
+    ACTION_LABELS,
     object_details,
     object_summary,
     rule_details,
@@ -127,7 +132,7 @@ from firewall_compliance.interfaces.desktop.organization_lock import WorkspaceBu
 from firewall_compliance.interfaces.desktop.qt_rule_query import RuleQueryWidget
 from firewall_compliance.interfaces.desktop.policy_exposure_settings import PolicyExposureSettings
 from firewall_compliance.interfaces.desktop.policy_scope_settings import PolicyScopeSettings
-from firewall_compliance.interfaces.desktop.project_map import build_project_map
+from firewall_compliance.interfaces.desktop.project_map import ProjectMap, build_project_map
 from firewall_compliance.interfaces.desktop.project_snapshot import (
     ProjectSnapshot,
     read_project_snapshot,
@@ -148,7 +153,9 @@ from firewall_compliance.interfaces.desktop.qt_models import RowsModel
 from firewall_compliance.interfaces.desktop.qt_network import NetworkFactsSnapshot
 from firewall_compliance.interfaces.desktop.qt_project_map import ProjectMapWidget
 from firewall_compliance.interfaces.desktop.qt_theme import apply_theme
+from firewall_compliance.interfaces.desktop.controller_details import ControllerDetailsPanel
 from firewall_compliance.interfaces.desktop.qt_topology_map import TopologyMapWidget
+from firewall_compliance.interfaces.desktop.qt_vlan_registry import VlanRegistryPanel
 from firewall_compliance.interfaces.desktop.resource_details import ResourceDetails
 from firewall_compliance.interfaces.desktop.switch_details import (
     PURPOSE_LABELS,
@@ -166,11 +173,8 @@ from firewall_compliance.interfaces.desktop.result_presentation import (
     project_item_limitations,
 )
 from firewall_compliance.interfaces.desktop.topology_map import build_topology_projection
-from firewall_compliance.interfaces.desktop.workspace_history import WorkspaceHistory
-from firewall_compliance.interfaces.desktop.workspace_models import (
-    cloud_resources,
-    project_operations,
-)
+from firewall_compliance.interfaces.desktop.workspace_history import WorkspaceHistory, rule_row_key
+from firewall_compliance.interfaces.desktop.workspace_models import project_operations
 from firewall_compliance.interfaces.desktop.workspace_navigation import (
     WORKSPACE_SECTIONS,
     section_for_page,
@@ -216,6 +220,7 @@ SECTION_IDS = (
     "settings",
     "scans",
     "staging",
+    "matrix",
 )
 STATUSES = {
     "new": "Новая",
@@ -283,6 +288,15 @@ def _fields_html(fields: Sequence[tuple[str, str]]) -> str:
 class PayloadSearchProxy(QSortFilterProxyModel):
     """Искать полный состав и имя источника, не возвращая их в колонки."""
 
+    def __init__(
+        self,
+        parent: QWidget,
+        *,
+        text_builder: Callable[[dict[str, Any]], str] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._text_builder = text_builder
+
     def filterAcceptsRow(
         self, source_row: int, source_parent: QModelIndex | QPersistentModelIndex
     ) -> bool:
@@ -294,8 +308,105 @@ class PayloadSearchProxy(QSortFilterProxyModel):
         payload = model.payloads[source_row]
         if not isinstance(payload, dict):
             return False
+        if "search_text" not in payload and self._text_builder is not None:
+            payload["search_text"] = self._text_builder(payload)
         text = str(payload.get("search_text") or payload.get("source_name") or "")
         return self.filterRegularExpression().match(text).hasMatch()
+
+
+class FindingSearchProxy(QSortFilterProxyModel):
+    """Искать по строке, доказательству и связанным правилам одной находки."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._search = ""
+
+    def set_search(self, value: str) -> None:
+        search = value.casefold()
+        if search != self._search:
+            self._search = search
+            self.invalidateFilter()
+
+    def filterAcceptsRow(
+        self, source_row: int, source_parent: QModelIndex | QPersistentModelIndex
+    ) -> bool:
+        if not self._search:
+            return True
+        model = self.sourceModel()
+        if not isinstance(model, RowsModel) or source_row >= len(model.payloads):
+            return False
+        payload = model.payloads[source_row]
+        finding = payload["finding"]
+        evidence = finding.get("evidence", {})
+        if "search_text" not in payload:
+            payload["search_text"] = (
+                " ".join(model.rows[source_row]) + _json(evidence)
+            ).casefold()
+        header = payload["search_text"]
+        if self._search in header:
+            return True
+        related_ids = set(finding.get("affected_rule_ids", ())) | set(
+            evidence.get("related_rule_ids", ())
+        )
+        rule_index, rule_texts = payload["search_rules"]
+        # Сохраняем поиск по границе фрагментов без копирования JSON правил в каждую находку.
+        overlap = len(self._search) - 1
+        tail = header[-overlap:] if overlap else ""
+        separator = ""
+        for identifier in related_ids:
+            if identifier not in rule_index:
+                continue
+            if identifier not in rule_texts:
+                rule_texts[identifier] = _json(rule_index[identifier]).casefold()
+            fragment = rule_texts[identifier]
+            if self._search in fragment or self._search in tail + separator + fragment[:overlap]:
+                return True
+            if overlap:
+                tail = (
+                    fragment[-overlap:]
+                    if len(fragment) >= overlap
+                    else (tail + separator + fragment)[-overlap:]
+                )
+            separator = " "
+        return False
+
+
+class TableSearch(QLineEdit):
+    """Применять пользовательский ввод после паузы, а навигацию — сразу."""
+
+    applied = Signal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(180)
+        self._timer.timeout.connect(self._apply)
+        self.textEdited.connect(lambda _value: self._timer.start())
+        self.returnPressed.connect(self._apply)
+
+    def _apply(self) -> None:
+        self._timer.stop()
+        self.applied.emit(self.text())
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self._apply()
+
+    def clear(self) -> None:
+        super().clear()
+        self._apply()
+
+
+def _rule_search_text(payload: dict[str, Any]) -> str:
+    value = payload["value"]
+    if value.get("cloud_rule"):
+        details = cloud_rule_details(payload["item"], value)
+    elif "rule_id" in value:
+        details = rule_details(value)
+    else:
+        details = object_details(value)
+    return "\n".join(text for _, text in details)
 
 
 def _label(text: str, *, muted: bool = False, heading: bool = False) -> QLabel:
@@ -360,11 +471,23 @@ class MainWindow(QMainWindow):
         self._ui_ready = False
         self._project_load_ticket: object | None = None
         self._project_snapshot: ProjectSnapshot | None = None
+        self._scoped_snapshot_source: ProjectSnapshot | None = None
+        self._scoped_snapshot_site: str | None = None
+        self._scoped_snapshot: ProjectSnapshot | None = None
+        self._cloud_inventory_snapshot: ProjectSnapshot | None = None
+        self._cloud_record_cache: dict[tuple[str, int], dict[str, Any]] = {}
+        self._cloud_record_pending: set[tuple[str, int]] = set()
+        self._cloud_record_unavailable: set[tuple[str, int]] = set()
+        self._cloud_record_pages: dict[str, set[tuple[str, int]]] = {}
+        self._workspace_read_runner = JobRunner() if defer_startup else None
         self._site_selection: str | None = None
         self._site_reload_ticket: object | None = None
         self._snapshot_token: tuple[Any, ...] | None = None
+        self._registry_evidence_pending: ProjectSnapshot | None = None
         self._dirty_pages: set[str] = set(SECTION_IDS)
         self._map_pending_item: dict[str, Any] | None = None
+        self._project_map_ticket: object | None = None
+        self._project_map_scope: tuple[str, str | None] | None = None
         self._advanced_widget_factory = advanced_widget_factory
         self._inventory_evidence_token: tuple[Any, ...] | None = None
         self._inventory_runs: list[dict[str, Any]] = []
@@ -409,10 +532,9 @@ class MainWindow(QMainWindow):
         self._restore_busy = False
         self._aux_run_id: str | None = None
         self._closed = False
-        self._finding_payloads: list[dict[str, Any]] = []
         self._loading_settings = False
         self.current_section_id = "home"
-        self._completed_run_id: str | None = None
+        self._completed_operation: tuple[str, str] | None = None
         self.workspace_history = WorkspaceHistory(self)
         self.resource_details = ResourceDetails(self)
         self.setWindowTitle("Firewall Compliance — рабочее место аналитика")
@@ -501,7 +623,8 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(20, 16, 20, 12)
+        root.setContentsMargins(12, 8, 12, 8)
+        root.setSpacing(4)
         header = QHBoxLayout()
         brand = _label("Firewall Compliance")
         brand.setObjectName("heading")
@@ -510,7 +633,7 @@ class MainWindow(QMainWindow):
         header.addWidget(_label("Проект"))
         self.project_combo = QComboBox()
         self.project_combo.setObjectName("projectSelector")
-        self.project_combo.setMinimumWidth(230)
+        self.project_combo.setMinimumWidth(160)
         self.project_combo.currentIndexChanged.connect(self._project_changed)
         header.addWidget(self.project_combo)
         self.create_button = _button("Новый проект", self._create_project_dialog)
@@ -540,35 +663,31 @@ class MainWindow(QMainWindow):
         self.site_scope_note.hide()
         body = QHBoxLayout()
         sidebar = QWidget()
-        sidebar.setFixedWidth(252)
+        sidebar.setFixedWidth(220)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         self.navigation = QTreeWidget()
         self.navigation.setObjectName("navigation")
         self.navigation.setHeaderHidden(True)
         self.navigation.setRootIsDecorated(True)
-        self.navigation.setIndentation(18)
+        self.navigation.setIndentation(16)
         self.navigation.setExpandsOnDoubleClick(False)
         self.navigation.setAccessibleName("Разделы приложения")
         self.nav_items: dict[str, QTreeWidgetItem] = {}
         self.settings_tree_items: dict[str, QTreeWidgetItem] = {}
         for section in WORKSPACE_SECTIONS:
             item = QTreeWidgetItem(self.navigation, [section.title])
-            if section.key == "home":
-                item.setData(0, Qt.ItemDataRole.UserRole, "home")
-                self.nav_items["home"] = item
+            if len(section.pages) == 1:
+                page_id, _title = section.pages[0]
+                item.setData(0, Qt.ItemDataRole.UserRole, page_id)
+                self.nav_items[page_id] = item
             else:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
                 for page_id, title in section.pages:
                     child = QTreeWidgetItem(item, [title])
-                    if page_id == "matrix":
-                        child.setFlags(child.flags() & ~Qt.ItemFlag.ItemIsEnabled)
-                    else:
-                        child.setData(0, Qt.ItemDataRole.UserRole, page_id)
-                        self.nav_items[page_id] = child
+                    child.setData(0, Qt.ItemDataRole.UserRole, page_id)
+                    self.nav_items[page_id] = child
                 item.setExpanded(True)
-        reports_item = QTreeWidgetItem(self.navigation, ["Отчёты"])
-        reports_item.setFlags(reports_item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
         self.settings_tree = QTreeWidgetItem(self.navigation, ["Настройки"])
         self.settings_tree.setFlags(self.settings_tree.flags() & ~Qt.ItemFlag.ItemIsSelectable)
         for key, title in (
@@ -624,6 +743,7 @@ class MainWindow(QMainWindow):
         self.cloud_panel = CloudPanel(self.store, self)
         self.cloud_panel.configure_button.clicked.connect(self._configure_cloud)
         self.cloud_panel.on_open_analysis = self._open_cloud_analysis
+        self.cloud_panel.on_open_security_groups = self._open_cloud_sg_matrix
         self._build_settings()
         for key, title in self.check_settings_groups:
             child = QTreeWidgetItem(self.settings_tree_items["rules"], [title])
@@ -631,6 +751,27 @@ class MainWindow(QMainWindow):
             self.settings_tree_items["checks:" + key] = child
         self.pages.addWidget(self.cloud_panel.scans_widget)
         self._build_preparation()
+        _, matrix_layout = self._page(
+            "Матрица доступа",
+            "Задайте требования по источникам, ресурсам и сервисам и сверьте их с сохранённой ревизией.",
+        )
+        matrix_layout.addWidget(_label(
+            "Утвердите требования к источникам, ресурсам и сервисам. "
+            "Затем сверьте их с политиками выбранной области."
+        ))
+        matrix_actions = QHBoxLayout()
+        matrix_actions.addWidget(_button(
+            "Редактор требований", lambda: self._open_access_matrix(mode="edit"), primary=True,
+        ))
+        matrix_actions.addWidget(_button(
+            "Сверить область…", lambda: self._open_access_matrix(mode="scope"),
+        ))
+        matrix_actions.addWidget(_button(
+            "Сверить снимок устройства…", lambda: self._open_access_matrix(mode="revision"),
+        ))
+        matrix_actions.addStretch()
+        matrix_layout.addLayout(matrix_actions)
+        matrix_layout.addStretch()
         self.cloud_panel.on_history_changed = self._cloud_history_changed
         self.notification = QFrame()
         notification_row = QHBoxLayout(self.notification)
@@ -670,7 +811,8 @@ class MainWindow(QMainWindow):
     def _page(self, title: str, subtitle: str) -> tuple[QWidget, QVBoxLayout]:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(16, 0, 0, 0)
+        layout.setContentsMargins(8, 0, 0, 0)
+        layout.setSpacing(4)
         heading = _label(title)
         heading.setObjectName("heading")
         layout.addWidget(heading)
@@ -678,10 +820,16 @@ class MainWindow(QMainWindow):
         return page, layout
 
     def _table(
-        self, headers: Sequence[str], name: str, *, search_payload: bool = False
+        self,
+        headers: Sequence[str],
+        name: str,
+        *,
+        search_payload: bool = False,
+        proxy: QSortFilterProxyModel | None = None,
     ) -> tuple[QTableView, RowsModel, QSortFilterProxyModel]:
         model = RowsModel(headers)
-        proxy = PayloadSearchProxy(self) if search_payload else QSortFilterProxyModel(self)
+        if proxy is None:
+            proxy = PayloadSearchProxy(self) if search_payload else QSortFilterProxyModel(self)
         proxy.setSourceModel(model)
         proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         proxy.setFilterKeyColumn(-1)
@@ -696,7 +844,7 @@ class MainWindow(QMainWindow):
         table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.verticalHeader().hide()
-        table.verticalHeader().setDefaultSectionSize(38)
+        table.verticalHeader().setDefaultSectionSize(26)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         table.horizontalHeader().setStretchLastSection(True)
         for column in range(len(headers)):
@@ -714,16 +862,18 @@ class MainWindow(QMainWindow):
         self.overview_scroll.setWidget(dashboard)
         outer_layout.addWidget(self.overview_scroll, 1)
         self.overview_scroll.hide()
-        self.compact_dashboard = ProjectDashboard(self)
+        self.compact_dashboard = ProjectDashboard(self, exact_operation_navigation=True)
         self.compact_dashboard.navigation_requested.connect(self.navigate)
         self.compact_dashboard.severity_requested.connect(self.open_overview_findings)
+        self.compact_dashboard.workflow_requested.connect(self._dashboard_action)
+        self.compact_dashboard.operation_requested.connect(self._open_saved_operation)
         outer_layout.addWidget(self.compact_dashboard, 1)
         hero = QFrame()
         hero.setObjectName("hero")
         hero_layout = QVBoxLayout(hero)
         hero_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         self.device_count_label = _label("Устройств проекта: 0")
-        self.device_count_label.setStyleSheet("font-size: 24px; font-weight: 600;")
+        self.device_count_label.setStyleSheet("font-size: 20px; font-weight: 600;")
         hero_layout.addWidget(self.device_count_label)
         self.last_check_label = _label("Последняя проверка: ещё не выполнялась")
         hero_layout.addWidget(self.last_check_label)
@@ -776,30 +926,39 @@ class MainWindow(QMainWindow):
         self._map_bound_network_facts: MapNetworkFacts | None = None
         self._map_bound_facts_generation: int | None = None
         self._map_facts_message = "Импортируйте сетевые документы в расширенном анализе."
-        source_row = QHBoxLayout()
+        self.map_source_row = QHBoxLayout()
+        source_row = self.map_source_row
+        source_row.setSpacing(4)
         self.map_result_selector = QComboBox()
         self.map_result_selector.setAccessibleName("Результат анализа для карт выбранной ревизии")
         self.map_result_label = _label("Результат:")
         source_row.addWidget(self.map_result_label)
-        source_row.addWidget(self.map_result_selector, 1)
+        self.map_result_selector.setFixedWidth(100)
+        self.map_result_selector.currentTextChanged.connect(self.map_result_selector.setToolTip)
+        source_row.addWidget(self.map_result_selector)
         self.map_mode_selector = QComboBox()
         self.map_mode_selector.setAccessibleName("Режим карты")
         self.map_mode_selector.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.map_mode_selector.addItem("Связи по правилам", "policy")
-        self.map_mode_selector.addItem("Топология конфигурации", "topology")
-        self.map_mode_selector.addItem("Карта проекта", "project")
-        self.map_mode_selector.addItem("Структура коммутаторов", "switches")
-        mode_label = _label("Режим:")
-        mode_label.setBuddy(self.map_mode_selector)
-        source_row.addWidget(mode_label)
-        source_row.addWidget(self.map_mode_selector)
+        self.map_mode_selector.setFixedWidth(130)
+        for title, mode, description in (
+            ("ACL ревизии", "policy", "Условия отдельных правил и их источники в выбранной ревизии."),
+            ("Топология", "topology", "Интерфейсы, привязанные подсети и их источники для выбранного устройства."),
+            ("Карта проекта", "project", "Ресурсы проекта, их структура и условия правил между ними."),
+            ("Коммутаторы", "switches", "Порты, VLAN, агрегаты и данные о соседях с основаниями связей."),
+        ):
+            self.map_mode_selector.addItem(title, mode)
+            self.map_mode_selector.setItemData(
+                self.map_mode_selector.count() - 1, description, Qt.ItemDataRole.ToolTipRole,
+            )
+        source_row.insertWidget(0, self.map_mode_selector)
         self.map_sources_button = QPushButton("Источники…")
         self.map_sources_button.setCheckable(True)
         source_row.addWidget(self.map_sources_button)
-        self.map_saved_panel_button = QPushButton("Архив ACL…")
+        self.map_saved_panel_button = QPushButton("Сохранённые карты…")
         self.map_saved_panel_button.setToolTip("Сохранённые и пакетные карты ACL проекта")
         self.map_saved_panel_button.setCheckable(True)
         source_row.addWidget(self.map_saved_panel_button)
+        source_row.addStretch()
         layout.addLayout(source_row)
         self._build_acl_map_project_panel(layout)
         self.map_sources_panel = QWidget(self)
@@ -866,14 +1025,26 @@ class MainWindow(QMainWindow):
         )
 
     def _map_mode_changed(self, index: int) -> None:
+        mode = self.map_mode_selector.currentData()
+        selector_row = self.project_map_widget.toolbar if mode == "project" else self.map_source_row
+        if selector_row.indexOf(self.map_mode_selector) < 0:
+            selector_row.insertWidget(0, self.map_mode_selector)
+            self.map_mode_selector.show()
+        self.map_mode_selector.setToolTip(
+            self.map_mode_selector.itemData(index, Qt.ItemDataRole.ToolTipRole)
+        )
         self.map_mode_stack.setCurrentIndex(index)
-        project_mode = self.map_mode_selector.currentData() in {"project", "switches"}
+        project_mode = mode in {"project", "switches"}
         self.map_result_selector.setVisible(not project_mode)
         self.map_result_label.setVisible(not project_mode)
         self.map_sources_button.setVisible(not project_mode)
         self.map_network_status.setVisible(not project_mode)
         self.map_sources_panel.setVisible(not project_mode and self.map_sources_button.isChecked())
-        if self.map_mode_selector.currentData() == "switches":
+        self.map_saved_panel_button.setVisible(mode == "policy")
+        self.acl_map_project_panel.setVisible(
+            mode == "policy" and self.map_saved_panel_button.isChecked()
+        )
+        if mode == "switches":
             self.switch_topology_widget.set_items(self._project_devices())
         elif project_mode:
             self._refresh_project_map()
@@ -912,10 +1083,15 @@ class MainWindow(QMainWindow):
                 )
 
     def _refresh_project_map(self) -> None:
-        if self._defer_startup and self.current_section_id != "map":
+        if self._defer_startup and (
+            self.current_section_id != "map" or self.map_mode_selector.currentData() != "project"
+        ):
             self._dirty_pages.add("map")
             return
-        resources, _, scans = self._inventory_context()
+        ticket = self._project_map_ticket = object()
+        project_id = self.project_id or ""
+        project_ticket = self._project_load_ticket
+        resources, _, _ = self._inventory_context()
         archived = {
             identity
             for resource in resources
@@ -937,36 +1113,76 @@ class MainWindow(QMainWindow):
             for item in devices
             if (item.get("report") or {}).get("device_id") not in hidden_device_ids
         ]
-        revisions: dict[str, DeviceRevision] = {}
-        for item in devices:
-            session = self.sessions.get(str(item["id"]))
-            if session is not None:
-                revisions[str(item["id"])] = session.revision
-        imported = getattr(self.advanced_panel, "imported", {})
-        for item in devices:
-            revision = revisions.get(str(item["id"]))
-            if revision is None:
-                try:
-                    revision = DeviceRevision.model_validate(item.get("revision"))
-                except ValueError:
-                    continue
-                revisions[str(item["id"])] = revision
-            if revision is not None:
+        cloud, pending = self._cloud_record_details(
+            [item for item in self._cloud_inventory() if item["id"] not in archived], "map",
+        )
+        snapshot, site = self._project_snapshot, self._site_selection
+        settings = snapshot.project["settings"] if project_id and snapshot is not None else {}
+        labels, layout = settings.get("map_zone_labels", {}), settings.get("map_view_settings", {})
+        scope = project_id, site
+        if self._project_map_scope != scope:
+            self._project_map_scope = scope
+            self.project_map_widget.set_graph(ProjectMap(project_id), labels, layout)
+        if pending:
+            self.project_map_widget.set_load_status("Загружаем облачные данные карты…")
+            return
+        live = {
+            str(item["id"]): self.sessions[str(item["id"])].revision
+            for item in devices if str(item["id"]) in self.sessions
+        }
+        imported = dict(getattr(self.advanced_panel, "imported", {}))
+
+        def work() -> ProjectMap:
+            revisions: dict[str, DeviceRevision] = {}
+            for item in devices:
+                item_id = str(item["id"])
+                revision = live.get(item_id)
+                if revision is None:
+                    try:
+                        revision = DeviceRevision.model_validate(item.get("revision"))
+                    except ValueError:
+                        continue
                 network = imported.get(revision.revision_id)
-                if network is not None:
-                    revisions[str(item["id"])] = network.revision
-        project_id = self.project_id or ""
-        graph = build_project_map(
-            project_id,
-            devices,
-            [item for item in cloud_resources(scans) if item["id"] not in archived],
-            self.store.list_map_integrations(project_id) if project_id else (),
-            revisions=revisions,
-        )
-        settings = self.store.get_project(project_id)["settings"] if project_id else {}
-        self.project_map_widget.set_graph(
-            graph, settings.get("map_zone_labels", {}), settings.get("map_view_settings", {}),
-        )
+                revisions[item_id] = network.revision if network is not None else revision
+            return build_project_map(
+                project_id, devices, cloud,
+                self.store.list_map_integrations(project_id) if project_id else (),
+                revisions=revisions,
+            )
+
+        def done(value: object) -> None:
+            if self._closed or self._project_map_ticket is not ticket:
+                return
+            if (
+                (self.project_id or "") != project_id or self._project_load_ticket is not project_ticket
+                or self._project_snapshot is not snapshot
+                or self._site_selection != site
+                or (self._defer_startup and (
+                    self.current_section_id != "map" or self.map_mode_selector.currentData() != "project"
+                ))
+            ):
+                self._dirty_pages.add("map")
+                return
+            if not isinstance(value, ProjectMap):
+                self.project_map_widget.set_load_status("Не удалось построить карту проекта.")
+                return
+            try:
+                latest = self.store.get_project(project_id)["settings"] if project_id else {}
+            except (OSError, sqlite3.Error, KeyError, ValueError):
+                latest = settings
+            self.project_map_widget.set_graph(
+                value, latest.get("map_zone_labels", {}), latest.get("map_view_settings", {}),
+            )
+            incomplete = any(item.get("cloud_record_missing") for item in cloud)
+            self.project_map_widget.set_load_status(
+                "Часть облачных данных карты недоступна." if incomplete else ""
+            )
+
+        if self._workspace_read_runner is not None:
+            self.project_map_widget.set_load_status("Строим карту проекта…")
+            self._workspace_read_runner.submit(work, done)
+        else:
+            done(work())
 
     def _refresh_map_items(self, preferred_item: dict[str, Any] | None = None) -> None:
         """Use saved payloads or exact live item IDs, never reread a source."""
@@ -1737,7 +1953,7 @@ class MainWindow(QMainWindow):
         catalog = QWidget()
         catalog_layout = QVBoxLayout(catalog)
         catalog_layout.setContentsMargins(0, 0, 0, 0)
-        catalog_layout.setSpacing(16)
+        catalog_layout.setSpacing(8)
         catalog_layout.addWidget(_label("Интеграции", heading=True))
         self.integration_pages.addWidget(catalog)
         self.integration_buttons: dict[str, QPushButton] = {}
@@ -1757,24 +1973,24 @@ class MainWindow(QMainWindow):
             group = QFrame()
             group.setObjectName("integrationGroup")
             group_layout = QVBoxLayout(group)
-            group_layout.setContentsMargins(16, 14, 16, 16)
+            group_layout.setContentsMargins(8, 6, 8, 8)
             heading = QHBoxLayout()
             category_icon = QLabel()
-            category_icon.setPixmap(QIcon(str(icon_path)).pixmap(24, 24))
+            category_icon.setPixmap(QIcon(str(icon_path)).pixmap(18, 18))
             heading.addWidget(category_icon)
             heading.addWidget(_label(title))
             heading.addStretch()
             group_layout.addLayout(heading)
             grid = QGridLayout()
-            grid.setSpacing(12)
+            grid.setSpacing(6)
             grid.setColumnStretch(3, 1)
             self.integration_grids.append(grid)
             for position, (key, name, planned) in enumerate(platforms):
                 button = _button(name, partial(self._open_integration, key))
                 button.setObjectName("integrationCard")
                 button.setIcon(QIcon(str(assets / "integrations" / solution_icons[key])))
-                button.setIconSize(QSize(40, 40))
-                button.setFixedSize(188, 78)
+                button.setIconSize(QSize(24, 24))
+                button.setMinimumSize(100, 34)
                 button.setCursor(Qt.CursorShape.PointingHandCursor)
                 button.setToolTip("Запланировано" if planned else f"Открыть {name}")
                 button.setStyleSheet(
@@ -2022,29 +2238,42 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle("Добавить данные")
         layout = QVBoxLayout(dialog)
         layout.addWidget(_label("Выберите источник данных", heading=True))
-        layout.addWidget(_label("Файлы проверяются локально; облачный сбор сохраняет данные API."))
+        action: Callable[[], None] | None = None
 
-        def choose(page: str) -> None:
+        def choose(callback: Callable[[], None]) -> None:
+            nonlocal action
+            action = callback
             dialog.accept()
-            self.navigate(page)
 
-        layout.addWidget(_button("Файлы конфигураций / папка", lambda: choose("staging")))
-        layout.addWidget(_button("Облачное подключение", lambda: choose("scans")))
+        for label, callback in (
+            ("Выбрать файлы конфигураций…", self.choose_files),
+            ("Выбрать папку конфигураций…", self.choose_folder),
+            ("Сохранённые файловые источники…", self._open_file_sources),
+            ("Настроить интеграции", self._open_integrations_catalog),
+            ("Открыть облачный сбор", lambda: self.navigate("scans")),
+        ):
+            layout.addWidget(_button(label, lambda _checked=False, callback=callback: choose(callback)))
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
-        dialog.exec()
+        if dialog.exec() == QDialog.DialogCode.Accepted and action is not None:
+            action()
 
     def _site_changed(self, *_: Any) -> None:
         if self._loading_settings or self._restore_busy:
             return
         self._site_selection = self.site_selector.currentData()
+        if self._defer_startup:
+            snapshot = self._project_snapshot
+            self.registry_panel.set_site_filter(
+                self._site_selection, snapshot.site_assignments if snapshot is not None else {},
+            )
         active = self._site_selection is not None
         self.site_scope_note.setText(
             "Площадка: " + self.site_selector.currentText() + ". "
-            "Фильтр: устройства, находки, правила, история проверок и их карта. "
+            "Фильтр: реестр, устройства, находки, правила, история проверок и их карта. "
             "Ошибки без устройства, облачный инвентарь, источники и сборы остаются по проекту. "
-            "Реестр, расширенные инструменты, сохранённые карты и отчёты — "
+            "Расширенные инструменты, сохранённые карты и отчёты — "
             "весь проект / выбранный полный запуск. Для сбора выбираются назначенные источники и файлы площадки; "
             "общий источник нескольких площадок обновляется целиком."
             if active
@@ -2055,6 +2284,7 @@ class MainWindow(QMainWindow):
 
     def _populate_site_selector(self, snapshot: ProjectSnapshot | None) -> None:
         previous = self._site_selection
+        self.registry_panel.set_access_sites(snapshot.sites if snapshot is not None else ())
         self.site_selector.blockSignals(True)
         self.site_selector.clear()
         self.site_selector.addItem("Все площадки", None)
@@ -2089,6 +2319,11 @@ class MainWindow(QMainWindow):
         self._open_integration("cloud_ru")
         self.cloud_panel.settings_widget.setCurrentIndex(self.cloud_panel.source.currentIndex())
 
+    def _open_integrations_catalog(self) -> None:
+        self.navigate("settings")
+        self._select_settings_tab("integrations", 0)
+        self.integration_pages.setCurrentIndex(0)
+
     def _save_analysis_settings(self, *_: Any) -> None:
         if self.project_id and not self._loading_settings:
             try:
@@ -2119,6 +2354,7 @@ class MainWindow(QMainWindow):
         actions = QHBoxLayout()
         self.folder_button = _button("Добавить папку", self.choose_folder, primary=True)
         self.files_button = _button("Добавить файлы", self.choose_files)
+        self.file_sources_button = _button("Сохранённые источники…", self._open_file_sources)
         self.ideco_button = _button("Ideco · только чтение", self.choose_ideco)
         self.usergate_button = _button("UserGate · только чтение", self.choose_usergate)
         self.clear_button = _button("Очистить список", self.clear_staged)
@@ -2126,6 +2362,7 @@ class MainWindow(QMainWindow):
         for button in (
             self.folder_button,
             self.files_button,
+            self.file_sources_button,
             self.usergate_button,
             self.ideco_button,
             self.clear_button,
@@ -2168,10 +2405,9 @@ class MainWindow(QMainWindow):
         self.finding_coverage = _label("", muted=True)
         layout.addWidget(self.finding_coverage)
         filters = QHBoxLayout()
-        self.finding_search = QLineEdit()
+        self.finding_search = TableSearch()
         self.finding_search.setObjectName("findingSearch")
         self.finding_search.setPlaceholderText("Устройство, IP, объект, сервис или ID правила…")
-        self.finding_search.textChanged.connect(self.refresh_findings)
         filters.addWidget(self.finding_search, 1)
         self.severity_filter = QComboBox()
         self.severity_filter.addItem("Все приоритеты", "")
@@ -2190,10 +2426,13 @@ class MainWindow(QMainWindow):
         self.finding_conditions.changed.connect(self.refresh_findings)
         layout.addWidget(self.finding_conditions)
         split = QSplitter(Qt.Orientation.Horizontal)
+        finding_proxy = FindingSearchProxy(self)
         self.finding_table, self.finding_model, self.finding_proxy = self._table(
             ("Приоритет", "Устройство", "Проверка", "Находка", "Статус", "Полнота / фильтр"),
             "findingsTable",
+            proxy=finding_proxy,
         )
+        self.finding_search.applied.connect(finding_proxy.set_search)
         self.finding_table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         for column, width in enumerate((125, 135, 150, 280, 145, 175)):
             self.finding_table.setColumnWidth(column, width)
@@ -2243,16 +2482,37 @@ class MainWindow(QMainWindow):
 
     def _build_devices(self) -> None:
         page, outer_layout = self._page(
-            "Инфраструктура", "Ресурсы проекта и доступные снимки конфигураций."
+            "Инфраструктура", "Реестры ресурсов и VLAN проекта."
         )
         self.infrastructure_tabs = QTabWidget(page)
-        self.registry_panel = InfrastructureRegistryPanel(self.store.resource_registry)
+        self.registry_panel = InfrastructureRegistryPanel(
+            self.store.resource_registry, runner=self._workspace_read_runner,
+        )
         self.registry_panel.changed.connect(self._registry_changed)
         self.registry_panel.operation_requested.connect(self._open_registry_operation)
+        self.registry_panel.details_requested.connect(self._open_registry_details)
+        self.registry_panel.map_requested.connect(self._open_registry_map)
+        self.registry_panel.matrix_groups_requested.connect(
+            lambda ids: self._open_access_matrix(
+                mode="edit", open_groups=True, preferred_catalog=tuple(("resource", identifier) for identifier in ids),
+            ),
+        )
         self.infrastructure_tabs.addTab(self.registry_panel, "Реестр ресурсов")
-        snapshots_page = QWidget()
+        self.vlan_registry = VlanRegistryPanel(
+            self.store.logical_networks, page, runner=self._workspace_read_runner or self.runner,
+        )
+        self.vlan_registry.source_requested.connect(self._open_vlan_source)
+        self.vlan_registry.matrix_groups_requested.connect(
+            lambda ids: self._open_access_matrix(
+                mode="edit", open_groups=True,
+                preferred_catalog=tuple(("logical_network", identifier) for identifier in ids),
+            ),
+        )
+        self.infrastructure_tabs.addTab(self.vlan_registry, "Реестр VLAN")
+        # Обработчики истории и операций используют прежние модели, но отдельной вкладки нет.
+        snapshots_page = QWidget(page)
+        snapshots_page.hide()
         layout = QVBoxLayout(snapshots_page)
-        self.infrastructure_tabs.addTab(snapshots_page, "Снимки и проверки")
         outer_layout.addWidget(self.infrastructure_tabs, 1)
         self.device_scope = QComboBox()
         self.device_scope.addItem("Импорты выбранного запуска", "run")
@@ -2396,7 +2656,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.rule_category)
         self.rule_inventory_status = _label("")
         layout.addWidget(self.rule_inventory_status)
-        search = self.rule_search = QLineEdit()
+        search = self.rule_search = TableSearch()
         search.setPlaceholderText("Поиск по устройству, правилу, адресу или сервису")
         layout.addWidget(search)
         self.rule_conditions = RuleQueryWidget(self)
@@ -2413,9 +2673,9 @@ class MainWindow(QMainWindow):
                 "Сервис",
             ),
             "rulesTable",
-            search_payload=True,
+            proxy=PayloadSearchProxy(self, text_builder=_rule_search_text),
         )
-        search.textChanged.connect(self.rules_proxy.setFilterFixedString)
+        search.applied.connect(self.rules_proxy.setFilterFixedString)
         self.rule_detail = QTextBrowser()
         split = QSplitter(Qt.Orientation.Vertical)
         split.addWidget(self.rules_table)
@@ -2518,35 +2778,79 @@ class MainWindow(QMainWindow):
                 lambda result_id: self._refresh_analysis_results(preferred_id=result_id)
             )
 
-    def _open_access_matrix(self) -> None:
+    def _open_access_matrix(
+        self, *, mode: str | None = None, open_groups: bool = False,
+        preferred_catalog: Sequence[tuple[str, str]] = (),
+    ) -> None:
+        if mode is None:
+            self.navigate("matrix")
+            return
         from firewall_compliance.application.workspace_profile import analysis_settings
+        from firewall_compliance.interfaces.desktop.matrix_catalog import (
+            MatrixCatalog, matrix_cloud_catalog_sites, matrix_revision_catalog_sites,
+        )
+        from firewall_compliance.interfaces.desktop.matrix_policy_catalog import (
+            MatrixDraftSourceChoice, load_matrix_draft_revision, matrix_draft_source_choices, matrix_policy_choices,
+        )
         from firewall_compliance.interfaces.desktop.qt_access_matrix import AccessMatrixDialog
+        from firewall_compliance.interfaces.desktop.qt_matrix_inputs import (
+            select_matrix_input, select_saved_matrix_draft_source, select_saved_matrix_policy,
+        )
 
         project_id = self.project_id
         if not project_id or not isinstance(getattr(self.store, "path", None), Path):
             self.progress_label.setText("Выберите сохранённый проект для работы с матрицей доступа.")
             return
         site_id = self._site_selection
-        items = self._project_devices()
-        choices = ["Редактор без выбранного снимка"]
-        choices.extend(
-            f"{index + 1}. {(item.get('report') or {}).get('device_id') or item.get('source_name', 'Устройство')}"
-            f" · {item.get('run_created_at') or item.get('created_at') or 'время не указано'}"
-            for index, item in enumerate(items)
-        )
-        choice, accepted = QInputDialog.getItem(
-            self, "Матрица доступа", "Снимок для сверки заданных условий:", choices, 0, False,
-        )
-        if not accepted:
+        if mode == "scope":
+            from firewall_compliance.application.matrix_scope_assessment import MatrixScopeEvaluationCache
+            from firewall_compliance.interfaces.desktop.qt_matrix_scope import MatrixScopeDialog
+
+            scope_key = project_id, site_id
+            cached = getattr(self, "_matrix_scope_cache", None)
+            if cached is None or cached[0] != scope_key:
+                cached = scope_key, MatrixScopeEvaluationCache()
+                self._matrix_scope_cache = cached
+            scope_label = self.site_selector.currentText()
+            if not site_id:
+                scope_label += " · требования области проекта"
+            scope_dialog = MatrixScopeDialog(
+                self.store, self.runner, project_id, site_id, scope_label,
+                lambda: not self._closed and self.project_id == project_id and self._site_selection == site_id,
+                self,
+                evaluation_cache=cached[1],
+            )
+            scope_dialog.exec()
+            scope_dialog.deleteLater()
             return
+        item = None
+        if mode == "revision":
+            active = [
+                {**entry, "run_id": self.run_id, "run_created_at": self.run.get("created_at")}
+                for entry in self._view_items() if entry.get("revision")
+            ] if self.run is not None and self.run_id else []
+            seen = {entry["id"] for entry in active}
+            items = [*active, *(entry for entry in self._project_devices() if entry["id"] not in seen)]
+            if not items:
+                self.progress_label.setText("Сначала соберите или импортируйте конфигурации выбранной области.")
+                return
+            choices = [
+                f"{(entry.get('report') or {}).get('device_id') or entry.get('source_name', 'Устройство')}"
+                f" · {(entry.get('revision') or {}).get('device', {}).get('platform', '')}"
+                f" · {entry.get('run_created_at') or entry.get('created_at') or 'время не указано'}"
+                for entry in items
+            ]
+            index = select_matrix_input(self, choices)
+            if index is None:
+                return
+            item = items[index]
         revision = None
         profile_version = "не зафиксирована"
         profile_settings_json = None
         origin_run_id = None
         origin_item_id = None
-        index = choices.index(choice) - 1
-        if index >= 0:
-            item = items[index]
+        origin_scan_id = None
+        if item is not None:
             try:
                 revision = DeviceRevision.model_validate(item.get("revision"))
             except (TypeError, ValueError):
@@ -2560,6 +2864,50 @@ class MainWindow(QMainWindow):
                 settings = self._get_run(origin_run_id).get("settings", {})
                 profile_version = str(settings.get("workspace_profile_version", "не зафиксирована"))
                 profile_settings_json = json.dumps(analysis_settings(settings), ensure_ascii=False)
+                origin_scan_id = (item.get("cloud_origin") or {}).get("scan_id") or settings.get("cloud_scan_id")
+        try:
+            catalog = MatrixCatalog(self.store, project_id)
+            if revision is None:
+                bindings, binding_labels = catalog.standard(site_id)
+                bindings_by_vrf = {}
+            else:
+                sites = matrix_revision_catalog_sites(revision, self._source_project_snapshot().site_assignments, site_id)
+                if revision.device.platform == "cloud-ru-vmware-nsxt" and isinstance(origin_scan_id, str):
+                    sites = matrix_cloud_catalog_sites(self.store.get_cloud_scan_header(project_id, origin_scan_id), site_id)
+                bindings, binding_labels, bindings_by_vrf = catalog.for_editor(revision, sites)
+        except (OSError, ValueError, sqlite3.Error) as error:
+            QMessageBox.warning(self, "Матрица доступа", f"Не удалось прочитать каталог ресурсов. {error}")
+            return
+
+        def pick_policy(parent: QWidget, scope: str, current: str) -> str | None:
+            if scope == (site_id or project_id):
+                policy_site = site_id
+            elif scope == project_id:
+                policy_site = None
+            else:
+                snapshot = self._project_snapshot
+                if snapshot is None or not any(site["id"] == scope for site in snapshot.sites):
+                    QMessageBox.information(parent, "Политики", "Выберите сохранённую площадку или область проекта.")
+                    return None
+                policy_site = scope
+            choice = select_saved_matrix_policy(
+                parent, self._workspace_read_runner or self.runner,
+                lambda cancelled: matrix_policy_choices(self.store, project_id, policy_site, cancelled=cancelled),
+                current=current,
+            )
+            return choice if not self._closed and self.project_id == project_id and self._site_selection == site_id else None
+
+        def pick_draft_source(
+            parent: QWidget,
+        ) -> tuple[MatrixDraftSourceChoice, Callable[[], DeviceRevision]] | None:
+            choice = select_saved_matrix_draft_source(
+                parent, self._workspace_read_runner or self.runner,
+                lambda cancelled: matrix_draft_source_choices(self.store, project_id, site_id, cancelled=cancelled),
+            )
+            if choice is None or self._closed or self.project_id != project_id or self._site_selection != site_id:
+                return None
+            return choice, lambda: load_matrix_draft_revision(self.store, project_id, site_id, choice)
+
         dialog = AccessMatrixDialog(
             self.store.path, self.runner, project_id, revision, self,
             scope_id=site_id or project_id,
@@ -2567,12 +2915,156 @@ class MainWindow(QMainWindow):
             profile_version=profile_version,
             origin_run_id=origin_run_id, profile_settings_json=profile_settings_json,
             origin_item_id=origin_item_id,
+            bindings=bindings, binding_labels=binding_labels, binding_names=catalog.names,
+            preferred_catalog=preferred_catalog,
+            bindings_by_vrf=bindings_by_vrf,
+            policy_picker=pick_policy if revision is None else None,
+            draft_source_picker=pick_draft_source if revision is None else None,
             context_valid=lambda: (
                 not self._closed and self.project_id == project_id and self._site_selection == site_id
             ),
         )
+        if open_groups:
+            dialog.editor.setCurrentWidget(dialog.groups)
         dialog.exec()
         dialog.deleteLater()
+
+    def _open_cloud_sg_matrix(self, snapshot: CloudSecurityGroupSnapshot) -> None:
+        from ipaddress import ip_interface
+
+        from firewall_compliance.application.cloud_sg_revision import CloudSGSelection, cloud_sg_revision
+        from firewall_compliance.application.workspace_profile import ProfileVersion, analysis_settings
+        from firewall_compliance.interfaces.desktop.matrix_catalog import MatrixCatalog, matrix_catalog_sites
+        from firewall_compliance.interfaces.desktop.qt_access_matrix import AccessMatrixDialog
+        from firewall_compliance.interfaces.desktop.qt_cloud_sg_order import CloudSGOrderDialog
+        from firewall_compliance.interfaces.desktop.qt_matrix_inputs import select_matrix_input
+
+        project_id, site_id = self.project_id, self._site_selection
+        if project_id is None or self._closed or self._batch_active:
+            return
+        assessment_scope = site_id if site_id in snapshot.workspace_site_ids else project_id
+        ordered_available = snapshot.platform == "advanced" and any(
+            interface.assignments_status == "present" and len(interface.assignments) > 1
+            and interface.security_enabled is True and all(item.state == "present" for item in interface.assignments)
+            for interface in snapshot.interfaces
+        )
+        groups = (None, *snapshot.groups) if snapshot.platform == "evolution" or ordered_available else snapshot.groups
+        combined_label = ("Все группы интерфейса по подтверждённому порядку" if ordered_available
+                          else "Все группы выбранного интерфейса")
+        choice = select_matrix_input(self, [
+            f"{group.name or group.group_id} · {group.group_id}" if group else combined_label
+            for group in groups
+        ], title="Группы безопасности", placeholder="Имя или ID группы")
+        if choice is None:
+            return
+        group = groups[choice]
+        ordered = group is None and snapshot.platform == "advanced"
+        cloud_scope = group.scope_id if group is not None else snapshot.scope_id
+        candidates = tuple(
+            interface for interface in snapshot.interfaces
+            if interface.scope_id == cloud_scope and interface.assignments_status == "present"
+            and interface.security_enabled is not False
+            and interface.addresses and interface.assignments
+            and (not ordered or (len(interface.assignments) > 1 and interface.security_enabled is True))
+            and (
+                all(item.state == "present" for item in interface.assignments) if group is None
+                else any(item.group_id == group.group_id and item.state == "present" for item in interface.assignments)
+            )
+        )
+        if not candidates:
+            QMessageBox.information(
+                self, "Группа безопасности",
+                "В сборе нет подходящего интерфейса с подтверждёнными назначениями и адресами. "
+                "Исходные объявления доступны в результате сбора.",
+            )
+            return
+        index = select_matrix_input(self, [
+            f"{item.name or item.interface_id} · {item.interface_id} · {', '.join(item.addresses)}"
+            for item in candidates
+        ], title="Интерфейс группы безопасности", placeholder="Имя, ID интерфейса или адрес")
+        if index is None:
+            return
+        interface = candidates[index]
+        families = {ip_interface(value).version for value in interface.addresses}
+        scopes = {}
+        if 4 in families:
+            scopes.update({"Входящие IPv4": ("ingress", 4), "Исходящие IPv4": ("egress", 4)})
+        if snapshot.platform == "advanced" and 6 in families:
+            scopes.update({"Входящие IPv6": ("ingress", 6), "Исходящие IPv6": ("egress", 6)})
+        if ordered:
+            scopes = {label: value for label, value in scopes.items() if value[0] == "ingress"}
+        if not scopes:
+            QMessageBox.information(self, "Интерфейс", "В сборе нет адресов поддержанного семейства для этого интерфейса.")
+            return
+        label, accepted = QInputDialog.getItem(self, "Область сверки", "Направление и семейство", list(scopes), editable=False)
+        if not accepted:
+            return
+        order_evidence = None
+        if ordered:
+            order_dialog = CloudSGOrderDialog(snapshot, interface, self)
+            confirmed = order_dialog.exec() == QDialog.DialogCode.Accepted
+            order_evidence = order_dialog.evidence
+            order_dialog.deleteLater()
+            if not confirmed or order_evidence is None:
+                return
+        selection = CloudSGSelection.model_validate({
+            "scan_id": snapshot.scan_id, "group_id": group.group_id if group else None,
+            "interface_id": interface.interface_id, "scope_id": cloud_scope,
+            "direction": scopes[label][0], "family": scopes[label][1],
+            "order_evidence": order_evidence,
+        })
+        profile_id = f"cloud-matrix:{project_id}"
+        profile = ProfileVersion.from_settings(
+            profile_id, 1, analysis_settings(self.store.get_project(project_id)["settings"]),
+        )
+        ticket = object()
+        self._cloud_matrix_ticket = ticket
+        self.progress_label.setText("Готовим условия групп безопасности…")
+
+        def valid() -> bool:
+            return (
+                not self._closed and self.project_id == project_id and self._site_selection == site_id
+                and not self._batch_active and self._cloud_matrix_ticket is ticket
+            )
+
+        def work() -> tuple[
+            DeviceRevision, dict[tuple[str, str], tuple[str, ...]],
+            dict[tuple[str, str], str], dict[tuple[str, str], str],
+        ]:
+            revision = cloud_sg_revision(snapshot, selection, imported_at=datetime.now(UTC))
+            catalog_site = site_id if assessment_scope != project_id else None
+            sites = matrix_catalog_sites(snapshot.workspace_site_ids or ("",), catalog_site)
+            catalog = MatrixCatalog(self.store, project_id)
+            bindings, labels, _ = catalog.for_editor(revision, sites)
+            return revision, bindings, labels, catalog.names
+
+        def completed(value: object) -> None:
+            if not valid():
+                return
+            if isinstance(value, JobError):
+                self.progress_label.setText(
+                    "Для расчёта порядка нужны подтверждённые группы, приоритеты и состояния всех применимых правил."
+                    if ordered and value.category == "validation" else value.message
+                )
+                return
+            if isinstance(value, tuple):
+                revision, bindings, labels, names = value
+                self.progress_label.setText(
+                    "Подготовлены правила с подтверждённым порядком групп." if ordered else (
+                        "Подготовлены правила групп для выбранной площадки."
+                        if assessment_scope != project_id else "Подготовлены правила групп в области проекта."
+                    )
+                )
+                dialog = AccessMatrixDialog(
+                    self.store.path, self.runner, project_id, revision, self,
+                    scope_id=assessment_scope, profile_id=profile_id, profile_version=profile.fingerprint,
+                    profile_settings_json=profile.settings_json, context_valid=valid, cloud_selection=selection,
+                    bindings=bindings, binding_labels=labels, binding_names=names,
+                )
+                dialog.exec()
+                dialog.deleteLater()
+
+        self.runner.submit(work, completed)
 
     def _controls_report_selected(self, *_: Any) -> None:
         panel = self.controls_panel
@@ -2920,7 +3412,7 @@ class MainWindow(QMainWindow):
                 self.section_tabs.setTabData(tab_index, key)
                 if key == section_id:
                     self.section_tabs.setCurrentIndex(tab_index)
-        self.section_tabs.setVisible(section_id in ("findings", "staging", "scans", "advanced", "history", "reports"))
+        self.section_tabs.setVisible(section is not None and len(section.pages) > 1)
         self.section_tabs.blockSignals(False)
         item = (
             self.settings_tree_items.get("integrations" if self.settings_pages.currentIndex() == 0 else "rules")
@@ -3204,9 +3696,7 @@ class MainWindow(QMainWindow):
             if not project_id:
                 return None, self._database_token(None)
             snapshot, token = self._read_stable_snapshot(project_id)
-            self.store.resource_registry.reconcile(
-                project_id, project_observations(snapshot.history, snapshot.scans)
-            )
+            self._reconcile_inventory(snapshot)
             if token != self._database_token(project_id):
                 snapshot, token = self._read_stable_snapshot(project_id)
             return snapshot, token
@@ -3263,7 +3753,16 @@ class MainWindow(QMainWindow):
         self.workspace_history.clear()
         self._start_after_preflight = False
         self._loading_settings = True
+        self._source_discovery_ticket = None
         self.project_id = self.project_combo.currentData()
+        self._registry_evidence_pending = None
+        self._matrix_scope_cache = None
+        self._project_map_ticket = None
+        self._project_map_scope = None
+        self.project_map_widget.set_load_status("")
+        self._reset_cloud_record_cache(self._project_snapshot)
+        self._scoped_snapshot_source = None
+        self._scoped_snapshot = None
         if self.controls_panel is not None:
             self.controls_panel.set_project_context(self.project_id, refresh=not self._defer_startup)
         if self.governance_panel is not None:
@@ -3290,6 +3789,8 @@ class MainWindow(QMainWindow):
         if callable(project_context):
             project_context(self.project_id)
         self.registry_panel.set_project(self.project_id, refresh=not self._defer_startup)
+        self.vlan_registry.search.clear()
+        self.vlan_registry.set_items([], {}, ())
         self.cloud_panel.set_project(self.project_id, refresh_history=not self._defer_startup)
         self.run_id = None
         self.run = None
@@ -3307,6 +3808,7 @@ class MainWindow(QMainWindow):
         self.sessions.clear()
         self._map_live_item_ids.clear()
         self.staged.clear()
+        self._completed_operation = None
         self.notification.hide()
         if self.project_id:
             project = self._read_project_snapshot().project
@@ -3352,12 +3854,14 @@ class MainWindow(QMainWindow):
             return
         folder = QFileDialog.getExistingDirectory(self, "Папка конфигураций")
         if folder:
+            from firewall_compliance.interfaces.desktop.file_sources import CONFIG_EXTENSIONS
+
             self.stage_paths(
                 sorted(
                     path
                     for path in Path(folder).iterdir()
                     if path.is_file()
-                    and path.suffix.lower() in {".txt", ".cfg", ".conf", ".config", ".json"}
+                    and path.suffix.lower() in CONFIG_EXTENSIONS
                 )
             )
 
@@ -3373,6 +3877,28 @@ class MainWindow(QMainWindow):
         if paths:
             self.stage_paths([Path(path) for path in paths])
 
+    def _open_file_sources(self) -> None:
+        if self._batch_active or self._restore_busy or not self._ensure_project():
+            return
+        from firewall_compliance.interfaces.desktop.file_sources import SavedFileSources
+        from firewall_compliance.interfaces.desktop.qt_file_sources import FileSourcesDialog
+
+        project_id = self.project_id
+        dialog = FileSourcesDialog(
+            SavedFileSources(self.store), self.runner, project_id,
+            lambda: not self._closed and self.project_id == project_id, self,
+            staged=tuple(
+                (
+                    item["path"],
+                    item["device"] if item.get("ready") and not item.get("ambiguous") else None,
+                )
+                for item in self._scoped_staged()
+            ),
+        )
+        dialog.exec()
+        if dialog.changed and not self._closed and self.project_id == project_id:
+            self._refresh_all()
+
     def _ensure_project(self) -> bool:
         if self._restore_busy:
             return False
@@ -3385,12 +3911,14 @@ class MainWindow(QMainWindow):
         """Поставить предварительное определение файлов в общую фоновую очередь."""
         if not self.project_id or self._batch_active or self._restore_busy:
             return
-        existing = {str(item["path"]) for item in self.staged}
+        existing = {str(item["path"]): item for item in self.staged}
         for path in paths:
             path = path.resolve()
-            if str(path) in existing:
+            previous = existing.get(str(path))
+            if previous is not None and not previous.get("processed"):
                 continue
-            existing.add(str(path))
+            if previous is not None:
+                self.staged.remove(previous)
             item: dict[str, Any] = {
                 "path": path,
                 "site_id": self._site_selection or None,
@@ -3401,6 +3929,7 @@ class MainWindow(QMainWindow):
                 "ambiguous": False,
             }
             self.staged.append(item)
+            existing[str(path)] = item
             job_id = self.runner.submit(
                 partial(inspect_file, path),
                 partial(self._inspected, item),
@@ -3441,7 +3970,7 @@ class MainWindow(QMainWindow):
                     candidate["warning"] = (
                         "Повторяется устройство: подтвердите связь двойным щелчком"
                     )
-        self._refresh_staged()
+        # JobRunner.poll delivers every ready file before refreshing the table once.
 
     def _refresh_staged(self) -> None:
         if hasattr(self, "preparation_checks"):
@@ -3466,6 +3995,7 @@ class MainWindow(QMainWindow):
             and all(item["ready"] and not item["ambiguous"] for item in selected_inputs)
             and any(checkbox.isChecked() for checkbox in self.check_boxes.values())
         )
+        self._refresh_dashboard_workflow()
 
     def _edit_staged_device(self, index: Any) -> None:
         item = self.stage_model.payloads[self.stage_proxy.mapToSource(index).row()]
@@ -3526,12 +4056,12 @@ class MainWindow(QMainWindow):
                 self.progress_label.setText("Не удалось прочитать источники: " + value.message)
                 self._refresh_staged()
                 return
-            if not value:
-                self._refresh_staged()
-                self._update_file_inputs()
-                return
-            if self._preflight_jobs or any(not item.get("ready") for item in self.staged):
-                self.progress_label.setText("Дождитесь определения подготовленных файлов.")
+            scoped = tuple(item for item in self._scoped_staged() if not item.get("processed"))
+            if any(not item.get("ready") or item.get("ambiguous") for item in scoped):
+                self.navigate("staging")
+                self.progress_label.setText(
+                    "Дождитесь определения файлов и подтвердите неоднозначные связи с устройствами."
+                )
                 self._refresh_staged()
                 return
             sources = tuple(value)
@@ -3542,19 +4072,19 @@ class MainWindow(QMainWindow):
                 ))
             if not sources:
                 self._refresh_staged()
-                if self._scoped_staged():
-                    self._update_file_inputs()
-                else:
-                    self.progress_label.setText(
-                        "Нет источников или файлов выбранной площадки. Назначьте источники через «Площадки»."
-                    )
+                self._update_file_inputs()
                 return
-            self._start_source_cycle(sources)
+            staged_inputs = tuple(
+                FileCycleInput(item["path"], item["device"], site_id=item.get("site_id"))
+                for item in scoped
+            )
+            self._start_source_cycle(sources, file_inputs=staged_inputs, staged_rows=scoped)
 
         self.runner.submit(lambda: configured_sources(self.store, project_id), done)
 
     def _start_source_cycle(
-        self, sources: tuple, *, file_inputs: tuple[FileCycleInput, ...] | None = None
+        self, sources: tuple, *, file_inputs: tuple[FileCycleInput, ...] = (),
+        staged_rows: tuple[dict[str, Any], ...] = (),
     ) -> None:
         if any(editor.property("operationActive") for _, editor in self.integration_editors.values()):
             self.progress_label.setText("Дождитесь завершения операции подключения.")
@@ -3570,6 +4100,8 @@ class MainWindow(QMainWindow):
                 "require_comments": self.comments_check.isChecked(),
                 "enabled_check_ids": [key for key, box in self.check_boxes.items() if box.isChecked()],
                 "configuration_complete": self.management_settings.complete.isChecked(),
+                "configuration_view": self.management_settings.configuration_view.currentData(),
+                "configuration_node_path": self.management_settings.configuration_node_path.text().strip() or None,
                 "include_fragments": self.fragments_check.isChecked(),
                 "rule_count_drop_percent": self.rule_drop_threshold.value(),
                 "inventory_count_drop_percent": self.inventory_drop_threshold.value(),
@@ -3577,10 +4109,7 @@ class MainWindow(QMainWindow):
         except ValueError:
             self._open_check_settings()
             return
-        rows = self._scoped_staged() if file_inputs is None else ()
-        files = tuple(FileCycleInput(
-            item["path"], item["device"], site_id=item.get("site_id")
-        ) for item in rows) if file_inputs is None else file_inputs
+        rows, files = staged_rows, file_inputs
         project_id, epoch = self.project_id, object()
         queue: Queue[CycleProgress | str] = Queue()
         stop = Event()
@@ -3627,7 +4156,18 @@ class MainWindow(QMainWindow):
                 f"Обработано источников: {len(value.items)}. "
                 f"С ошибками/ограничениями: {errors}. Предупреждений: {warnings}. Подробности — в центре задач."
             )
-            self._completed_run_id = runs[-1] if runs else None
+            self._completed_operation = None
+            if len(value.items) == 1:
+                item = value.items[0]
+                if item.run_id:
+                    self._completed_operation = "analysis", item.run_id
+                elif item.scan_id:
+                    self._completed_operation = "collection", item.scan_id
+            for row in rows:
+                row["processed"] = True
+            self.notification_button.setText(
+                "Открыть результат" if self._completed_operation else "Открыть задачи"
+            )
             self.notification_label.setText(self.progress_label.text())
             self.notification_label.setToolTip(
                 "\n".join(f"{item.source_id}: {item.state}. {item.message}" for item in value.items)
@@ -3654,7 +4194,7 @@ class MainWindow(QMainWindow):
         """Prepare and execute the saved file workflow from one entry point."""
         if self._batch_active or self._restore_busy or not self._ensure_project():
             return
-        if self.staged:
+        if self._scoped_staged():
             if self._preflight_jobs:
                 self._start_after_preflight = True
                 self.progress_label.setText("После определения файлов проверка начнётся автоматически.")
@@ -3675,31 +4215,38 @@ class MainWindow(QMainWindow):
         previous = dialog.addButton("Файлы последнего запуска", QMessageBox.ButtonRole.ActionRole)
         integration = dialog.addButton("Интеграции", QMessageBox.ButtonRole.ActionRole)
         dialog.addButton(QMessageBox.StandardButton.Cancel)
-        source = self._source_project_snapshot()
-        latest = source.history[0] if source.history else None
-        previous.setEnabled(
-            bool(latest and any(item.get("path") for item in latest["items"]))
-        )
-        if latest:
-            dialog.setDetailedText(
-                "\n".join(str(item["path"]) for item in latest["items"] if item.get("path"))
-            )
+        previous_paths: tuple[Path, ...] = ()
+        for run in self._read_project_snapshot().history:
+            source_id = str((run.get("settings") or {}).get("source_id") or "")
+            if not run.get("finished_at") or source_id.startswith(("ngfw:", "cloud_ru_")):
+                continue
+            previous_paths = tuple(dict.fromkeys(
+                Path(item["path"]) for item in run["items"]
+                if item.get("path") and not item.get("cloud_origin")
+                and Path(item["path"]).is_absolute()
+                and (self._site_selection is None or item.get("report"))
+            ))
+            if previous_paths:
+                break
+        previous.setEnabled(bool(previous_paths))
+        if previous_paths:
+            dialog.setDetailedText("\n".join(str(path) for path in previous_paths))
         dialog.exec()
         if dialog.clickedButton() is integration:
             self.choose_data_source()
             return
         if dialog.clickedButton() is choose:
             self.choose_files()
-        elif dialog.clickedButton() is previous and latest is not None:
-            paths = tuple(
-                dict.fromkeys(Path(item["path"]) for item in latest["items"] if item.get("path"))
-            )
-            self.stage_paths(paths)
+        elif dialog.clickedButton() is previous and previous_paths:
+            self.stage_paths(previous_paths)
         else:
             return
-        if self.staged:
-            self._start_after_preflight = True
-            self.progress_label.setText("Подготовка данных; проверка начнётся после определения файлов.")
+        if self._scoped_staged():
+            if self._preflight_jobs:
+                self._start_after_preflight = True
+                self.progress_label.setText("Подготовка данных; проверка начнётся после определения файлов.")
+            elif self.run_button.isEnabled():
+                self.start_analysis()
 
     def start_analysis(self) -> None:
         """Capture inputs once; collection, analysis and persistence run in a worker."""
@@ -3721,6 +4268,8 @@ class MainWindow(QMainWindow):
                     key for key, box in self.check_boxes.items() if box.isChecked()
                 ],
                 "configuration_complete": self.management_settings.complete.isChecked(),
+                "configuration_view": self.management_settings.configuration_view.currentData(),
+                "configuration_node_path": self.management_settings.configuration_node_path.text().strip() or None,
                 "include_fragments": self.fragments_check.isChecked(),
                 "rule_count_drop_percent": self.rule_drop_threshold.value(),
                 "inventory_count_drop_percent": self.inventory_drop_threshold.value(),
@@ -3800,6 +4349,8 @@ class MainWindow(QMainWindow):
             }
             for outcome in value.outcome.items:
                 rows[int(outcome.input_id)]["warning"] = outcome.message or labels[outcome.state]
+            for item in rows:
+                item["processed"] = True
             self._batch_cancelled = value.outcome.state == "cancelled"
             self.load_run(value.run_id)
             self.progress_label.setText(
@@ -3874,6 +4425,7 @@ class MainWindow(QMainWindow):
             self.prepare_button,
             self.folder_button,
             self.files_button,
+            self.file_sources_button,
             self.logging_check,
             self.comments_check,
             self.clear_button,
@@ -3886,10 +4438,13 @@ class MainWindow(QMainWindow):
             self.run_button.setEnabled(False)
         self._update_analysis_result_actions()
         self._update_acl_map_actions()
+        self._refresh_dashboard_workflow()
 
     def poll_jobs(self) -> None:
         """Доставить завершения backend только в Qt-потоке и обновить счётчик пакета."""
         events = self.runner.poll()
+        if self._workspace_read_runner is not None:
+            self._workspace_read_runner.poll()
         self._poll_cycle_progress()
         if not self._ui_ready or self._loading_settings:
             return
@@ -3978,7 +4533,10 @@ class MainWindow(QMainWindow):
         self.cancel_button.setEnabled(bool(self._cycle_job_id or self.runner.pending_count))
 
     def _notify_completion(self) -> None:
-        self._completed_run_id = self.run_id
+        self._completed_operation = ("analysis", self.run_id) if self.run_id else None
+        self.notification_button.setText(
+            "Открыть результат" if self._completed_operation else "Открыть задачи"
+        )
         items = self._items()
         states = Counter(item["status"] for item in items)
         partial_count = states["partial"]
@@ -3997,20 +4555,10 @@ class MainWindow(QMainWindow):
         self.notification.show()
 
     def open_completed_result(self) -> None:
-        if not self._completed_run_id or self._batch_active or self._restore_busy:
-            return
-        self.workspace_history.remember()
-        self.load_run(self._completed_run_id)
-        self.finding_scope.setCurrentIndex(self.finding_scope.findData("run"))
-        self.finding_search.clear()
-        for combo in (
-            self.finding_device,
-            self.finding_check,
-            self.severity_filter,
-            self.status_filter,
-        ):
-            combo.setCurrentIndex(0)
-        self.navigate("findings", remember=False)
+        if self._completed_operation is None:
+            self._open_task_center()
+        else:
+            self._open_saved_operation(*self._completed_operation)
 
     def cancel_pending(self) -> None:
         self._start_after_preflight = False
@@ -4083,16 +4631,26 @@ class MainWindow(QMainWindow):
 
     def _read_project_snapshot(self) -> ProjectSnapshot:
         snapshot = self._source_project_snapshot()
-        return scoped_project_snapshot(snapshot, snapshot.site_assignments, self._site_selection)
+        site = self._site_selection
+        scoped = self._scoped_snapshot
+        if (
+            scoped is None or self._scoped_snapshot_source is not snapshot
+            or self._scoped_snapshot_site != site
+        ):
+            scoped = scoped_project_snapshot(snapshot, snapshot.site_assignments, site)
+            self._scoped_snapshot_source = snapshot
+            self._scoped_snapshot_site = site
+            self._scoped_snapshot = scoped
+        return scoped
 
     def _project_runs(self) -> list[dict[str, Any]]:
         return self._read_project_snapshot().runs if self.project_id else []
 
     def _get_run(self, run_id: str) -> dict[str, Any]:
         if self.project_id:
-            run = self._source_project_snapshot().run_by_id.get(run_id)
-            if run is not None:
-                return run
+            snapshot = self._source_project_snapshot()
+            if not snapshot.compact_history and run_id in snapshot.run_by_id:
+                return snapshot.run_by_id[run_id]
         return self.store.get_run(run_id)
 
     def _inventory_context(
@@ -4103,13 +4661,9 @@ class MainWindow(QMainWindow):
         token = self._inventory_token()
         if token != self._inventory_evidence_token:
             snapshot = self._source_project_snapshot()
-            runs, scans = snapshot.history, snapshot.scans
-            self.store.resource_registry.reconcile(
-                self.project_id, project_observations(runs, scans)
-            )
-            self._inventory_runs, self._inventory_scans = runs, scans
-            # Reconciliation writes must not certify older evidence as current.
-            self._inventory_evidence_token = self._snapshot_token
+            evidence_token = self._snapshot_token
+            self._reconcile_inventory(snapshot)
+            self._accept_inventory_evidence(snapshot, evidence_token)
         resources = self.store.resource_registry.list_resources(
             self.project_id, include_archived=True
         )
@@ -4123,6 +4677,20 @@ class MainWindow(QMainWindow):
                 == self._site_selection
             ]
         return resources, snapshot.history, self._inventory_scans
+
+    def _reconcile_inventory(self, snapshot: ProjectSnapshot) -> None:
+        self.store.resource_registry.reconcile(
+            snapshot.project_id, project_observations(snapshot.history, snapshot.scans), read_back=False,
+        )
+
+    def _accept_inventory_evidence(
+        self, snapshot: ProjectSnapshot, token: tuple[Any, ...] | None,
+    ) -> None:
+        if self._registry_evidence_pending is snapshot:
+            self._registry_evidence_pending = None
+        if self._project_snapshot is snapshot and self.project_id == snapshot.project_id:
+            self._inventory_runs, self._inventory_scans = snapshot.history, snapshot.scans
+            self._inventory_evidence_token = token
 
     def _registry_changed(self) -> None:
         self._refresh_summary()
@@ -4149,6 +4717,142 @@ class MainWindow(QMainWindow):
                 "Ресурс добавлен вручную; операций сбора и проверки ещё нет."
             )
 
+    def _open_registry_details(self, resource: dict[str, Any]) -> None:
+        """Связать карточку реестра с сохранённой ревизией, не читая живое устройство."""
+        if self._batch_active or self._restore_busy:
+            self.progress_label.setText("Дождитесь завершения текущей проверки.")
+            return
+        if resource.get("project_id") != self.project_id:
+            return
+        source = resource.get("source") or {}
+        device_id = source.get("device_id")
+        candidates = [
+            item for item in self._project_devices()
+            if device_id and (item.get("parse_result") or {}).get("configuration", {}).get("device_id") == device_id
+        ]
+        if not candidates and source.get("run_id"):
+            run = self._get_run(str(source["run_id"]))
+            if run["project_id"] == self.project_id:
+                candidates = [
+                    item for item in run.get("items", [])
+                    if item.get("id") == source.get("item_id")
+                ]
+        if len(candidates) != 1:
+            QMessageBox.information(
+                self, "Структура и политики",
+                "Нет однозначной сохранённой конфигурации для выбранной карточки. Импортируйте её в проект.",
+            )
+            return
+        self._open_device_configuration(candidates[0])
+
+    def _open_registry_map(self, resource: dict[str, Any]) -> None:
+        from firewall_compliance.interfaces.desktop.resource_neighborhood import (
+            ResourceNeighborhood,
+            ResourceNeighborhoodUnavailable,
+            read_resource_neighborhood,
+        )
+
+        project_id = self.project_id
+        if not project_id or resource.get("project_id") != project_id or self._restore_busy:
+            return
+        snapshot = self._source_project_snapshot()
+        site = self._site_selection
+        project_ticket = self._project_load_ticket
+        stop = Event()
+        name = str(resource.get("label") or resource.get("name") or resource["id"])
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Окружение · " + name)
+        dialog.resize(1120, 740)
+        dialog.finished.connect(lambda _result: stop.set())
+        layout = QVBoxLayout(dialog)
+        scope = _label("Читаем сохранённые данные…", muted=True)
+        scope.setWordWrap(True)
+        scope.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(scope)
+        notice = _label("", muted=True)
+        notice.setWordWrap(True)
+        notice.setTextFormat(Qt.TextFormat.PlainText)
+        notice.hide()
+        layout.addWidget(notice)
+        widget = ProjectMapWidget(dialog)
+        widget.hide()
+        layout.addWidget(widget, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.reject)
+        limitations = buttons.addButton("Охват и ограничения", QDialogButtonBox.ButtonRole.ActionRole)
+        limitations.hide()
+        layout.addWidget(buttons)
+
+        def work() -> ResourceNeighborhood | str:
+            try:
+                return read_resource_neighborhood(
+                    self.store, project_id, resource, site, snapshot.site_assignments, snapshot.sites,
+                    cancelled=stop.is_set,
+                )
+            except ResourceNeighborhoodUnavailable as error:
+                return str(error)
+
+        def done(value: object) -> None:
+            if stop.is_set() or self._closed:
+                return
+            if (
+                self.project_id != project_id or self._project_load_ticket is not project_ticket
+                or self._site_selection != site
+            ):
+                dialog.reject()
+                return
+            if isinstance(value, JobError):
+                scope.setText(value.message)
+                return
+            if isinstance(value, str):
+                scope.setText(value)
+                return
+            if not isinstance(value, ResourceNeighborhood):
+                scope.setText("Не удалось открыть окружение ресурса.")
+                return
+            scope.setText(value.scope)
+            related = sum(edge.kind in {"acl", "condition"} for edge in value.graph.edges)
+            structural = len(value.graph.edges) - related
+            if not value.graph.edges:
+                notice.setText(
+                    " ".join(value.graph.warnings) if value.graph.warnings
+                    else "В сохранённых данных нет связей для выбранного ресурса."
+                )
+                notice.show()
+            else:
+                notice.setText(
+                    f"Связей структуры: {structural} · связей по условиям правил: {related}. "
+                    "Выберите связь для просмотра оснований."
+                )
+                notice.show()
+            if value.graph.warnings:
+                def show_limits() -> None:
+                    summary = QMessageBox(dialog)
+                    summary.setWindowTitle("Охват и ограничения")
+                    summary.setTextFormat(Qt.TextFormat.PlainText)
+                    summary.setText(value.graph.warnings[0])
+                    if len(value.graph.warnings) > 1:
+                        summary.setDetailedText("\n".join(value.graph.warnings[1:]))
+                    summary.exec()
+
+                limitations.clicked.connect(show_limits)
+                limitations.show()
+            widget.show_neighborhood(value.graph, value.anchor, value.presentation)
+            widget.show()
+
+        runner = JobRunner()
+        dialog_timer = QTimer(dialog)
+        dialog_timer.timeout.connect(runner.poll)
+        dialog_timer.start(50)
+        try:
+            runner.submit(work, done)
+            dialog.exec()
+        finally:
+            stop.set()
+            dialog_timer.stop()
+            runner.shutdown()
+            dialog.deleteLater()
+
     def _refresh_all(self) -> None:
         self._dirty_pages.update(SECTION_IDS)
         self._map_pending_item = None
@@ -4156,6 +4860,9 @@ class MainWindow(QMainWindow):
         if not self._defer_startup:
             # Embedded consumers keep the synchronous, fully populated window contract.
             self._inventory_context()
+            self.registry_panel.set_site_filter(
+                self._site_selection, self._source_project_snapshot().site_assignments if self.project_id else {},
+            )
             self.registry_panel.refresh()
             self.refresh_findings()
             self._refresh_devices()
@@ -4187,8 +4894,22 @@ class MainWindow(QMainWindow):
         elif page == "findings":
             self.refresh_findings()
         elif page == "devices":
-            self._inventory_context()
-            self.registry_panel.refresh()
+            snapshot = self._source_project_snapshot() if self.project_id else None
+            self.registry_panel.set_site_filter(
+                self._site_selection, snapshot.site_assignments if snapshot is not None else {},
+            )
+            evidence_token = self._snapshot_token
+            if snapshot is not None and self._inventory_evidence_token != evidence_token:
+                refresh_evidence = self._registry_evidence_pending is not snapshot
+                self._registry_evidence_pending = snapshot
+                self.registry_panel.refresh(
+                    prepare=lambda: self._reconcile_inventory(snapshot),
+                    force=refresh_evidence,
+                    on_loaded=lambda: self._accept_inventory_evidence(snapshot, evidence_token),
+                )
+            else:
+                self._registry_evidence_pending = None
+                self.registry_panel.refresh()
             self._refresh_devices()
         elif page == "rules":
             self._refresh_rules()
@@ -4205,7 +4926,6 @@ class MainWindow(QMainWindow):
         elif page == "map":
             pending, self._map_pending_item = self._map_pending_item, None
             self._refresh_map_items(pending)
-            self._refresh_project_map()
             self._refresh_saved_acl_maps()
         elif page == "scans":
             self.cloud_panel.refresh_history(self._cloud_scans())
@@ -4235,7 +4955,10 @@ class MainWindow(QMainWindow):
         )
 
     def _marks(self) -> dict[str, Any]:
-        return self._get_run(self.run_id).get("marks", {}) if self.run_id else {}
+        if not self.run_id:
+            return {}
+        run = self._source_project_snapshot().run_by_id.get(self.run_id) if self.project_id else None
+        return (run if run is not None else self._get_run(self.run_id)).get("marks", {})
 
     def refresh_findings(self, *_: Any) -> None:
         if self._defer_startup and self.current_section_id != "findings":
@@ -4255,41 +4978,47 @@ class MainWindow(QMainWindow):
         self.finding_device.setCurrentIndex(max(0, self.finding_device.findData(device)))
         self.finding_device.blockSignals(False)
         device = self.finding_device.currentData()
+        history = self._source_project_snapshot().run_by_id if self.project_id else {}
         marks_by_run = {
-            run_id: self._get_run(run_id).get("marks", {})
+            run_id: (history[run_id] if run_id in history else self._get_run(run_id)).get("marks", {})
             for run_id in {item["run_id"] for item in items if item.get("run_id")}
         }
         rows, payloads = [], []
         coverage: Counter[str] = Counter()
-        search = self.finding_search.text().casefold()
+        selected_check = self.finding_check.currentData()
+        selected_severity = self.severity_filter.currentData()
+        selected_status = self.status_filter.currentData()
+        conditions_active = self.finding_conditions.query.active
         for item in items:
             report = item.get("report") or {}
+            if not report.get("checks") or (device and report.get("device_id") != device):
+                continue
             rule_index = {
                 rule["rule_id"]: rule for rule in (item.get("parse_result") or {}).get("rules", [])
             }
+            search_rules: tuple[dict[str, Any], dict[str, str]] = (rule_index, {})
             rule_matches = {
                 key: self.finding_conditions.match(rule) for key, rule in rule_index.items()
-            } if self.finding_conditions.query.active else {}
-            if device and report.get("device_id") != device:
-                continue
+            } if conditions_active else {}
             for check in report.get("checks", []):
-                if self.finding_check.currentData() not in ("", check["check_id"]):
+                if selected_check not in ("", check["check_id"]):
                     continue
-                coverage[check_status_label(check)] += 1
+                check_label = check_status_label(check)
+                coverage[check_label] += 1
                 for finding in check["findings"]:
                     mark = marks_by_run.get(item.get("run_id"), {}).get(
                         str(finding["finding_id"]), {}
                     )
                     status = mark.get("status", finding.get("status", "new"))
-                    if self.severity_filter.currentData() not in ("", finding["severity"]):
+                    if selected_severity not in ("", finding["severity"]):
                         continue
-                    if self.status_filter.currentData() not in ("", status):
+                    if selected_status not in ("", status):
                         continue
-                    related_ids = set(finding.get("affected_rule_ids", ())) | set(
-                        finding.get("evidence", {}).get("related_rule_ids", ())
-                    )
                     condition_match: bool | None = True
-                    if self.finding_conditions.query.active:
+                    if conditions_active:
+                        related_ids = set(finding.get("affected_rule_ids", ())) | set(
+                            finding.get("evidence", {}).get("related_rule_ids", ())
+                        )
                         matches = [rule_matches.get(rule_id) for rule_id in related_ids]
                         condition_match = (
                             True if True in matches else None if not matches or None in matches else False
@@ -4302,21 +5031,22 @@ class MainWindow(QMainWindow):
                         CHECKS.get(check["check_id"], check["check_id"]),
                         finding["title"],
                         STATUSES.get(status, status),
-                        check_status_label(check) + (" · фильтр неизвестен" if condition_match is None else ""),
+                        check_label + (" · фильтр неизвестен" if condition_match is None else ""),
                     )
-                    if search:
-                        search_text = " ".join(row) + _json(finding.get("evidence", {}))
-                        search_text += " ".join(
-                            _json(rule_index[rule_id]) for rule_id in related_ids if rule_id in rule_index
-                        )
-                        if search not in search_text.casefold():
-                            continue
                     rows.append(row)
                     payloads.append(
-                        {"finding": finding, "check": check, "item": item, "mark": mark}
+                        {
+                            "finding": finding,
+                            "check": check,
+                            "item": item,
+                            "mark": mark,
+                            "search_rules": search_rules,
+                        }
                     )
-        self._finding_payloads = payloads
-        self.finding_model.replace(rows, payloads)
+        had_selection = self._replace_search_rows(
+            self.finding_table, self.finding_proxy, self.finding_model, rows, payloads,
+            lambda payload: (payload["item"].get("id"), payload["finding"]["finding_id"]),
+        )
         self.finding_coverage.setText(
             "Выполнение проверок: "
             + " · ".join(f"{key}: {count}" for key, count in coverage.items())
@@ -4324,9 +5054,56 @@ class MainWindow(QMainWindow):
             else "Результатов проверок нет. Получите данные и запустите проверку."
         )
         self._refresh_context()
-        self.finding_detail.setPlainText(
-            "Выберите находку. Можно выбрать несколько строк для общего статуса и комментария."
-        )
+        if had_selection:
+            self._finding_selected()
+        else:
+            self.finding_detail.setPlainText(
+                "Выберите находку. Можно выбрать несколько строк для общего статуса и комментария."
+            )
+
+    def _replace_search_rows(
+        self,
+        table: QTableView,
+        proxy: QSortFilterProxyModel,
+        model: RowsModel,
+        rows: Sequence[Sequence[Any]],
+        payloads: Sequence[dict[str, Any]],
+        identity: Callable[[dict[str, Any]], tuple[Any, ...]],
+    ) -> bool:
+        """Вернуть видимые выбранные строки после перестроения данных таблицы."""
+        keys = {identity(payload) for payload in self._selected_payloads(table, proxy, model)}
+        scroll = table.verticalScrollBar().value()
+        selection_model = table.selectionModel()
+        current = selection_model.currentIndex()
+        current_source = proxy.mapToSource(current)
+        current_key = identity(model.payloads[current_source.row()]) if current_source.isValid() else None
+        previous_block = selection_model.blockSignals(True)
+        try:
+            model.replace(rows, payloads)
+            if keys:
+                selection = QItemSelection()
+                for row, payload in enumerate(payloads):
+                    key = identity(payload)
+                    if key in keys or key == current_key:
+                        index = proxy.mapFromSource(model.index(row, 0))
+                        if index.isValid():
+                            if key in keys:
+                                selection.select(index, index)
+                            if key == current_key:
+                                selection_model.setCurrentIndex(
+                                    index.siblingAtColumn(current.column()),
+                                    QItemSelectionModel.SelectionFlag.NoUpdate,
+                                )
+                selection_model.select(
+                    selection,
+                    QItemSelectionModel.SelectionFlag.ClearAndSelect
+                    | QItemSelectionModel.SelectionFlag.Rows,
+                )
+                table.verticalScrollBar().setValue(scroll)
+                table.viewport().update()
+        finally:
+            selection_model.blockSignals(previous_block)
+        return bool(keys)
 
     def _selected_payloads(
         self, table: QTableView, proxy: QSortFilterProxyModel, model: RowsModel
@@ -4342,6 +5119,9 @@ class MainWindow(QMainWindow):
         )
         if not payloads:
             self._clear_map_selection()
+            self.finding_detail.setPlainText(
+                "Выберите находку. Можно выбрать несколько строк для общего статуса и комментария."
+            )
             return
         payload = payloads[0]
         finding, check, item = payload["finding"], payload["check"], payload["item"]
@@ -4616,7 +5396,88 @@ class MainWindow(QMainWindow):
         return self._read_project_snapshot().devices if self.project_id else []
 
     def _cloud_scans(self) -> list[dict[str, Any]]:
-        return self._read_project_snapshot().scans if self.project_id else []
+        return self._source_project_snapshot().scans if self.project_id else []
+
+    def _reset_cloud_record_cache(self, snapshot: ProjectSnapshot | None) -> None:
+        self._cloud_inventory_snapshot = snapshot
+        self._cloud_record_cache.clear()
+        self._cloud_record_pending.clear()
+        self._cloud_record_unavailable.clear()
+        self._cloud_record_pages.clear()
+
+    def _cloud_inventory(self) -> list[dict[str, Any]]:
+        if not self.project_id:
+            return []
+        return [dict(item) for item in self._source_project_snapshot().cloud_resources]
+
+    def _cloud_resource_history(self, identity: str) -> list[dict[str, Any]]:
+        if not self.project_id:
+            return []
+        return self._source_project_snapshot().cloud_resource_history.get(identity, [])
+
+    def _cloud_record_details(
+        self, items: list[dict[str, Any]], page: str,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        project_id = self.project_id
+        if project_id is None:
+            return items, False
+        snapshot = self._source_project_snapshot()
+        if self._cloud_inventory_snapshot is not snapshot:
+            self._reset_cloud_record_cache(snapshot)
+        references = {
+            (item["scan"]["id"], item["record_index"]) for item in items
+            if item["scan"].get("workspace_projection") is True
+            and item["scan"].get("project_id") == project_id
+        }
+        needed = references - self._cloud_record_cache.keys() - self._cloud_record_unavailable
+        requested = tuple(sorted(needed - self._cloud_record_pending))
+
+        def read() -> dict[tuple[str, int], dict[str, Any]]:
+            return self.store.read_cloud_resource_records(project_id, requested)
+
+        def keep(records: dict[tuple[str, int], dict[str, Any]]) -> None:
+            self._cloud_record_cache.update(records)
+            self._cloud_record_unavailable.update(set(requested) - records.keys())
+
+        def done(value: object) -> None:
+            if self._closed or self.project_id != project_id or self._project_snapshot is not snapshot:
+                return
+            self._cloud_record_pending.difference_update(requested)
+            keep(value if isinstance(value, dict) else {})
+            pages = {
+                name for name, waiting in self._cloud_record_pages.items()
+                if not waiting.isdisjoint(requested)
+            }
+            self._dirty_pages.update(pages - {self.current_section_id})
+            if self.current_section_id in pages:
+                {
+                    "devices": self._device_selected,
+                    "rules": self._refresh_rules,
+                    "map": self._refresh_project_map,
+                }[self.current_section_id]()
+
+        if self._workspace_read_runner is not None:
+            if needed:
+                self._cloud_record_pages[page] = needed
+            else:
+                self._cloud_record_pages.pop(page, None)
+            if requested:
+                self._cloud_record_pending.update(requested)
+                self._workspace_read_runner.submit(read, done)
+        elif requested:
+            keep(read())
+
+        resolved = []
+        for item in items:
+            if item["scan"].get("workspace_projection") is not True:
+                resolved.append(item)
+                continue
+            key = item["scan"]["id"], item["record_index"]
+            record = self._cloud_record_cache.get(key)
+            resolved.append(
+                {**item, "record": record} if record is not None else {**item, "cloud_record_missing": True}
+            )
+        return resolved, bool(references & self._cloud_record_pending)
 
     def _cloud_history_changed(self) -> None:
         self._inventory_evidence_token = None
@@ -4661,10 +5522,46 @@ class MainWindow(QMainWindow):
             self.load_run(run_id)
             self.navigate("reports", remember=False)
 
+    def _open_vlan_source(self, item_id: str, location: object) -> None:
+        session = self.sessions.get(item_id)
+        if session is None:
+            if self._batch_active or self._restore_busy:
+                QMessageBox.information(
+                    self, "Источник VLAN", "Дождитесь завершения текущей операции.",
+                )
+                return
+            filename, _ = QFileDialog.getOpenFileName(
+                self, "Выберите исходную конфигурацию с совпадающим SHA-256",
+            )
+            if filename:
+                self.attach_source(item_id, Path(filename), preview_location=location)
+            return
+        try:
+            anchor = SourceLocation.model_validate(location)
+            preview = safe_switch_source(source_preview(session, anchor))
+        except ValueError:
+            QMessageBox.information(self, "Источник VLAN", "Фрагмент конфигурации недоступен.")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Источник VLAN")
+        dialog.resize(760, 460)
+        layout = QVBoxLayout(dialog)
+        browser = QTextBrowser()
+        browser.setPlainText(preview)
+        layout.addWidget(browser)
+        dialog.exec()
+
     def _refresh_devices(self, *_: Any) -> None:
         if self._defer_startup and self.current_section_id != "devices":
             self._dirty_pages.add("devices")
             return
+        snapshot = self._read_project_snapshot() if self.project_id else None
+        self.vlan_registry.set_items(
+            snapshot.devices if snapshot else [],
+            snapshot.site_assignments if snapshot else {},
+            snapshot.sites if snapshot else (),
+            project_id=snapshot.project_id if snapshot else None,
+        )
         self._refresh_context()
         self._clear_map_selection()
         rows: list[tuple[Any, ...]] = []
@@ -4679,7 +5576,7 @@ class MainWindow(QMainWindow):
                 for item in items
                 if item.get("cloud_origin")
             }
-            inventory = cloud_resources(self._cloud_scans())
+            inventory = self._cloud_inventory()
             for resource in inventory:
                 analysis = analyses.get((resource["scan"]["id"], resource["record"].get("id")))
                 if analysis:
@@ -4811,19 +5708,32 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Сведения об устройстве", "Выберите один снимок устройства.")
             return
         item = items[0]
+        self._open_device_configuration(item)
+
+    def _open_device_configuration(self, item: dict[str, Any]) -> None:
+        """Открыть switch-факты либо связанный каталог Controller сохранённой ревизии."""
         parsed = item.get("parse_result") or {}
-        if not parsed.get("switch_facts") and not parsed.get("switch_policies"):
+        if not any(parsed.get(key) for key in ("switch_facts", "switch_policies", "controller_inventory")):
             QMessageBox.information(
                 self, "Сведения об устройстве",
-                "В этой ревизии факты коммутатора не сохранены. Импортируйте конфигурацию заново для новой ревизии.",
+                "В этой ревизии сетевые факты не сохранены. Импортируйте конфигурацию заново для новой ревизии.",
             )
             return
         dialog = QDialog(self)
         dialog.setWindowTitle("Структура и политики устройства")
         dialog.resize(1100, 720)
         layout = QVBoxLayout(dialog)
-        panel = SwitchDetailsPanel(dialog)
-        panel.set_item(item)
+        panel = (
+            ControllerDetailsPanel(dialog) if parsed.get("controller_inventory")
+            else SwitchDetailsPanel(dialog)
+        )
+        try:
+            panel.set_item(item)
+        except (ValueError, TypeError) as error:
+            QMessageBox.information(
+                self, "Структура и политики", "Сохранённая конфигурация не прошла проверку: " + str(error),
+            )
+            return
 
         def show_source(location: object) -> None:
             session = self.sessions.get(str(item.get("id")))
@@ -4953,9 +5863,17 @@ class MainWindow(QMainWindow):
             )
 
     def _show_cloud_resource(self, item: dict[str, Any]) -> None:
+        items, pending = self._cloud_record_details([item], "devices")
+        item = items[0]
         record, scan = item["record"], item["scan"]
         self.device_rules_model.replace([], [])
         self.device_objects_model.replace([], [])
+        if item.get("cloud_record_missing"):
+            self.device_detail.setPlainText(
+                str(record.get("name") or record.get("id") or "Облачный ресурс") + "\n"
+                + ("Загружаем детали ресурса…" if pending else "Полные данные записи недоступны.")
+            )
+            return
         data = record.get("data", {})
         rules = cloud_rule_values(record)
         self.device_rules_model.replace(
@@ -4997,12 +5915,12 @@ class MainWindow(QMainWindow):
         self._refresh_context()
         rows, payloads = [], []
         cloud_count = 0
-        items = (
-            self._project_devices()
-            if self.rule_scope.currentData() == "project"
-            else self._view_items()
-        )
-        self.rule_detail.clear()
+        cloud_pending = False
+        cloud_missing = False
+        scope = self.rule_scope.currentData()
+        category = self.rule_category.currentData()
+        conditions_active = self.rule_conditions.query.active
+        items = self._project_devices() if scope == "project" else self._view_items()
         analyzed = {
             (item["cloud_origin"]["scan_id"], item["cloud_origin"]["resource_id"])
             for item in items
@@ -5012,36 +5930,29 @@ class MainWindow(QMainWindow):
             parsed = item.get("parse_result") or {}
             device = (item.get("report") or {}).get("device_id", "")
             for rule in parsed.get("rules", []):
-                if (
-                    self.rule_category.currentData()
-                    and rule_category(rule) != self.rule_category.currentData()
-                ):
+                purpose = rule_category(rule)
+                if category and purpose != category:
                     continue
-                condition_match = self.rule_conditions.match(rule)
+                condition_match = self.rule_conditions.match(rule) if conditions_active else True
                 if not self.rule_conditions.accepts(condition_match):
                     continue
                 if item.get("cloud_origin"):
                     cloud_count += 1
+                action = str(rule.get("action") or "Не определено")
                 rows.append(
                     (
                         device,
                         rule["sequence"],
-                        rule["name"] + " · " + PURPOSE_LABELS[rule_category(rule)],
-                        dict(rule_details(rule)).get("Действие", rule["action"]),
+                        rule["name"] + " · " + PURPOSE_LABELS[purpose],
+                        ACTION_LABELS.get(action, action),
                         rule_endpoint_summary(rule, "sources"),
                         rule_endpoint_summary(rule, "destinations"),
                         rule_service_summary(rule) + (" · фильтр неизвестен" if condition_match is None else ""),
                     )
                 )
-                payloads.append(
-                    {
-                        "item": item,
-                        "value": rule,
-                        "search_text": "\n".join(value for _, value in rule_details(rule)),
-                    }
-                )
+                payloads.append({"item": item, "value": rule})
             for group in ("endpoints", "services"):
-                if self.rule_conditions.query.active or self.rule_category.currentData():
+                if conditions_active or category:
                     continue
                 for value in parsed.get(group, []):
                     rows.append(
@@ -5055,50 +5966,55 @@ class MainWindow(QMainWindow):
                             object_summary(value),
                         )
                     )
-                    payloads.append(
-                        {
-                            "item": item,
-                            "value": value,
-                            "search_text": "\n".join(text for _, text in object_details(value)),
-                        }
-                    )
+                    payloads.append({"item": item, "value": value})
         if (
-            self.rule_scope.currentData() == "project"
-            and self.rule_category.currentData() in {"", "unknown"}
+            scope == "project" and category in {"", "unknown"}
+            and (not conditions_active or self.rule_conditions.include_unknown)
         ):
-            for item in cloud_resources(self._cloud_scans()):
+            candidates = [
+                item for item in self._cloud_inventory()
+                if not item["scan"].get("workspace_projection")
+                or item["record"].get("has_rule_payload")
+            ]
+            cloud, cloud_pending = self._cloud_record_details(candidates, "rules")
+            cloud_missing = any(item.get("cloud_record_missing") for item in cloud)
+            for item in cloud:
+                if item.get("cloud_record_missing"):
+                    continue
                 device = item["record"].get("name") or item["record"].get("id", "Cloud.ru")
                 for value in cloud_rule_values(item["record"]):
-                    if self.rule_conditions.query.active and not self.rule_conditions.include_unknown:
-                        continue
                     if (item["scan"]["id"], item["record"].get("id")) in analyzed and value[
                         "group"
                     ] != "nat":
                         continue
                     columns = list(cloud_rule_columns(value))
-                    if self.rule_conditions.query.active:
+                    if conditions_active:
                         columns[-1] = str(columns[-1]) + " · фильтр неизвестен"
                     rows.append((device, *columns))
-                    payloads.append(
-                        {
-                            "item": item,
-                            "value": value,
-                            "search_text": "\n".join(
-                                text for _, text in cloud_rule_details(item, value)
-                            ),
-                        }
-                    )
+                    payloads.append({"item": item, "value": value})
                     cloud_count += 1
+        cloud_status = ""
+        if cloud_pending:
+            cloud_status = "Облачные правила загружаются. "
+        elif cloud_missing:
+            cloud_status = "Часть облачных записей недоступна. "
         self.rule_inventory_status.setText(
             f"Правил и объектов в таблице: {len(rows)} · облачных правил: {cloud_count}. "
+            + cloud_status
             + (
                 "Для анализа выберите сохранённый сбор в «Операции → Облачный сбор»."
-                if self.rule_scope.currentData() == "project"
+                if scope == "project"
                 else "Выбран файловый запуск; облачные сборы доступны "
                 "в области «Все ресурсы проекта»."
             )
         )
-        self.rules_model.replace(rows, payloads)
+        had_selection = self._replace_search_rows(
+            self.rules_table, self.rules_proxy, self.rules_model, rows, payloads, rule_row_key,
+        )
+        if had_selection:
+            self._rule_selected()
+        else:
+            self.rule_detail.setPlainText("Выберите правило или объект.")
 
     def _rule_selected(self, *_: Any) -> None:
         selected = self._selected_payloads(self.rules_table, self.rules_proxy, self.rules_model)
@@ -5130,6 +6046,46 @@ class MainWindow(QMainWindow):
                 + (acl_rule_html(item.get("parse_result") or {}, value) if "rule_id" in value else "")
             )
 
+    def _dashboard_action(self, action: str) -> None:
+        callbacks = {
+            "create": self._create_project_dialog,
+            "add": self.choose_data_source,
+            "update": self.update_and_check,
+            "tasks": self._open_task_center,
+            "findings": self.open_overview_findings,
+        }
+        if action in callbacks:
+            callbacks[action]()
+        elif action in {"staging", "devices", "matrix"}:
+            self.navigate(action)
+
+    def _refresh_dashboard_workflow(self) -> None:
+        if self.current_section_id != "home" or not hasattr(self, "cloud_panel"):
+            return
+        assignments = self._project_snapshot.site_assignments if self._project_snapshot is not None else {}
+        staged = tuple(
+            item for item in self.staged if not item.get("processed") and (
+                self._site_selection is None
+                or assignments.get(str(item["device"]), item.get("site_id") or "") == self._site_selection
+            )
+        )
+        active = self._batch_active or (
+            self.cloud_panel.busy and self.cloud_panel._active_project == self.project_id
+        )
+        workflow = dashboard_workflow(
+            self.compact_dashboard.snapshot,
+            project_selected=bool(self.project_id), site_id=self._site_selection,
+            staged=len(staged),
+            pending=sum(not item.get("ready") for item in staged),
+            ambiguous=sum(bool(item.get("ambiguous")) for item in staged),
+            active=active,
+        )
+        self.compact_dashboard.set_workflow(
+            workflow.heading, workflow.text, workflow.action_label, workflow.action,
+            secondary=workflow.secondary, show_details=workflow.show_details,
+            busy=self._restore_busy or self._loading_settings,
+        )
+
     def _refresh_summary(self) -> None:
         if self._defer_startup and self.current_section_id != "home":
             self._dirty_pages.add("home")
@@ -5145,10 +6101,13 @@ class MainWindow(QMainWindow):
                 self._source_project_snapshot().source_health if self.project_id else (),
             )
         )
-        devices = self._project_devices()
-        scans = self._cloud_scans()
+        self._refresh_dashboard_workflow()
+        snapshot = self._read_project_snapshot() if self.project_id else None
+        devices = snapshot.devices if snapshot is not None else []
+        scans = snapshot.scans if snapshot is not None else []
+        cloud_count = len(snapshot.cloud_resources) if snapshot is not None else 0
         self.cloud_summary_label.setText(
-            f"Облачных ресурсов: {len(cloud_resources(scans))} · "
+            f"Облачных ресурсов: {cloud_count} · "
             + (
                 f"последний сбор: {scans[0]['created_at']} · "
                 f"{SCAN_STATES.get(scans[0]['state'], scans[0]['state'])} · "
@@ -5177,7 +6136,7 @@ class MainWindow(QMainWindow):
         self.vendor_model.replace(
             [(vendor_labels.get(key, key), count) for key, count in sorted(vendors.items())]
         )
-        runs = self._project_runs()
+        runs = snapshot.runs if snapshot is not None else []
         operations = project_operations(runs, scans)[:3]
         self.activity_text.setHtml(
             "<b>Последние операции</b><br>"
@@ -5294,19 +6253,33 @@ class MainWindow(QMainWindow):
             operations,
         )
 
+    def _open_saved_operation(self, kind: str, operation_id: str) -> None:
+        if not self.project_id or self._batch_active or self._restore_busy:
+            return
+        snapshot = self._read_project_snapshot()
+        if kind == "collection":
+            if not any(scan["id"] == operation_id for scan in snapshot.scans):
+                return
+            self.workspace_history.remember()
+            self.cloud_panel.open_result(operation_id)
+            self.navigate("scans", remember=False)
+        elif kind in {"analysis", "check"} and operation_id in snapshot.run_by_id:
+            self.workspace_history.remember()
+            self.load_run(operation_id)
+            self.finding_scope.setCurrentIndex(self.finding_scope.findData("run"))
+            self.finding_search.clear()
+            for combo in (
+                self.finding_device, self.finding_check, self.severity_filter, self.status_filter,
+            ):
+                combo.setCurrentIndex(0)
+            self.navigate("findings", remember=False)
+
     def _open_history(self, *_: Any) -> None:
         selected = self._selected_payloads(
             self.history_table, self.history_proxy, self.history_model
         )
-        if selected and not self._batch_active:
-            self.workspace_history.remember()
-            if selected[0]["operation_kind"] == "collection":
-                self.navigate("scans", remember=False)
-                self.cloud_panel.open_result(selected[0]["id"])
-            else:
-                self.load_run(selected[0]["id"])
-                self.finding_scope.setCurrentIndex(self.finding_scope.findData("run"))
-                self.navigate("findings", remember=False)
+        if selected:
+            self._open_saved_operation(selected[0]["operation_kind"], selected[0]["id"])
 
     def compare_selected_runs(self) -> None:
         if self._restore_busy:
@@ -5516,11 +6489,13 @@ class MainWindow(QMainWindow):
         except ValueError:
             self.progress_label.setText("Укажите существующий диапазон не более 200 строк.")
 
-    def attach_source(self, item_id: str, path: Path) -> None:
+    def attach_source(
+        self, item_id: str, path: Path, *, preview_location: object | None = None
+    ) -> None:
+        """Восстановить проверенный снимок и при необходимости открыть фрагмент."""
         if any(editor.property("operationActive") for _, editor in self.integration_editors.values()):
             self.progress_label.setText("Дождитесь завершения операции подключения.")
             return
-        """Восстановить только проверенный снимок; изменившийся файл добавить в новую очередь."""
         self._restore_busy = True
         self._set_controls_busy(True)
 
@@ -5546,12 +6521,19 @@ class MainWindow(QMainWindow):
                 if callable(refresher):
                     refresher()
                 self._refresh_map_items()
+                if preview_location is not None:
+                    self._open_vlan_source(item_id, preview_location)
             elif isinstance(result, dict) and result.get("source_changed"):
-                self.progress_label.setText(
-                    "Исходник не подключён. Изменившийся файл добавлен для отдельного запуска; "
-                    "старые доказательства сохранены."
-                )
-                self.stage_paths([path])
+                if preview_location is not None:
+                    QMessageBox.warning(
+                        self, "Источник VLAN", "SHA-256 файла отличается от сохранённой ревизии.",
+                    )
+                else:
+                    self.progress_label.setText(
+                        "Исходник не подключён. Изменившийся файл добавлен для отдельного запуска; "
+                        "старые доказательства сохранены."
+                    )
+                    self.stage_paths([path])
             else:
                 message = (
                     result.message
@@ -5559,6 +6541,8 @@ class MainWindow(QMainWindow):
                     else "Не удалось подключить исходник"
                 )
                 self.progress_label.setText(message)
+                if preview_location is not None:
+                    QMessageBox.warning(self, "Источник VLAN", message)
             self._refresh_staged()
 
         self.runner.submit(work, done)
@@ -5637,6 +6621,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "integration_editors"):
             self._reset_integration_editors()
         self._closed = True
+        if self._workspace_read_runner is not None:
+            self._workspace_read_runner.shutdown()
         self._cycle_cancel.set()
         self._cycle_epoch = None
         if not self._ui_ready:

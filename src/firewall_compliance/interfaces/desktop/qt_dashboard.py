@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
@@ -237,7 +238,7 @@ def _table(headers: tuple[str, ...], name: str) -> QTableWidget:
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
     table.verticalHeader().hide()
-    table.verticalHeader().setDefaultSectionSize(29)
+    table.verticalHeader().setDefaultSectionSize(24)
     table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
     table.horizontalHeader().setMinimumSectionSize(45)
     table.setAlternatingRowColors(True)
@@ -254,16 +255,22 @@ def _fill(
             item = QTableWidgetItem(text)
             item.setToolTip(tooltips[row_index] if tooltips else text)
             table.setItem(row_index, column, item)
-    table.setMinimumHeight(58 + max(1, len(rows)) * 29)
-    table.setMaximumHeight(66 + max(1, len(rows)) * 29)
+    rows_height = max(1, len(rows)) * table.verticalHeader().defaultSectionSize()
+    table.setMinimumHeight(46 + rows_height)
+    table.setMaximumHeight(54 + rows_height)
 
 
 class ProjectDashboard(QWidget):
     navigation_requested = Signal(str)
     severity_requested = Signal(str)
+    workflow_requested = Signal(str)
+    operation_requested = Signal(str, str)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, *, exact_operation_navigation: bool = False,
+    ) -> None:
         super().__init__(parent)
+        self._exact_operation_navigation = exact_operation_navigation
         self.snapshot = build_dashboard([], [], [], [])
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -276,6 +283,34 @@ class ProjectDashboard(QWidget):
         layout = QGridLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setHorizontalSpacing(16)
+        layout.setRowStretch(2, 1)
+        self._workflow_card = QFrame()
+        self._workflow_card.setObjectName("hero")
+        workflow = QVBoxLayout(self._workflow_card)
+        workflow.setContentsMargins(12, 10, 12, 10)
+        workflow.setSpacing(5)
+        self._workflow_heading = _label("", "heading")
+        self._workflow_text = _label("")
+        workflow.addWidget(self._workflow_heading)
+        workflow.addWidget(self._workflow_text)
+        actions = QHBoxLayout()
+        self._workflow_button = QPushButton()
+        self._workflow_button.setObjectName("primary")
+        self._workflow_button.clicked.connect(
+            lambda: self.workflow_requested.emit(self._workflow_action)
+        )
+        self._workflow_secondary = QPushButton()
+        self._workflow_secondary.clicked.connect(
+            lambda: self.workflow_requested.emit(self._secondary_action)
+        )
+        self._workflow_action = self._secondary_action = ""
+        actions.addWidget(self._workflow_button)
+        actions.addWidget(self._workflow_secondary)
+        actions.addStretch()
+        workflow.addLayout(actions)
+        layout.addWidget(self._workflow_card, 0, 0, 1, 3)
+        self._workflow_card.hide()
+        self._detail_panels: list[QFrame] = []
         columns: list[QVBoxLayout] = []
         for index in range(3):
             panel = QFrame()
@@ -284,8 +319,9 @@ class ProjectDashboard(QWidget):
             column = QVBoxLayout(panel)
             column.setContentsMargins(12, 12, 12, 12)
             column.setSpacing(12)
-            layout.addWidget(panel, 0, index)
+            layout.addWidget(panel, 1, index)
             layout.setColumnStretch(index, 1)
+            self._detail_panels.append(panel)
             columns.append(column)
         resources, findings, activity = columns
         scroll.setWidget(content)
@@ -305,9 +341,11 @@ class ProjectDashboard(QWidget):
             card = QFrame()
             card.setObjectName("hero")
             card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(6, 4, 6, 4)
+            card_layout.setSpacing(2)
             card_layout.addWidget(_label(title))
             value = _label("0")
-            value.setStyleSheet("font-size: 24px; font-weight: 600;")
+            value.setStyleSheet("font-size: 20px; font-weight: 600;")
             value.setAccessibleName(title)
             card_layout.addWidget(value)
             self.summary_labels[key] = value
@@ -356,9 +394,7 @@ class ProjectDashboard(QWidget):
             table.setMinimumWidth(0)
         activity.addWidget(_label("Последние проверки", "heading"))
         self.checks_table = _table(("Дата", "Состояние", "Ресурсы", "Проверки"), "dashboardChecks")
-        self.checks_table.cellDoubleClicked.connect(
-            lambda *_: self.navigation_requested.emit("history")
-        )
+        self.checks_table.cellActivated.connect(self._open_check)
         activity.addWidget(self.checks_table)
         self.findings_table = _table(("Приоритет", "Всего", "Открыто"), "dashboardFindings")
         self.findings_table.cellDoubleClicked.connect(
@@ -369,7 +405,7 @@ class ProjectDashboard(QWidget):
         self.operations_table = _table(
             ("Дата", "Операция", "Состояние", "Ресурсы"), "dashboardOperations"
         )
-        self.operations_table.cellDoubleClicked.connect(self._open_operation)
+        self.operations_table.cellActivated.connect(self._open_operation)
         activity.addWidget(self.operations_table)
         self.coverage_label = _label("", "muted")
         resources.addWidget(self.coverage_label)
@@ -395,12 +431,40 @@ class ProjectDashboard(QWidget):
             column.addStretch()
         self.refresh(self.snapshot)
 
+    def set_workflow(
+        self,
+        heading: str,
+        text: str,
+        action_label: str,
+        action: str,
+        *,
+        show_details: bool = True,
+        busy: bool = False,
+        secondary: tuple[str, str] | None = None,
+    ) -> None:
+        """Show the next step for the current project and keep details available when useful."""
+        self._workflow_heading.setText(heading)
+        self._workflow_text.setText(text)
+        self._workflow_text.setVisible(bool(text))
+        self._workflow_action = action
+        self._workflow_button.setText(action_label)
+        self._workflow_button.setVisible(bool(action and action_label))
+        self._workflow_button.setEnabled(not busy)
+        secondary_label, self._secondary_action = secondary or ("", "")
+        self._workflow_secondary.setText(secondary_label)
+        self._workflow_secondary.setVisible(bool(secondary_label and self._secondary_action))
+        self._workflow_secondary.setEnabled(not busy)
+        self._workflow_card.setVisible(bool(heading))
+        for panel in self._detail_panels:
+            panel.setVisible(show_details)
+
     def refresh(self, snapshot: DashboardSnapshot) -> None:
         self.snapshot = snapshot
         states = {
             **_STATES, "never": "Сбор ещё не выполнялся",
             "configuration_changed": "Настройки изменены после сбора",
             "invalid": "Некорректные настройки",
+            "disabled": "Выключен",
             "not_executed": "Не выполнялся", "not_supported": "Не поддержан",
         }
         _fill(self.source_table, [
@@ -547,5 +611,14 @@ class ProjectDashboard(QWidget):
 
     def _open_operation(self, row: int, _column: int) -> None:
         if 0 <= row < len(self.snapshot.recent_operations):
-            operation = self.snapshot.recent_operations[row]
+            self._activate_operation(self.snapshot.recent_operations[row])
+
+    def _open_check(self, row: int, _column: int) -> None:
+        if 0 <= row < len(self.snapshot.recent_checks):
+            self._activate_operation(self.snapshot.recent_checks[row])
+
+    def _activate_operation(self, operation: OperationSummary) -> None:
+        if self._exact_operation_navigation:
+            self.operation_requested.emit(operation.kind, operation.operation_id)
+        else:
             self.navigation_requested.emit("history" if operation.kind == "analysis" else "scans")

@@ -6,6 +6,7 @@ from pydantic import Field, SerializerFunctionWrapHandler, model_serializer, mod
 
 from firewall_compliance.domain.base import DomainModel
 from firewall_compliance.domain.configuration import Configuration, Rule
+from firewall_compliance.domain.controller import ControllerInventory
 from firewall_compliance.domain.enums import ParseIssueLevel
 from firewall_compliance.domain.management import ManagementInventory
 from firewall_compliance.domain.network import Endpoint, Service
@@ -63,6 +64,7 @@ class ParseResult(DomainModel):
     management: ManagementInventory | None = None
     switch_facts: SwitchFacts | None = None
     switch_policies: SwitchPolicies | None = None
+    controller_inventory: ControllerInventory | None = None
     rules: tuple[Rule, ...] = ()
     endpoints: tuple[Endpoint, ...] = ()
     services: tuple[Service, ...] = ()
@@ -82,6 +84,8 @@ class ParseResult(DomainModel):
             payload.pop("switch_facts", None)
         if self.switch_policies is None:
             payload.pop("switch_policies", None)
+        if self.controller_inventory is None:
+            payload.pop("controller_inventory", None)
         if not self.policy_attachments:
             payload.pop("policy_attachments", None)
         return payload
@@ -90,6 +94,13 @@ class ParseResult(DomainModel):
     def validate_configuration_links(self) -> "ParseResult":
         """Проверить, что правила принадлежат снимку результата."""
         configuration_id = self.configuration.configuration_id
+        controller = self.controller_inventory
+        if controller is not None and (
+            controller.source_name != self.configuration.source_name
+            or controller.content_sha256 != self.configuration.content_sha256
+            or controller.captured_at != self.configuration.captured_at
+        ):
+            raise ValueError("controller inventory must belong to its configuration source")
         for switch_inventory in (self.switch_facts, self.switch_policies):
             if switch_inventory is not None and (
                 switch_inventory.source_name != self.configuration.source_name

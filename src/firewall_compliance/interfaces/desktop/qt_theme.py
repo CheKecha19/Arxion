@@ -36,14 +36,14 @@ def apply_theme(app: QApplication) -> None:
     app.setPalette(palette)
     app.setStyleSheet("""
         QMainWindow, QWidget { background: #10131C; color: #E8EDF7; }
-        QLabel#heading { font-size: 26px; font-weight: 600; }
+        QLabel#heading { font-size: 20px; font-weight: 600; }
         QLabel#muted { color: #A8B3C7; }
         QFrame#hero { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
             stop:0 #203455, stop:1 #30284A); border-radius: 12px; }
         QFrame#hero QLabel { background: transparent; }
-        QPushButton, QLineEdit, QComboBox, QSpinBox, QPlainTextEdit {
-            background: #242C3E; border: 1px solid #39445B; border-radius: 8px;
-            padding: 8px 12px; min-height: 22px;
+        QPushButton, QLineEdit, QComboBox, QAbstractSpinBox, QPlainTextEdit {
+            background: #242C3E; border: 1px solid #39445B; border-radius: 4px;
+            padding: 2px 4px; min-height: 16px;
         }
         QPushButton:hover { background: #303C55; border-color: #79B8FF; }
         QPushButton:focus, QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus,
@@ -51,10 +51,10 @@ def apply_theme(app: QApplication) -> None:
         QPushButton#primary { background: #79B8FF; color: #10131C; font-weight: 600; }
         QPushButton:disabled { color: #A8B3C7; background: #191F2D; }
         QListWidget#navigation { background: #191F2D; border: none; border-radius: 12px; }
-        QListWidget#navigation::item { padding: 14px 16px; margin: 3px 6px; border-radius: 8px; }
+        QListWidget#navigation::item { padding: 4px 6px; margin: 1px 3px; border-radius: 4px; }
         QListWidget#navigation::item:selected { background: #30284A; color: #B7A0FF; }
         QTreeWidget#navigation { background: #191F2D; border: none; border-radius: 12px; }
-        QTreeWidget#navigation::item { padding: 7px 5px; border-radius: 8px; }
+        QTreeWidget#navigation::item { padding: 3px 4px; border-radius: 4px; }
         QTreeWidget#navigation::item:selected { background: #30284A; color: #B7A0FF; }
         QTreeWidget#navigation::item:disabled { color: #6F7A90; }
         QTreeWidget#navigation:focus { border: 2px solid #79B8FF; }
@@ -65,8 +65,8 @@ def apply_theme(app: QApplication) -> None:
         QFrame#integrationGroup QLabel { background: transparent; font-weight: 600; }
         QFrame#settingsMenu QPushButton { text-align: left; }
         QPushButton#integrationCard {
-            background: #242C3E; border: 1px solid #465674; border-radius: 12px;
-            font-size: 14px; font-weight: 600; padding: 12px 6px;
+            background: #242C3E; border: 1px solid #465674;
+            font-weight: 600;
         }
         QPushButton#integrationCard:hover { background: #303C55; border-color: #79B8FF; }
         QPushButton#integrationCard:disabled {
@@ -74,14 +74,14 @@ def apply_theme(app: QApplication) -> None:
         }
         QTableView { background: #191F2D; alternate-background-color: #202738;
             gridline-color: #30394D; border: 1px solid #30394D; border-radius: 8px; }
-        QHeaderView::section { background: #242C3E; padding: 10px; border: none;
+        QHeaderView::section { background: #242C3E; padding: 3px; border: none;
             border-right: 1px solid #39445B; font-weight: 600; }
-        QTableView::item { padding: 6px; }
+        QTableView::item { padding: 3px; }
         QTableView::item:selected { background: #324463; color: #E8EDF7; }
         QTextBrowser { background: #191F2D; border: 1px solid #30394D;
-            border-radius: 12px; padding: 12px; }
+            border-radius: 6px; padding: 6px; }
         QTabWidget::pane { border: 1px solid #30394D; border-radius: 8px; }
-        QTabBar::tab { background: #191F2D; padding: 10px 16px; }
+        QTabBar::tab { background: #191F2D; padding: 4px 8px; }
         QTabBar::tab:selected { background: #30284A; color: #B7A0FF; }
         QProgressBar { background: #242C3E; border-radius: 6px; text-align: center; }
         QProgressBar::chunk { background: #79B8FF; border-radius: 6px; }

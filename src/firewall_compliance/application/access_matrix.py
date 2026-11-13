@@ -1,7 +1,11 @@
 """Pure matrix diagnostics and conservative comparison of declared ACL conditions."""
 
+from __future__ import annotations
+
 from collections import Counter
+from collections.abc import Callable, Mapping
 from ipaddress import ip_network
+from typing import TYPE_CHECKING
 
 from firewall_compliance.domain.access_matrix import (
     AccessMatrix, MatrixAssessment, MatrixDiagnostic, MatrixGroup,
@@ -14,10 +18,19 @@ from firewall_compliance.domain.policy_matching import (
     RuleMatch, resolve_addresses, resolve_rule, resolve_services,
 )
 from firewall_compliance.domain.revision import DeviceRevision
+from firewall_compliance.domain.matrix_context_inputs import MatrixContextInputs
+
+if TYPE_CHECKING:
+    from firewall_compliance.application.access_matrix_v2 import MatrixSessionResolver, VrfCatalogBindings
+    from firewall_compliance.application.matrix_policy import MatrixCoverageCache
 
 
 def matrix_diagnostics(matrix: AccessMatrix) -> tuple[MatrixDiagnostic, ...]:
     """Keep invalid references visible without imposing a silent row priority."""
+    if matrix.schema_version == "2.0.0":
+        from firewall_compliance.application.access_matrix_v2 import structural_diagnostics
+
+        return structural_diagnostics(matrix)
     issues = []
     groups = {group.group_id: group for group in matrix.groups}
     for identifier, count in Counter(group.group_id for group in matrix.groups).items():
@@ -155,12 +168,31 @@ def _overlap(left: RuleMatch, right: RuleMatch) -> bool:
 def evaluate_access_matrix(
     matrix: AccessMatrix, revision: DeviceRevision, *, scope_id: str,
     profile_id: str, profile_version: str,
+    bindings: Mapping[tuple[str, str], tuple[str, ...]] | None = None,
+    cancelled: Callable[[], bool] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+    context_inputs: MatrixContextInputs | None = None,
+    project_id: str | None = None,
+    coverage_cache: MatrixCoverageCache | None = None,
+    session_resolver: MatrixSessionResolver | None = None,
+    bindings_by_vrf: VrfCatalogBindings | None = None,
 ) -> MatrixAssessment:
-    """Compare declared rules only; scope_id is an explicit caller-owned context.
+    """Compare requirements against one revision in an explicit caller-owned context.
 
-    Object references resolve only against this revision. A match is an explicit
-    covering declaration, never a statement of effective access or an ACL binding.
+    Legacy results retain their declaration-only semantics. V2 can additionally
+    evaluate the ordered rules of an explicitly bound local ACL.
     """
+    if matrix.schema_version == "2.0.0":
+        from firewall_compliance.application.access_matrix_v2 import evaluate_v2
+
+        return evaluate_v2(
+            matrix, revision, scope_id=scope_id,
+            profile_id=profile_id, profile_version=profile_version,
+            bindings=bindings or {}, cancelled=cancelled, progress=progress,
+            context_inputs=context_inputs, project_id=project_id,
+            coverage_cache=coverage_cache, session_resolver=session_resolver,
+            bindings_by_vrf=bindings_by_vrf,
+        )
     matrix = AccessMatrix.model_validate(matrix.model_dump(mode="python"))
     revision = DeviceRevision.model_validate(revision.model_dump(mode="python"))
     diagnostics = list(matrix_diagnostics(matrix))

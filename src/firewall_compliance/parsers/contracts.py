@@ -2,13 +2,15 @@
 
 from datetime import datetime
 from hashlib import sha256
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from firewall_compliance.domain.enums import ParseIssueLevel
 from firewall_compliance.domain.observation import ObservationEvidence
 from firewall_compliance.domain.parse_result import ParseIssue, ParseResult
+
+type ConfigurationView = Literal["unknown", "local", "effective", "effective_detail", "pending"]
 
 
 class SourceDocument(BaseModel):
@@ -19,6 +21,8 @@ class SourceDocument(BaseModel):
     source_name: str = Field(min_length=1)
     content: bytes
     configuration_complete: bool = Field(default=False, strict=True)
+    configuration_view: ConfigurationView = "unknown"
+    configuration_node_path: str | None = Field(default=None, min_length=1)
     captured_at: datetime
     file_modified_at: datetime | None = None
     observation: ObservationEvidence | None = None

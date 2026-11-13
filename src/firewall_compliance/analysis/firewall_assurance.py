@@ -23,7 +23,7 @@ from firewall_compliance.checks.policy_quality.rules import (
     check_version,
 )
 from firewall_compliance.domain import DeviceRevision
-from firewall_compliance.domain.assurance import FirewallAssuranceResult
+from firewall_compliance.domain.assurance import CheckResult, FirewallAssuranceResult
 from firewall_compliance.domain.management import ManagementProfile
 from firewall_compliance.domain.policy_exposure import PolicyExposureProfile
 from firewall_compliance.domain.policy_scope import PolicyScopeProfile
@@ -89,6 +89,21 @@ def analyze_firewall(
     context = PolicyCheckContext(
         revision, timestamp, require_logging, require_comments, max_pair_rules
     )
+    controller_analysis = None
+    if revision.parse_result.controller_inventory is not None:
+        from firewall_compliance.analysis.controller_policy import analyze_controller
+
+        controller_analysis = analyze_controller(revision.parse_result)
+
+    def evaluate(check: PolicyCheck) -> CheckResult:
+        if controller_analysis is not None:
+            from firewall_compliance.analysis.controller_policy import controller_check_result
+
+            result = controller_check_result(context, check.check_id, controller_analysis)
+            if result is not None:
+                return result
+        return check.evaluate(context)
+
     return FirewallAssuranceResult(
         revision_id=revision.revision_id,
         configuration_id=revision.parse_result.configuration.configuration_id,
@@ -117,7 +132,7 @@ def analyze_firewall(
         require_comments=require_comments,
         max_pair_rules=max_pair_rules,
         analyzed_at=timestamp,
-        checks=tuple(check.evaluate(context) for check in catalog),
+        checks=tuple(evaluate(check) for check in catalog),
         parse_warnings=revision.parse_result.warnings,
         parse_errors=revision.parse_result.errors,
         unsupported_constructs=revision.parse_result.unsupported_constructs,
