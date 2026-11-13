@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "firewall-compliance"
-version = "0.13.0"
+version = "0.13.1"
 description = "Локальная система анализа конфигураций сетевого оборудования"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -19,6 +19,7 @@ dependencies = [
   "structlog>=24.4,<26",
   "typer>=0.15,<1",
   "PySide6>=6.8,<7",
+  "tzdata>=2026.6; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
